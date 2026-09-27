@@ -180,7 +180,10 @@ fn app() -> Element {
                             class: if Some(&device.id) == chosen_id.as_ref() { "device active" } else { "device" },
                             onclick: {
                                 let id: DeviceId = device.id.clone();
-                                move |_| selected.set(Some(id.clone()))
+                                move |_| {
+                                    pin.set(String::new());
+                                    selected.set(Some(id.clone()));
+                                }
                             },
                             "{device.model}"
                             small { "{device.id.0}" }
@@ -231,6 +234,7 @@ fn app() -> Element {
                                 let service = service.clone();
                                 move |_| {
                                     inspected.set(Some(id.clone()));
+                                    pin.set(String::new());
                                     fido_status.set(None);
                                     passkeys.set(None);
                                     fido_error.set(None);
