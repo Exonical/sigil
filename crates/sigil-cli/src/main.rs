@@ -5,20 +5,26 @@ use clap::{Parser, Subcommand, ValueEnum};
 use sigil_app::CredentialService;
 use sigil_core::{DeviceDiscovery, DeviceId, DeviceInfo};
 
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum Backend {
-    #[default]
     Mock,
     Native,
 }
 
+impl Default for Backend {
+    fn default() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Native
+        } else {
+            Self::Mock
+        }
+    }
+}
+
 #[derive(Parser)]
-#[command(
-    name = "cms",
-    about = "Sigil credential manager (milestone 1 prototype)"
-)]
+#[command(name = "cms", about = "Sigil credential manager")]
 struct Args {
-    #[arg(long, global = true, value_enum, default_value_t = Backend::Mock)]
+    #[arg(long, global = true, value_enum, default_value_t = Backend::default())]
     backend: Backend,
     #[arg(long, global = true)]
     json: bool,
@@ -32,6 +38,46 @@ enum Command {
         #[command(subcommand)]
         command: DeviceCommand,
     },
+    Fido {
+        #[command(subcommand)]
+        command: FidoCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FidoCommand {
+    Info {
+        device: String,
+    },
+    Credentials {
+        #[command(subcommand)]
+        command: CredentialCommand,
+    },
+    Fingerprints {
+        #[command(subcommand)]
+        command: FingerprintCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FingerprintCommand {
+    List {
+        device: String,
+    },
+    Enroll {
+        device: String,
+    },
+    Remove {
+        device: String,
+        fingerprint_id: String,
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CredentialCommand {
+    List { device: String },
 }
 
 #[derive(Subcommand)]
@@ -81,7 +127,7 @@ fn run(args: Args) -> Result<String> {
                 Ok(serde_json::to_string_pretty(&info)?)
             } else {
                 Ok(format!(
-                    "{}\nID: {}\nVendor: {}\nSerial: {}\nFirmware: {}\nApplications: {}\nSimulated: {}",
+                    "{}\nID: {}\nVendor: {}\nSerial: {}\nFirmware: {}\nForm factor: {}\nEnabled applications: {}\nSupported applications: {}\nSimulated: {}",
                     info.model,
                     info.id.0,
                     info.vendor,
@@ -90,7 +136,13 @@ fn run(args: Args) -> Result<String> {
                         .as_ref()
                         .map(|v| format!("{}.{}.{}", v.major, v.minor, v.patch))
                         .unwrap_or_else(|| "unknown".into()),
+                    info.form_factor.as_deref().unwrap_or("unknown"),
                     info.applications
+                        .iter()
+                        .map(|app| format!("{app:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    info.supported_applications
                         .iter()
                         .map(|app| format!("{app:?}"))
                         .collect::<Vec<_>>()
@@ -99,12 +151,132 @@ fn run(args: Args) -> Result<String> {
                 ))
             }
         }
+        Command::Fido {
+            command: FidoCommand::Info { device },
+        } => {
+            let status = service.fido_status(&DeviceId(device))?;
+            if args.json {
+                Ok(serde_json::to_string_pretty(&status)?)
+            } else {
+                Ok(format!(
+                    "Versions: {}\nPIN set: {:?}\nPIN retries: {:?}\nCredential management: {}",
+                    status.versions.join(", "),
+                    status.pin_set,
+                    status.pin_retries,
+                    status.credential_management
+                ))
+            }
+        }
+        Command::Fido {
+            command:
+                FidoCommand::Credentials {
+                    command: CredentialCommand::List { device },
+                },
+        } => {
+            let id = DeviceId(device);
+            let status = service.fido_status(&id)?;
+            if !status.credential_management {
+                anyhow::bail!("this key does not support discoverable credential management");
+            }
+            let pin = rpassword::prompt_password("FIDO2 PIN: ")?;
+            eprintln!();
+            let credentials = service.discoverable_credentials(&id, &pin)?;
+            if args.json {
+                Ok(serde_json::to_string_pretty(&credentials)?)
+            } else if credentials.is_empty() {
+                Ok("No discoverable credentials found.".into())
+            } else {
+                Ok(credentials
+                    .iter()
+                    .map(|entry| {
+                        format!(
+                            "{}  {}  {}",
+                            entry.rp_id, entry.user_name, entry.credential_id
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"))
+            }
+        }
+        Command::Fido {
+            command: FidoCommand::Fingerprints { command },
+        } => {
+            let (device, action) = match command {
+                FingerprintCommand::List { device } => (device, (None, false)),
+                FingerprintCommand::Enroll { device } => (device, (None, true)),
+                FingerprintCommand::Remove {
+                    device,
+                    fingerprint_id,
+                    yes,
+                } => {
+                    if !yes {
+                        anyhow::bail!(
+                            "fingerprint deletion is permanent; repeat with --yes to confirm"
+                        );
+                    }
+                    (device, (Some(fingerprint_id), false))
+                }
+            };
+            let id = DeviceId(device);
+            let status = service.fido_status(&id)?;
+            if !status.fingerprint_enrollment {
+                anyhow::bail!("this key does not support FIDO fingerprint enrollment");
+            }
+            let pin = rpassword::prompt_password("FIDO2 PIN: ")?;
+            eprintln!();
+            match action {
+                (Some(fingerprint_id), _) => {
+                    service.remove_fingerprint(&id, &pin, &fingerprint_id)?;
+                    Ok(if args.json {
+                        "{\"removed\":true}".into()
+                    } else {
+                        "Fingerprint removed.".into()
+                    })
+                }
+                (_, true) => {
+                    let fingerprint = service.enroll_fingerprint(&id, &pin, &mut |progress| {
+                        eprintln!(
+                            "{} (remaining samples: {})",
+                            progress.message, progress.remaining_samples
+                        );
+                    })?;
+                    if args.json {
+                        Ok(serde_json::to_string_pretty(&fingerprint)?)
+                    } else {
+                        Ok(format!("Fingerprint enrolled: {}", fingerprint.id))
+                    }
+                }
+                _ => {
+                    let fingerprints = service.fingerprints(&id, &pin)?;
+                    if args.json {
+                        Ok(serde_json::to_string_pretty(&fingerprints)?)
+                    } else if fingerprints.is_empty() {
+                        Ok("No fingerprints enrolled.".into())
+                    } else {
+                        Ok(fingerprints
+                            .into_iter()
+                            .map(|fingerprint| {
+                                format!(
+                                    "{}  {}",
+                                    fingerprint.id,
+                                    fingerprint.name.unwrap_or_default()
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"))
+                    }
+                }
+            }
+        }
     }
 }
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
         .with_writer(std::io::stderr)
         .init();
     let output = run(Args::parse())?;
@@ -118,7 +290,7 @@ mod tests {
 
     #[test]
     fn json_list_is_parseable_and_clearly_simulated() -> Result<()> {
-        let args = Args::try_parse_from(["cms", "device", "list", "--json"])?;
+        let args = Args::try_parse_from(["cms", "--backend", "mock", "device", "list", "--json"])?;
         let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
         assert_eq!(result.len(), 1);
         assert!(result[0].simulated);
@@ -128,10 +300,34 @@ mod tests {
 
     #[test]
     fn explicit_device_selection() -> Result<()> {
-        let args =
-            Args::try_parse_from(["cms", "device", "info", "mock-yubikey-12345678", "--json"])?;
+        let args = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "device",
+            "info",
+            "mock-yubikey-12345678",
+            "--json",
+        ])?;
         let value: DeviceInfo = serde_json::from_str(&run(args)?)?;
         assert_eq!(value.serial.as_deref(), Some("12345678"));
+        Ok(())
+    }
+
+    #[test]
+    fn fido_status_is_structured_for_selected_device() -> Result<()> {
+        let args = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "fido",
+            "info",
+            "mock-yubikey-12345678",
+            "--json",
+        ])?;
+        let value: sigil_core::FidoStatus = serde_json::from_str(&run(args)?)?;
+        assert!(value.credential_management);
+        assert_eq!(value.pin_retries, Some(8));
         Ok(())
     }
 }

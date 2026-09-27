@@ -7,7 +7,8 @@ use std::sync::{
 
 use sigil_core::{
     Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    FirmwareVersion, Result, Transport,
+    DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint, FingerprintProgress,
+    FirmwareVersion, MetadataAccess, Result, Transport,
 };
 
 #[derive(Default)]
@@ -28,6 +29,7 @@ impl MockDiscovery {
                 minor: 7,
                 patch: 1,
             }),
+            form_factor: Some("Keychain (USB-A)".into()),
             transports: vec![
                 Transport::UsbSmartCard,
                 Transport::UsbHid,
@@ -42,7 +44,16 @@ impl MockDiscovery {
                 Application::OpenPgp,
                 Application::Oath,
             ],
+            supported_applications: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+            ],
             simulated: true,
+            metadata_access: MetadataAccess::Available,
         }])
     }
 
@@ -93,6 +104,57 @@ impl MockDiscovery {
             .map_err(|_| CredentialError::InventoryUnavailable)?
             .retain(|listener| listener.send(event.clone()).is_ok());
         Ok(())
+    }
+}
+
+impl FidoInspection for MockDiscovery {
+    fn fido_status(&self, id: &DeviceId) -> Result<FidoStatus> {
+        if !self.list()?.iter().any(|device| &device.id == id) {
+            return Err(CredentialError::DeviceNotFound(id.0.clone()));
+        }
+        Ok(FidoStatus {
+            versions: vec!["FIDO_2_1".into(), "U2F_V2".into()],
+            pin_set: Some(true),
+            pin_retries: Some(8),
+            credential_management: true,
+            fingerprint_enrollment: true,
+        })
+    }
+
+    fn discoverable_credentials(
+        &self,
+        id: &DeviceId,
+        _pin: &str,
+    ) -> Result<Vec<DiscoverableCredential>> {
+        if !self.list()?.iter().any(|device| &device.id == id) {
+            return Err(CredentialError::DeviceNotFound(id.0.clone()));
+        }
+        Ok(Vec::new())
+    }
+
+    fn fingerprints(&self, id: &DeviceId, _pin: &str) -> Result<Vec<Fingerprint>> {
+        self.fido_status(id)?;
+        Ok(vec![Fingerprint {
+            id: "0102".into(),
+            name: Some("Index finger (simulated)".into()),
+        }])
+    }
+
+    fn enroll_fingerprint(
+        &self,
+        _id: &DeviceId,
+        _pin: &str,
+        _on_progress: &mut dyn FnMut(FingerprintProgress),
+    ) -> Result<Fingerprint> {
+        Err(CredentialError::UnsupportedOperation(
+            "fingerprint enrollment on simulated hardware",
+        ))
+    }
+
+    fn remove_fingerprint(&self, _id: &DeviceId, _pin: &str, _fingerprint_id: &str) -> Result<()> {
+        Err(CredentialError::UnsupportedOperation(
+            "fingerprint deletion on simulated hardware",
+        ))
     }
 }
 

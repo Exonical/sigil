@@ -17,5 +17,6 @@ dl { display: grid; grid-template-columns: 110px 1fr; gap: 12px; margin: 28px 0;
 dt { color: #9fb3c6; }
 dd { margin: 0; }
 .muted { color: #9fb3c6; line-height: 1.6; }
+.error { color: #ffb2ad; background: #3a242a; border: 1px solid #8b4b50; padding: 12px; border-radius: 7px; }
 .chips { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 28px; }
 .chip { background: #183b48; border: 1px solid #2d7685; border-radius: 20px; padding: 7px 12px; }

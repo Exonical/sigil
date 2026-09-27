@@ -7,4 +7,12 @@ rust-version.workspace = true
 
 [dependencies]
 sigil-core = { path = "../sigil-core" }
+sigil-yubikey = { path = "../sigil-yubikey" }
+tracing.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+pcsc = "2.9"
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
+windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_HumanInterfaceDevice", "Win32_Foundation", "Win32_UI_Shell"] }
+getrandom = "0.3"
+ctap-hid-fido2 = "=3.5.12"
