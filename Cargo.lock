@@ -4087,6 +4087,7 @@ dependencies = [
  "sigil-core",
  "sigil-yubikey",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
