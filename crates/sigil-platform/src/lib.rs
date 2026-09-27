@@ -4,7 +4,7 @@
 use sigil_core::CredentialError;
 use sigil_core::{
     DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoInspection,
-    FidoStatus, Result,
+    FidoStatus, Fingerprint, FingerprintProgress, Result,
 };
 use std::sync::mpsc::Receiver;
 #[cfg(any(target_os = "windows", test))]
@@ -73,6 +73,47 @@ impl DeviceDiscovery for NativeDiscovery {
 }
 
 impl FidoInspection for NativeDiscovery {
+    fn fingerprints(&self, id: &DeviceId, pin: &str) -> Result<Vec<Fingerprint>> {
+        #[cfg(target_os = "windows")]
+        return windows::fingerprints(id, pin);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, pin);
+            Err(CredentialError::BackendUnavailable(
+                "native fingerprint management is not implemented for this platform",
+            ))
+        }
+    }
+
+    fn enroll_fingerprint(
+        &self,
+        id: &DeviceId,
+        pin: &str,
+        on_progress: &mut dyn FnMut(FingerprintProgress),
+    ) -> Result<Fingerprint> {
+        #[cfg(target_os = "windows")]
+        return windows::enroll_fingerprint(id, pin, on_progress);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, pin, on_progress);
+            Err(CredentialError::BackendUnavailable(
+                "native fingerprint management is not implemented for this platform",
+            ))
+        }
+    }
+
+    fn remove_fingerprint(&self, id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::remove_fingerprint(id, pin, fingerprint_id);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, pin, fingerprint_id);
+            Err(CredentialError::BackendUnavailable(
+                "native fingerprint management is not implemented for this platform",
+            ))
+        }
+    }
+
     fn fido_status(&self, id: &DeviceId) -> Result<FidoStatus> {
         #[cfg(target_os = "windows")]
         return windows::fido_status(id);

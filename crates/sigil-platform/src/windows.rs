@@ -16,7 +16,7 @@ use ctap_hid_fido2::{Cfg, FidoKeyHid, FidoKeyHidFactory, HidParam};
 use pcsc::{Context, Error as PcscError, Protocols, ReaderState, Scope, ShareMode, State};
 use sigil_core::{
     CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus,
-    FirmwareVersion, MetadataAccess, Result, Transport,
+    Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result, Transport,
 };
 use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
 use windows_sys::Win32::{
@@ -263,12 +263,154 @@ pub(super) fn fido_status(id: &DeviceId) -> Result<FidoStatus> {
             .enable_info_option(&InfoOption::CredentialMgmtPreview)
             .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
             == Some(true);
+    let standard_bio = key
+        .enable_info_option(&InfoOption::BioEnroll)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        .is_some();
+    let preview_bio = key
+        .enable_info_option(&InfoOption::UserVerificationMgmtPreview)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        .is_some();
+    let fingerprint_enrollment = standard_bio
+        || (info
+            .versions
+            .iter()
+            .any(|version| version == "FIDO_2_1_PRE")
+            && preview_bio);
     Ok(FidoStatus {
         versions: info.versions,
         pin_set,
         pin_retries,
         credential_management,
+        fingerprint_enrollment,
     })
+}
+
+fn open_bio(id: &DeviceId) -> Result<FidoKeyHid> {
+    let mut key = open_fido(id)?;
+    let standard = key
+        .enable_info_option(&InfoOption::BioEnroll)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        .is_some();
+    let preview = key
+        .enable_info_option(&InfoOption::UserVerificationMgmtPreview)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        .is_some();
+    let versions = key
+        .get_info()
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        .versions;
+    if !standard && !(preview && versions.iter().any(|version| version == "FIDO_2_1_PRE")) {
+        return Err(CredentialError::UnsupportedOperation(
+            "FIDO fingerprint enrollment",
+        ));
+    }
+    key.use_pre_bio_enrollment = !standard;
+    Ok(key)
+}
+
+fn hex_id(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+pub(super) fn fingerprints(id: &DeviceId, pin: &str) -> Result<Vec<Fingerprint>> {
+    if pin.is_empty() {
+        return Err(CredentialError::FidoOperation("enter the FIDO2 PIN".into()));
+    }
+    let key = open_bio(id)?;
+    let templates = key
+        .bio_enrollment_enumerate_enrollments(pin)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    Ok(templates
+        .into_iter()
+        .map(|template| Fingerprint {
+            id: hex_id(&template.template_id),
+            name: template.template_friendly_name,
+        })
+        .collect())
+}
+
+pub(super) fn enroll_fingerprint(
+    id: &DeviceId,
+    pin: &str,
+    on_progress: &mut dyn FnMut(FingerprintProgress),
+) -> Result<Fingerprint> {
+    if pin.is_empty() {
+        return Err(CredentialError::FidoOperation("enter the FIDO2 PIN".into()));
+    }
+    let key = open_bio(id)?;
+    on_progress(FingerprintProgress {
+        message: "Touch the sensor with the finger to enroll.".into(),
+        remaining_samples: 0,
+    });
+    let (session, mut step) = key
+        .bio_enrollment_begin(pin, Some(30_000))
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    let result = (|| {
+        for _ in 0..40 {
+            on_progress(FingerprintProgress {
+                message: step.message.clone(),
+                remaining_samples: step.remaining_samples,
+            });
+            if step.is_finish {
+                return Ok(Fingerprint {
+                    id: hex_id(&session.template_id),
+                    name: None,
+                });
+            }
+            on_progress(FingerprintProgress {
+                message: "Lift your finger, then touch the sensor again.".into(),
+                remaining_samples: step.remaining_samples,
+            });
+            step = key
+                .bio_enrollment_next(&session, Some(30_000))
+                .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        }
+        Err(CredentialError::FidoOperation(
+            "fingerprint capture limit reached".into(),
+        ))
+    })();
+    if result.is_err() {
+        let _ = key.bio_enrollment_cancel();
+    }
+    result
+}
+
+pub(super) fn remove_fingerprint(id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()> {
+    if pin.is_empty() {
+        return Err(CredentialError::FidoOperation("enter the FIDO2 PIN".into()));
+    }
+    if fingerprint_id.is_empty() || !fingerprint_id.len().is_multiple_of(2) {
+        return Err(CredentialError::FidoOperation(
+            "invalid fingerprint ID".into(),
+        ));
+    }
+    let bytes: Vec<u8> = fingerprint_id
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+            std::str::from_utf8(pair)
+                .ok()
+                .and_then(|value| u8::from_str_radix(value, 16).ok())
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| CredentialError::FidoOperation("invalid fingerprint ID".into()))?;
+    let key = open_bio(id)?;
+    let templates = key
+        .bio_enrollment_enumerate_enrollments(pin)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    if !templates
+        .iter()
+        .any(|template| template.template_id == bytes)
+    {
+        return Err(CredentialError::FidoOperation(
+            "fingerprint ID was not found on this key".into(),
+        ));
+    }
+    key.bio_enrollment_remove(pin, &bytes)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))
 }
 
 pub(super) fn discoverable_credentials(

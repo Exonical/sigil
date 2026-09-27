@@ -73,6 +73,21 @@ pub struct FidoStatus {
     pub pin_set: Option<bool>,
     pub pin_retries: Option<i32>,
     pub credential_management: bool,
+    #[serde(default)]
+    pub fingerprint_enrollment: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fingerprint {
+    /// Opaque template identifier, hex encoded for CLI and GUI selection.
+    pub id: String,
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FingerprintProgress {
+    pub message: String,
+    pub remaining_samples: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,7 +150,7 @@ pub trait FidoDevice: CredentialDevice {
     fn fido2_available(&self) -> Result<bool>;
 }
 
-/// Read-only CTAP operations. PINs are supplied in memory and are not persisted.
+/// Typed CTAP operations. PINs are supplied in memory and are not persisted.
 pub trait FidoInspection: Send + Sync {
     fn fido_status(&self, id: &DeviceId) -> Result<FidoStatus>;
     fn discoverable_credentials(
@@ -143,4 +158,12 @@ pub trait FidoInspection: Send + Sync {
         id: &DeviceId,
         pin: &str,
     ) -> Result<Vec<DiscoverableCredential>>;
+    fn fingerprints(&self, id: &DeviceId, pin: &str) -> Result<Vec<Fingerprint>>;
+    fn enroll_fingerprint(
+        &self,
+        id: &DeviceId,
+        pin: &str,
+        on_progress: &mut dyn FnMut(FingerprintProgress),
+    ) -> Result<Fingerprint>;
+    fn remove_fingerprint(&self, id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()>;
 }

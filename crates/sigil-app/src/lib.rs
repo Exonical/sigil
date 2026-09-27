@@ -4,7 +4,7 @@ use std::sync::{Arc, mpsc::Receiver};
 
 use sigil_core::{
     CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
-    FidoStatus, Result,
+    FidoStatus, Fingerprint, FingerprintProgress, Result,
 };
 
 #[derive(Clone)]
@@ -45,5 +45,22 @@ impl CredentialService {
         pin: &str,
     ) -> Result<Vec<DiscoverableCredential>> {
         self.discovery.discoverable_credentials(id, pin)
+    }
+
+    pub fn fingerprints(&self, id: &DeviceId, pin: &str) -> Result<Vec<Fingerprint>> {
+        self.discovery.fingerprints(id, pin)
+    }
+
+    pub fn enroll_fingerprint(
+        &self,
+        id: &DeviceId,
+        pin: &str,
+        on_progress: &mut dyn FnMut(FingerprintProgress),
+    ) -> Result<Fingerprint> {
+        self.discovery.enroll_fingerprint(id, pin, on_progress)
+    }
+
+    pub fn remove_fingerprint(&self, id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()> {
+        self.discovery.remove_fingerprint(id, pin, fingerprint_id)
     }
 }

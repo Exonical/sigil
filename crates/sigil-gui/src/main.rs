@@ -3,8 +3,8 @@ use std::sync::Arc;
 use dioxus::prelude::*;
 use sigil_app::CredentialService;
 use sigil_core::{
-    DeviceDiscovery, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, MetadataAccess,
-    Transport,
+    DeviceDiscovery, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, Fingerprint,
+    MetadataAccess, Transport,
 };
 
 #[cfg(target_os = "windows")]
@@ -72,6 +72,10 @@ fn app() -> Element {
     let mut inspected = use_signal_sync(|| None::<DeviceId>);
     let mut fido_status = use_signal_sync(|| None::<(DeviceId, FidoStatus)>);
     let mut passkeys = use_signal_sync(|| None::<(DeviceId, Vec<DiscoverableCredential>)>);
+    let mut fingerprints = use_signal_sync(|| None::<(DeviceId, Vec<Fingerprint>)>);
+    let mut bio_message = use_signal_sync(|| None::<(DeviceId, String)>);
+    let mut bio_busy = use_signal_sync(|| false);
+    let mut pending_delete = use_signal_sync(|| None::<(DeviceId, String)>);
     let mut fido_error = use_signal_sync(|| None::<(DeviceId, String)>);
     let mut pin = use_signal(String::new);
     use_hook(|| {
@@ -135,6 +139,17 @@ fn app() -> Element {
     } else {
         String::new()
     };
+    let current_fingerprints = fingerprints
+        .read()
+        .as_ref()
+        .filter(|(id, _)| Some(id) == chosen_id.as_ref())
+        .map(|(_, value)| value.clone());
+    let current_bio_message = bio_message
+        .read()
+        .as_ref()
+        .filter(|(id, _)| Some(id) == chosen_id.as_ref())
+        .map(|(_, message)| message.clone())
+        .unwrap_or_default();
     let refresh_service = service.clone();
     let form_factor = current
         .as_ref()
@@ -182,6 +197,7 @@ fn app() -> Element {
                                 let id: DeviceId = device.id.clone();
                                 move |_| {
                                     pin.set(String::new());
+                                    pending_delete.set(None);
                                     selected.set(Some(id.clone()));
                                 }
                             },
@@ -237,6 +253,9 @@ fn app() -> Element {
                                     pin.set(String::new());
                                     fido_status.set(None);
                                     passkeys.set(None);
+                                    fingerprints.set(None);
+                                    bio_message.set(None);
+                                    pending_delete.set(None);
                                     fido_error.set(None);
                                     let service = service.clone();
                                     let id = id.clone();
@@ -253,9 +272,12 @@ fn app() -> Element {
                                     dt { "PIN configured" } dd { "{detail.pin_set:?}" }
                                     dt { "PIN retries" } dd { "{detail.pin_retries:?}" }
                                     dt { "Passkey management" } dd { "{detail.credential_management}" }
+                                    dt { "Fingerprint enrollment" } dd { "{detail.fingerprint_enrollment}" }
+                                }
+                                if detail.credential_management || detail.fingerprint_enrollment {
+                                    input { r#type: "password", placeholder: "FIDO2 PIN", value: "{pin}", oninput: move |event| pin.set(event.value()) }
                                 }
                                 if detail.credential_management {
-                                    input { r#type: "password", placeholder: "FIDO2 PIN", value: "{pin}", oninput: move |event| pin.set(event.value()) }
                                     button { onclick: {
                                         let id = info.id.clone();
                                         let service = service.clone();
@@ -272,6 +294,111 @@ fn app() -> Element {
                                             });
                                         }
                                     }, "List passkeys" }
+                                }
+                                if detail.fingerprint_enrollment {
+                                    h3 { "Fingerprints" }
+                                    p { class: "muted", "Enter the FIDO2 PIN to list or manage fingerprints. Enrollment requires repeated touches of the same finger." }
+                                    button { disabled: bio_busy(), onclick: {
+                                        let id = info.id.clone();
+                                        let service = service.clone();
+                                        move |_| {
+                                            if bio_busy() { return; }
+                                            let supplied_pin = pin.read().clone();
+                                            pin.set(String::new());
+                                            bio_busy.set(true);
+                                            bio_message.set(Some((id.clone(), "Reading fingerprints…".into())));
+                                            let service = service.clone();
+                                            let id = id.clone();
+                                            std::thread::spawn(move || {
+                                                match service.fingerprints(&id, &supplied_pin) {
+                                                    Ok(value) => {
+                                                        fingerprints.set(Some((id.clone(), value)));
+                                                        bio_message.set(Some((id, "Fingerprint list refreshed.".into())));
+                                                    }
+                                                    Err(error) => bio_message.set(Some((id, error.to_string()))),
+                                                }
+                                                bio_busy.set(false);
+                                            });
+                                        }
+                                    }, "List fingerprints" }
+                                    button { disabled: bio_busy(), onclick: {
+                                        let id = info.id.clone();
+                                        let service = service.clone();
+                                        move |_| {
+                                            if bio_busy() { return; }
+                                            let supplied_pin = pin.read().clone();
+                                            pin.set(String::new());
+                                            bio_busy.set(true);
+                                            bio_message.set(Some((id.clone(), "Touch the sensor when prompted…".into())));
+                                            let service = service.clone();
+                                            let id = id.clone();
+                                            std::thread::spawn(move || {
+                                                let progress_id = id.clone();
+                                                match service.enroll_fingerprint(&id, &supplied_pin, &mut |progress| {
+                                                    bio_message.set(Some((progress_id.clone(), format!("{} Remaining samples: {}", progress.message, progress.remaining_samples))));
+                                                }) {
+                                                    Ok(value) => {
+                                                        let mut entries = fingerprints.read().as_ref()
+                                                            .filter(|(device_id, _)| device_id == &id)
+                                                            .map(|(_, entries)| entries.clone()).unwrap_or_default();
+                                                        entries.push(value);
+                                                        fingerprints.set(Some((id.clone(), entries)));
+                                                        bio_message.set(Some((id, "Fingerprint enrolled.".into())));
+                                                    }
+                                                    Err(error) => bio_message.set(Some((id, error.to_string()))),
+                                                }
+                                                bio_busy.set(false);
+                                            });
+                                        }
+                                    }, "Enroll fingerprint" }
+                                    if !current_bio_message.is_empty() { p { "{current_bio_message}" } }
+                                    if let Some(entries) = current_fingerprints {
+                                        if entries.is_empty() { p { "No fingerprints enrolled." } }
+                                        for entry in entries.iter() {
+                                            div { key: "{entry.id}",
+                                                span { {entry.name.clone().unwrap_or_else(|| "Unnamed fingerprint".into())} " ({entry.id}) " }
+                                                if pending_delete.read().as_ref() == Some(&(info.id.clone(), entry.id.clone())) {
+                                                    span { "Enter the PIN again to permanently delete this fingerprint. " }
+                                                    button { disabled: bio_busy(), onclick: {
+                                                        let id = info.id.clone();
+                                                        let fingerprint_id = entry.id.clone();
+                                                        let service = service.clone();
+                                                        move |_| {
+                                                            if bio_busy() { return; }
+                                                            let supplied_pin = pin.read().clone();
+                                                            pin.set(String::new());
+                                                            pending_delete.set(None);
+                                                            bio_busy.set(true);
+                                                            let service = service.clone();
+                                                            let id = id.clone();
+                                                            let fingerprint_id = fingerprint_id.clone();
+                                                            std::thread::spawn(move || {
+                                                                match service.remove_fingerprint(&id, &supplied_pin, &fingerprint_id) {
+                                                                    Ok(()) => {
+                                                                        let mut entries = fingerprints.read().as_ref()
+                                                                            .filter(|(device_id, _)| device_id == &id)
+                                                                            .map(|(_, entries)| entries.clone()).unwrap_or_default();
+                                                                        entries.retain(|item| item.id != fingerprint_id);
+                                                                        fingerprints.set(Some((id.clone(), entries)));
+                                                                        bio_message.set(Some((id, "Fingerprint removed.".into())));
+                                                                    }
+                                                                    Err(error) => bio_message.set(Some((id, error.to_string()))),
+                                                                }
+                                                                bio_busy.set(false);
+                                                            });
+                                                        }
+                                                    }, "Confirm delete" }
+                                                    button { onclick: move |_| pending_delete.set(None), "Cancel" }
+                                                } else {
+                                                    button { disabled: bio_busy(), onclick: {
+                                                        let id = info.id.clone();
+                                                        let fingerprint_id = entry.id.clone();
+                                                        move |_| pending_delete.set(Some((id.clone(), fingerprint_id.clone())))
+                                                    }, "Delete" }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             if let Some(entries) = current_passkeys {

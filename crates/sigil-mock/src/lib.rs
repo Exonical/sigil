@@ -7,8 +7,8 @@ use std::sync::{
 
 use sigil_core::{
     Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    DiscoverableCredential, FidoInspection, FidoStatus, FirmwareVersion, MetadataAccess, Result,
-    Transport,
+    DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint, FingerprintProgress,
+    FirmwareVersion, MetadataAccess, Result, Transport,
 };
 
 #[derive(Default)]
@@ -117,6 +117,7 @@ impl FidoInspection for MockDiscovery {
             pin_set: Some(true),
             pin_retries: Some(8),
             credential_management: true,
+            fingerprint_enrollment: true,
         })
     }
 
@@ -129,6 +130,31 @@ impl FidoInspection for MockDiscovery {
             return Err(CredentialError::DeviceNotFound(id.0.clone()));
         }
         Ok(Vec::new())
+    }
+
+    fn fingerprints(&self, id: &DeviceId, _pin: &str) -> Result<Vec<Fingerprint>> {
+        self.fido_status(id)?;
+        Ok(vec![Fingerprint {
+            id: "0102".into(),
+            name: Some("Index finger (simulated)".into()),
+        }])
+    }
+
+    fn enroll_fingerprint(
+        &self,
+        _id: &DeviceId,
+        _pin: &str,
+        _on_progress: &mut dyn FnMut(FingerprintProgress),
+    ) -> Result<Fingerprint> {
+        Err(CredentialError::UnsupportedOperation(
+            "fingerprint enrollment on simulated hardware",
+        ))
+    }
+
+    fn remove_fingerprint(&self, _id: &DeviceId, _pin: &str, _fingerprint_id: &str) -> Result<()> {
+        Err(CredentialError::UnsupportedOperation(
+            "fingerprint deletion on simulated hardware",
+        ))
     }
 }
 

@@ -1,6 +1,6 @@
 # Sigil
 
-Sigil is a local credential manager for YubiKeys and, later, other hardware credentials. The Windows discovery backend is read-only. PIV management and enrollment are later milestones.
+Sigil is a local credential manager for YubiKeys and, later, other hardware credentials. Windows discovery and FIDO inspection are read-only; explicit fingerprint enrollment and deletion are available for supported Bio keys. PIV management and enrollment are later milestones.
 
 ## Run it
 
@@ -12,14 +12,17 @@ cargo run -p sigil-cli -- device list --json
 cargo run -p sigil-gui
 ```
 
-Copy an opaque HID ID from `device list`; quote it in PowerShell. On Windows, run an elevated PowerShell for FIDO inspection. The passkey list command prompts for a PIN without echoing it or putting it in shell history.
+Copy an opaque HID ID from `device list`; quote it in PowerShell. On Windows, run an elevated PowerShell for FIDO operations. PIN prompts do not echo or put the PIN in shell history.
 
 ```powershell
 cargo run -p sigil-cli -- fido info '<device-id>' --json
 cargo run -p sigil-cli -- fido credentials list '<device-id>' --json
+cargo run -p sigil-cli -- fido fingerprints list '<device-id>' --json
+cargo run -p sigil-cli -- fido fingerprints enroll '<device-id>' --json
+cargo run -p sigil-cli -- fido fingerprints remove '<device-id>' '<fingerprint-id>' --yes
 ```
 
-The GUI can open a second, elevated instance on request when Windows restricts FIDO HID access. Only discoverable credentials can be listed. Sigil does not save PINs or enumerate non-discoverable credentials.
+The GUI can open a second, elevated instance on request when Windows restricts FIDO HID access. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires a second confirmation and a fresh PIN entry. Fingerprint deletion is permanent. Sigil does not save PINs or enumerate non-discoverable credentials. The Bio operations compile for Windows but require validation with a physical Bio key before operational use.
 
 On Windows, these commands use native discovery. Select a returned opaque ID with `cms device info <id>`; `--json` is available for both device commands. For hardware-free development use `cargo run -p sigil-cli -- --backend mock device list --json` and `cargo run -p sigil-gui -- --mock`. On Linux, the mock remains the default until the native backend is implemented; `--backend native` reports an explicit error. The CLI binary is named `cms`.
 

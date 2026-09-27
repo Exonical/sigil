@@ -53,6 +53,26 @@ enum FidoCommand {
         #[command(subcommand)]
         command: CredentialCommand,
     },
+    Fingerprints {
+        #[command(subcommand)]
+        command: FingerprintCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FingerprintCommand {
+    List {
+        device: String,
+    },
+    Enroll {
+        device: String,
+    },
+    Remove {
+        device: String,
+        fingerprint_id: String,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -158,8 +178,7 @@ fn run(args: Args) -> Result<String> {
             if !status.credential_management {
                 anyhow::bail!("this key does not support discoverable credential management");
             }
-            eprint!("FIDO2 PIN: ");
-            let pin = rpassword::read_password()?;
+            let pin = rpassword::prompt_password("FIDO2 PIN: ")?;
             eprintln!();
             let credentials = service.discoverable_credentials(&id, &pin)?;
             if args.json {
@@ -177,6 +196,76 @@ fn run(args: Args) -> Result<String> {
                     })
                     .collect::<Vec<_>>()
                     .join("\n"))
+            }
+        }
+        Command::Fido {
+            command: FidoCommand::Fingerprints { command },
+        } => {
+            let (device, action) = match command {
+                FingerprintCommand::List { device } => (device, (None, false)),
+                FingerprintCommand::Enroll { device } => (device, (None, true)),
+                FingerprintCommand::Remove {
+                    device,
+                    fingerprint_id,
+                    yes,
+                } => {
+                    if !yes {
+                        anyhow::bail!(
+                            "fingerprint deletion is permanent; repeat with --yes to confirm"
+                        );
+                    }
+                    (device, (Some(fingerprint_id), false))
+                }
+            };
+            let id = DeviceId(device);
+            let status = service.fido_status(&id)?;
+            if !status.fingerprint_enrollment {
+                anyhow::bail!("this key does not support FIDO fingerprint enrollment");
+            }
+            let pin = rpassword::prompt_password("FIDO2 PIN: ")?;
+            eprintln!();
+            match action {
+                (Some(fingerprint_id), _) => {
+                    service.remove_fingerprint(&id, &pin, &fingerprint_id)?;
+                    Ok(if args.json {
+                        "{\"removed\":true}".into()
+                    } else {
+                        "Fingerprint removed.".into()
+                    })
+                }
+                (_, true) => {
+                    let fingerprint = service.enroll_fingerprint(&id, &pin, &mut |progress| {
+                        eprintln!(
+                            "{} (remaining samples: {})",
+                            progress.message, progress.remaining_samples
+                        );
+                    })?;
+                    if args.json {
+                        Ok(serde_json::to_string_pretty(&fingerprint)?)
+                    } else {
+                        Ok(format!("Fingerprint enrolled: {}", fingerprint.id))
+                    }
+                }
+                _ => {
+                    let fingerprints = service.fingerprints(&id, &pin)?;
+                    if args.json {
+                        Ok(serde_json::to_string_pretty(&fingerprints)?)
+                    } else if fingerprints.is_empty() {
+                        Ok("No fingerprints enrolled.".into())
+                    } else {
+                        Ok(fingerprints
+                            .into_iter()
+                            .map(|fingerprint| {
+                                format!(
+                                    "{}  {}",
+                                    fingerprint.id,
+                                    fingerprint.name.unwrap_or_default()
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"))
+                    }
+                }
             }
         }
     }
