@@ -201,6 +201,7 @@ mod tests {
                 patch: 1,
             }),
             form_factor: None,
+            connection: Some(Transport::UsbSmartCard),
             transports: vec![Transport::UsbSmartCard],
             applications: vec![Application::Piv],
             supported_applications: vec![Application::Piv],

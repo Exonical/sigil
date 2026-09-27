@@ -32,6 +32,7 @@ impl MockDiscovery {
                 patch: 1,
             }),
             form_factor: Some("Keychain (USB-A)".into()),
+            connection: Some(Transport::UsbSmartCard),
             transports: vec![
                 Transport::UsbSmartCard,
                 Transport::UsbHid,

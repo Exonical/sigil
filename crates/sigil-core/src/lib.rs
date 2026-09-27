@@ -53,6 +53,10 @@ pub struct DeviceInfo {
     pub firmware: Option<FirmwareVersion>,
     /// Device form factor, when reported by the provider.
     pub form_factor: Option<String>,
+    /// How this discovery entry is currently reached (USB CCID, USB HID, or NFC). `transports` lists interfaces the device supports/enables.
+    #[serde(default)]
+    pub connection: Option<Transport>,
+    /// Interfaces the device supports or enables.
     pub transports: Vec<Transport>,
     /// Applications verified as enabled on the current USB configuration.
     pub applications: Vec<Application>,

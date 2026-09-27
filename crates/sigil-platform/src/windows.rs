@@ -1,4 +1,4 @@
-//! Windows CCID discovery using WinSCard through pcsc. Only read-only
+//! Windows PC/SC discovery using WinSCard through pcsc. Only read-only
 //! management APDUs are sent; no arbitrary APDU interface escapes this module.
 
 use std::{
@@ -75,38 +75,63 @@ fn service_stopped(error: PcscError) -> bool {
 
 fn reader_names(context: &Context) -> Result<Vec<CString>> {
     match context.list_readers_owned() {
-        Ok(readers) => Ok(readers
-            .into_iter()
-            .filter(|reader| is_yubikey_reader(reader))
-            .collect()),
+        Ok(readers) => Ok(readers),
         Err(PcscError::NoReadersAvailable) => Ok(Vec::new()),
         Err(error) => Err(CredentialError::PcscUnavailable(error.to_string())),
     }
 }
 
-fn is_yubikey_reader(reader: &CStr) -> bool {
-    let name = reader.to_string_lossy().to_ascii_lowercase();
-    name.contains("yubikey") || name.contains("yubico")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReaderKind {
+    YubiKeyUsb,
+    Other,
+}
+
+fn reader_kind(name: &CStr) -> ReaderKind {
+    let name = name.to_string_lossy().to_ascii_lowercase();
+    if name.contains("yubikey") || name.contains("yubico") {
+        ReaderKind::YubiKeyUsb
+    } else {
+        ReaderKind::Other
+    }
 }
 
 fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
     let mut devices = Vec::new();
     for reader in reader_names(context)? {
         let name = reader.to_string_lossy().into_owned();
-        let card = match context.connect(&reader, ShareMode::Shared, Protocols::ANY) {
-            Ok(card) => card,
-            Err(PcscError::NoSmartcard | PcscError::UnknownReader) => continue,
-            Err(error) => {
-                tracing::warn!(reader = %name, error = %error, "could not inspect smart-card reader");
-                devices.push(device_for_reader(&name, None));
-                continue;
+        match reader_kind(&reader) {
+            ReaderKind::YubiKeyUsb => {
+                let card = match context.connect(&reader, ShareMode::Shared, Protocols::ANY) {
+                    Ok(card) => card,
+                    Err(PcscError::NoSmartcard | PcscError::UnknownReader) => continue,
+                    Err(error) => {
+                        tracing::warn!(reader = %name, error = %error, "could not inspect smart-card reader");
+                        devices.push(device_for_reader(&name, None, Transport::UsbSmartCard));
+                        continue;
+                    }
+                };
+                let details = read_management_info(&card);
+                if details.is_none() {
+                    tracing::debug!(reader = %name, "YubiKey management information unavailable");
+                }
+                devices.push(device_for_reader(&name, details, Transport::UsbSmartCard));
             }
-        };
-        let details = read_management_info(&card);
-        if details.is_none() {
-            tracing::debug!(reader = %name, "YubiKey management information unavailable");
+            ReaderKind::Other => {
+                let card = match context.connect(&reader, ShareMode::Shared, Protocols::ANY) {
+                    Ok(card) => card,
+                    Err(error) => {
+                        tracing::debug!(reader = %name, error = %error, "could not probe non-YubiKey smart-card reader");
+                        continue;
+                    }
+                };
+                let Some(details) = read_management_info(&card) else {
+                    tracing::debug!(reader = %name, "non-YubiKey smart-card ignored");
+                    continue;
+                };
+                devices.push(device_for_reader(&name, Some(details), Transport::Nfc));
+            }
         }
-        devices.push(device_for_reader(&name, details));
     }
     // FIDO-only product IDs have no CCID interface, so these cannot duplicate
     // a PC/SC result. HID presence does not prove CTAP2 or a firmware version.
@@ -172,6 +197,7 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     serial: None,
                     firmware: None,
                     form_factor: None,
+                    connection: Some(Transport::UsbHid),
                     transports: vec![Transport::UsbHid],
                     applications: Vec::new(),
                     supported_applications: Vec::new(),
@@ -603,6 +629,7 @@ fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceIn
             .map(str::to_owned),
         firmware: None,
         form_factor: None,
+        connection: Some(Transport::UsbHid),
         transports: vec![Transport::UsbHid],
         applications: Vec::new(),
         supported_applications: Vec::new(),
@@ -621,15 +648,47 @@ fn is_fido_ccid_pid(pid: u16) -> bool {
     matches!(pid, 0x0115 | 0x0116 | 0x0406 | 0x0407)
 }
 
-fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInfo {
+fn device_for_reader(
+    reader: &str,
+    details: Option<ManagementInfo>,
+    connection: Transport,
+) -> DeviceInfo {
     let metadata_access = if details.is_some() {
         MetadataAccess::Available
     } else {
         MetadataAccess::Unknown
     };
+    let is_nfc = connection == Transport::Nfc;
     let serial = details.as_ref().and_then(|info| info.serial.clone());
     let firmware = details.as_ref().and_then(|info| info.firmware.clone());
     let form_factor = details.as_ref().and_then(|info| info.form_factor.clone());
+    let mut transports = details
+        .as_ref()
+        .map(|info| info.transports.clone())
+        .unwrap_or_else(|| vec![Transport::UsbSmartCard]);
+    if is_nfc && !transports.contains(&Transport::Nfc) {
+        transports.push(Transport::Nfc);
+    }
+    let applications = details
+        .as_ref()
+        .map(|info| {
+            if is_nfc {
+                info.nfc_enabled_applications.clone()
+            } else {
+                info.enabled_applications.clone()
+            }
+        })
+        .unwrap_or_default();
+    let supported_applications = details
+        .as_ref()
+        .map(|info| {
+            if is_nfc {
+                info.nfc_supported_applications.clone()
+            } else {
+                info.supported_applications.clone()
+            }
+        })
+        .unwrap_or_default();
     let id = DeviceId(format!(
         "windows-pcsc:{reader}:{}",
         serial.as_deref().unwrap_or("unknown")
@@ -638,21 +697,18 @@ fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInf
         id,
         vendor: "Yubico".into(),
         // Do not fabricate a retail model from a form factor or reader name.
-        model: "YubiKey (CCID)".into(),
+        model: if is_nfc {
+            "YubiKey (NFC)".into()
+        } else {
+            "YubiKey (CCID)".into()
+        },
         serial,
         firmware,
         form_factor,
-        transports: details
-            .as_ref()
-            .map(|info| info.transports.clone())
-            .unwrap_or_else(|| vec![Transport::UsbSmartCard]),
-        applications: details
-            .as_ref()
-            .map(|info| info.enabled_applications.clone())
-            .unwrap_or_default(),
-        supported_applications: details
-            .map(|info| info.supported_applications)
-            .unwrap_or_default(),
+        connection: Some(connection),
+        transports,
+        applications,
+        supported_applications,
         simulated: false,
         metadata_access,
     }
@@ -755,6 +811,86 @@ fn watch(context: Context, sender: &Sender<DeviceEvent>, previous: &mut Vec<Devi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sigil_core::Application;
+
+    fn reader_kind_from_name(name: &str) -> ReaderKind {
+        let reader = CString::new(name).expect("reader name");
+        reader_kind(reader.as_c_str())
+    }
+
+    fn management_info_for_reader() -> ManagementInfo {
+        ManagementInfo {
+            serial: Some("12345678".into()),
+            firmware: Some(FirmwareVersion {
+                major: 5,
+                minor: 7,
+                patch: 1,
+            }),
+            form_factor: Some("Keychain (USB-A)".into()),
+            transports: vec![
+                Transport::UsbSmartCard,
+                Transport::UsbHid,
+                Transport::UsbOtp,
+            ],
+            enabled_applications: vec![Application::Fido2],
+            supported_applications: vec![Application::Fido2, Application::Piv],
+            nfc_enabled_applications: vec![Application::Piv],
+            nfc_supported_applications: vec![Application::Piv, Application::Oath],
+        }
+    }
+
+    #[test]
+    fn classifies_yubico_readers_and_external_pcsc_readers() {
+        for name in ["Yubico YubiKey OTP+FIDO+CCID 0", "YubiKey 5 NFC"] {
+            assert_eq!(reader_kind_from_name(name), ReaderKind::YubiKeyUsb);
+        }
+        for name in [
+            "ACS ACR1252 1S CL Reader PICC 0",
+            "HID Global OMNIKEY 5022 Smart Card Reader 0",
+            "Identiv uTrust 3700 F CL Reader 0",
+        ] {
+            assert_eq!(reader_kind_from_name(name), ReaderKind::Other);
+        }
+    }
+
+    #[test]
+    fn reader_connection_selects_nfc_or_usb_management_capabilities() {
+        let nfc = device_for_reader(
+            "ACS ACR1252 Reader 0",
+            Some(management_info_for_reader()),
+            Transport::Nfc,
+        );
+        assert_eq!(nfc.model, "YubiKey (NFC)");
+        assert_eq!(nfc.connection, Some(Transport::Nfc));
+        assert_eq!(nfc.applications, vec![Application::Piv]);
+        assert_eq!(
+            nfc.supported_applications,
+            vec![Application::Piv, Application::Oath]
+        );
+        assert!(nfc.transports.contains(&Transport::Nfc));
+        assert_eq!(nfc.id.0, "windows-pcsc:ACS ACR1252 Reader 0:12345678");
+
+        let usb = device_for_reader(
+            "Yubico YubiKey 0",
+            Some(management_info_for_reader()),
+            Transport::UsbSmartCard,
+        );
+        assert_eq!(usb.model, "YubiKey (CCID)");
+        assert_eq!(usb.connection, Some(Transport::UsbSmartCard));
+        assert_eq!(usb.applications, vec![Application::Fido2]);
+        assert_eq!(
+            usb.supported_applications,
+            vec![Application::Fido2, Application::Piv]
+        );
+        assert_eq!(
+            usb.transports,
+            vec![
+                Transport::UsbSmartCard,
+                Transport::UsbHid,
+                Transport::UsbOtp
+            ]
+        );
+    }
 
     #[test]
     fn fido_only_products_cannot_duplicate_ccid_readers() {
@@ -783,10 +919,11 @@ mod tests {
 
     #[test]
     fn unavailable_metadata_does_not_invent_capabilities() {
-        let device = device_for_reader("Yubico YubiKey 0", None);
+        let device = device_for_reader("Yubico YubiKey 0", None, Transport::UsbSmartCard);
         assert!(!device.simulated);
         assert!(device.serial.is_none());
         assert!(device.applications.is_empty());
+        assert_eq!(device.connection, Some(Transport::UsbSmartCard));
         assert_eq!(device.transports, vec![Transport::UsbSmartCard]);
     }
 }

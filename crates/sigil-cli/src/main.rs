@@ -133,10 +133,14 @@ fn run(args: Args) -> Result<String> {
                 Ok(serde_json::to_string_pretty(&info)?)
             } else {
                 Ok(format!(
-                    "{}\nID: {}\nVendor: {}\nSerial: {}\nFirmware: {}\nForm factor: {}\nEnabled applications: {}\nSupported applications: {}\nSimulated: {}",
+                    "{}\nID: {}\nVendor: {}\nConnection: {}\nSerial: {}\nFirmware: {}\nForm factor: {}\nEnabled applications: {}\nSupported applications: {}\nSimulated: {}",
                     info.model,
                     info.id.0,
                     info.vendor,
+                    info.connection
+                        .as_ref()
+                        .map(|connection| format!("{connection:?}"))
+                        .unwrap_or_else(|| "unknown".into()),
                     info.serial.as_deref().unwrap_or("unknown"),
                     info.firmware
                         .as_ref()
@@ -316,7 +320,9 @@ mod tests {
             "mock-yubikey-12345678",
             "--json",
         ])?;
-        let value: DeviceInfo = serde_json::from_str(&run(args)?)?;
+        let output: serde_json::Value = serde_json::from_str(&run(args)?)?;
+        assert_eq!(output["connection"], "usb_smart_card");
+        let value: DeviceInfo = serde_json::from_value(output)?;
         assert_eq!(value.serial.as_deref(), Some("12345678"));
         Ok(())
     }

@@ -12,6 +12,7 @@ const TAG_FORM_FACTOR: u8 = 0x04;
 const TAG_VERSION: u8 = 0x05;
 pub const TAG_MORE_DATA: u8 = 0x10;
 const TAG_NFC_SUPPORTED: u8 = 0x0d;
+const TAG_NFC_ENABLED: u8 = 0x0e;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
@@ -47,6 +48,8 @@ pub struct ManagementInfo {
     pub transports: Vec<Transport>,
     pub enabled_applications: Vec<Application>,
     pub supported_applications: Vec<Application>,
+    pub nfc_enabled_applications: Vec<Application>,
+    pub nfc_supported_applications: Vec<Application>,
 }
 
 impl ManagementInfo {
@@ -59,6 +62,10 @@ impl ManagementInfo {
             .ok_or(ParseError::MissingCapabilities)?;
         let supported_bits = parse_number(supported);
         let enabled_bits = tags.get(&TAG_USB_ENABLED).map(|bytes| parse_number(bytes));
+        let nfc_supported_bits = tags
+            .get(&TAG_NFC_SUPPORTED)
+            .map(|bytes| parse_number(bytes));
+        let nfc_enabled_bits = tags.get(&TAG_NFC_ENABLED).map(|bytes| parse_number(bytes));
         let serial = tags
             .get(&TAG_SERIAL)
             .map(|value| parse_number(value))
@@ -98,10 +105,7 @@ impl ManagementInfo {
                 transports.push(Transport::UsbOtp);
             }
         }
-        if tags
-            .get(&TAG_NFC_SUPPORTED)
-            .is_some_and(|value| parse_number(value) != 0)
-        {
+        if nfc_supported_bits.is_some_and(|bits| bits != 0) {
             transports.push(Transport::Nfc);
         }
         Ok(Self {
@@ -111,6 +115,8 @@ impl ManagementInfo {
             transports,
             enabled_applications: enabled_bits.map(applications).unwrap_or_default(),
             supported_applications: applications(supported_bits),
+            nfc_enabled_applications: nfc_enabled_bits.map(applications).unwrap_or_default(),
+            nfc_supported_applications: nfc_supported_bits.map(applications).unwrap_or_default(),
         })
     }
 }
@@ -145,8 +151,9 @@ mod tests {
     #[test]
     fn parses_serial_version_and_distinct_enabled_capabilities() {
         let page = [
-            0x19, 0x01, 0x02, 0x03, 0x3b, 0x02, 0x04, 0x00, 0xbc, 0x61, 0x4e, 0x03, 0x02, 0x02,
-            0x11, 0x04, 0x01, 0x03, 0x05, 0x03, 0x05, 0x07, 0x01, 0x0d, 0x01, 0x3b,
+            0x1c, 0x01, 0x02, 0x03, 0x3b, 0x02, 0x04, 0x00, 0xbc, 0x61, 0x4e, 0x03, 0x02, 0x02,
+            0x11, 0x04, 0x01, 0x03, 0x05, 0x03, 0x05, 0x07, 0x01, 0x0d, 0x01, 0x3b, 0x0e, 0x01,
+            0x10,
         ];
         let tags = parse_page(&page).expect("valid TLV");
         let info = ManagementInfo::from_tags(&tags, None).expect("management info");
@@ -155,6 +162,10 @@ mod tests {
         assert!(info.supported_applications.contains(&Application::Oath));
         assert!(!info.enabled_applications.contains(&Application::Oath));
         assert!(info.enabled_applications.contains(&Application::Fido2));
+        assert!(info.nfc_supported_applications.contains(&Application::Oath));
+        assert_eq!(info.nfc_enabled_applications, vec![Application::Piv]);
+        assert!(!info.nfc_enabled_applications.contains(&Application::Fido2));
+        assert!(info.transports.contains(&Transport::Nfc));
     }
 
     #[test]

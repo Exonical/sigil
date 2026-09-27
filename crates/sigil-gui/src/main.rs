@@ -226,6 +226,8 @@ fn app() -> Element {
                         if info.simulated { p { class: "muted", "Fixture data for interface development. No physical YubiKey is connected by this backend." } }
                         dl {
                             dt { "Vendor" } dd { "{info.vendor}" }
+                            dt { "Connection" }
+                            dd { {info.connection.as_ref().map(|connection| format!("{connection:?}")).unwrap_or_else(|| "unknown".into())} }
                             dt { "Serial" } dd { "{serial}" }
                             dt { "Firmware" }
                             dd { "{firmware}" }
@@ -421,7 +423,11 @@ fn app() -> Element {
                                 }
                             }
                         }
-                        if info.transports.contains(&Transport::UsbSmartCard) || info.simulated {
+                        if matches!(
+                            info.connection.as_ref(),
+                            Some(Transport::UsbSmartCard | Transport::Nfc)
+                        ) || info.simulated
+                        {
                             piv::PivPanel { key: "{info.id.0}", device: info.id.clone() }
                         }
                     } else {
