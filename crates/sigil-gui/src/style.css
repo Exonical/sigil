@@ -1,0 +1,21 @@
+:root { font-family: system-ui, sans-serif; color: #e9eff5; background: #0c1420; }
+body { margin: 0; }
+.shell { min-height: 100vh; }
+header { display: flex; align-items: center; gap: 20px; padding: 20px 28px; border-bottom: 1px solid #35465a; }
+h1 { font-size: 25px; margin: 0 auto 0 0; }
+h2 { font-size: 20px; margin-top: 0; }
+.badge { font-size: 11px; letter-spacing: 1px; color: #ffd58b; border: 1px solid #9a743b; border-radius: 50px; padding: 7px 11px; }
+button { cursor: pointer; background: #273d56; color: #fff; border: 1px solid #57718f; border-radius: 7px; padding: 10px 14px; }
+button:hover { background: #355477; }
+main { display: grid; grid-template-columns: minmax(230px, 28%) 1fr; min-height: calc(100vh - 81px); }
+aside { background: #121f2f; border-right: 1px solid #35465a; padding: 28px 18px; }
+section { padding: 32px 40px; max-width: 750px; }
+.device { display: block; text-align: left; width: 100%; margin: 10px 0; }
+.device.active { border-color: #77bbdc; background: #294c66; }
+.device small { display: block; margin-top: 5px; color: #b2c8d7; }
+dl { display: grid; grid-template-columns: 110px 1fr; gap: 12px; margin: 28px 0; }
+dt { color: #9fb3c6; }
+dd { margin: 0; }
+.muted { color: #9fb3c6; line-height: 1.6; }
+.chips { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 28px; }
+.chip { background: #183b48; border: 1px solid #2d7685; border-radius: 20px; padding: 7px 12px; }
