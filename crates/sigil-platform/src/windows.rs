@@ -11,9 +11,12 @@ use std::{
     time::Duration,
 };
 
+use ctap_hid_fido2::fidokey::get_info::InfoOption;
+use ctap_hid_fido2::{Cfg, FidoKeyHid, FidoKeyHidFactory, HidParam};
 use pcsc::{Context, Error as PcscError, Protocols, ReaderState, Scope, ShareMode, State};
 use sigil_core::{
-    CredentialError, DeviceEvent, DeviceId, DeviceInfo, FirmwareVersion, Result, Transport,
+    CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus,
+    FirmwareVersion, MetadataAccess, Result, Transport,
 };
 use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
 use windows_sys::Win32::{
@@ -172,6 +175,7 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     applications: Vec::new(),
                     supported_applications: Vec::new(),
                     simulated: false,
+                    metadata_access: MetadataAccess::Unknown,
                 };
                 if let (Ok(hid), Ok(path)) = (&hid_result, CString::new(path)) {
                     enrich_hid(&mut device, hid, &path);
@@ -193,10 +197,12 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
         Ok(handle) => handle,
         Err(error) => {
             tracing::debug!(%error, id = %device.id.0, "FIDO metadata access unavailable");
+            device.metadata_access = MetadataAccess::Restricted;
             return;
         }
     };
     if let Some(metadata) = ctap::read_info(&handle) {
+        device.metadata_access = MetadataAccess::Available;
         device.firmware = metadata.firmware;
         if let Some(details) = metadata.details {
             device.serial = details.serial;
@@ -214,6 +220,110 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
     } else {
         tracing::debug!(id = %device.id.0, "FIDO management metadata unavailable from device");
     }
+}
+
+fn open_fido(id: &DeviceId) -> Result<FidoKeyHid> {
+    let path =
+        id.0.strip_prefix("windows-hid:")
+            .ok_or(CredentialError::UnsupportedOperation(
+                "FIDO inspection requires a HID device",
+            ))?;
+    // Only open a present device we discovered. An opaque ID is not a general HID path API.
+    let device = list()?
+        .into_iter()
+        .find(|device| device.id == *id)
+        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))?;
+    if device.metadata_access == MetadataAccess::Restricted {
+        return Err(CredentialError::FidoAccessRestricted);
+    }
+    let mut config = Cfg::init();
+    config.keep_alive_msg.clear(); // Library diagnostics must not corrupt CLI JSON output.
+    FidoKeyHidFactory::create_by_params(&[HidParam::Path(path.to_owned())], &config)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))
+}
+
+pub(super) fn fido_status(id: &DeviceId) -> Result<FidoStatus> {
+    let key = open_fido(id)?;
+    let info = key
+        .get_info()
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    let pin_set = key
+        .enable_info_option(&InfoOption::ClientPin)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    let pin_retries = if pin_set == Some(true) {
+        key.get_pin_retries().ok()
+    } else {
+        None
+    };
+    let credential_management = key
+        .enable_info_option(&InfoOption::CredMgmt)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        == Some(true)
+        || key
+            .enable_info_option(&InfoOption::CredentialMgmtPreview)
+            .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+            == Some(true);
+    Ok(FidoStatus {
+        versions: info.versions,
+        pin_set,
+        pin_retries,
+        credential_management,
+    })
+}
+
+pub(super) fn discoverable_credentials(
+    id: &DeviceId,
+    pin: &str,
+) -> Result<Vec<DiscoverableCredential>> {
+    if pin.is_empty() {
+        return Err(CredentialError::FidoOperation("enter the FIDO2 PIN".into()));
+    }
+    let mut key = open_fido(id)?;
+    let standard = key
+        .enable_info_option(&InfoOption::CredMgmt)
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+        == Some(true);
+    if !standard
+        && key
+            .enable_info_option(&InfoOption::CredentialMgmtPreview)
+            .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
+            != Some(true)
+    {
+        return Err(CredentialError::UnsupportedOperation(
+            "FIDO credential management",
+        ));
+    }
+    key.use_pre_credential_management = !standard;
+    let count = key
+        .credential_management_get_creds_metadata(Some(pin))
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    if count.existing_resident_credentials_count == 0 {
+        return Ok(Vec::new());
+    }
+    let rps = key
+        .credential_management_enumerate_rps(Some(pin))
+        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    let mut credentials = Vec::new();
+    for rp in rps {
+        let entries = key
+            .credential_management_enumerate_credentials(Some(pin), &rp.rpid_hash)
+            .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        for entry in entries {
+            credentials.push(DiscoverableCredential {
+                rp_id: rp.public_key_credential_rp_entity.id.clone(),
+                rp_name: rp.public_key_credential_rp_entity.name.clone(),
+                user_name: entry.public_key_credential_user_entity.name,
+                user_display_name: entry.public_key_credential_user_entity.display_name,
+                credential_id: entry
+                    .public_key_credential_descriptor
+                    .id
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+            });
+        }
+    }
+    Ok(credentials)
 }
 
 fn yubico_pid_from_path(path: &str) -> Option<u16> {
@@ -354,6 +464,7 @@ fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceIn
         applications: Vec::new(),
         supported_applications: Vec::new(),
         simulated: false,
+        metadata_access: MetadataAccess::Unknown,
     })
 }
 
@@ -368,6 +479,11 @@ fn is_fido_ccid_pid(pid: u16) -> bool {
 }
 
 fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInfo {
+    let metadata_access = if details.is_some() {
+        MetadataAccess::Available
+    } else {
+        MetadataAccess::Unknown
+    };
     let serial = details.as_ref().and_then(|info| info.serial.clone());
     let firmware = details.as_ref().and_then(|info| info.firmware.clone());
     let form_factor = details.as_ref().and_then(|info| info.form_factor.clone());
@@ -395,6 +511,7 @@ fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInf
             .map(|info| info.supported_applications)
             .unwrap_or_default(),
         simulated: false,
+        metadata_access,
     }
 }
 

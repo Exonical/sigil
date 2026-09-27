@@ -12,6 +12,15 @@ cargo run -p sigil-cli -- device list --json
 cargo run -p sigil-gui
 ```
 
+Copy an opaque HID ID from `device list`; quote it in PowerShell. On Windows, run an elevated PowerShell for FIDO inspection. The passkey list command prompts for a PIN without echoing it or putting it in shell history.
+
+```powershell
+cargo run -p sigil-cli -- fido info '<device-id>' --json
+cargo run -p sigil-cli -- fido credentials list '<device-id>' --json
+```
+
+The GUI can open a second, elevated instance on request when Windows restricts FIDO HID access. Only discoverable credentials can be listed. Sigil does not save PINs or enumerate non-discoverable credentials.
+
 On Windows, these commands use native discovery. Select a returned opaque ID with `cms device info <id>`; `--json` is available for both device commands. For hardware-free development use `cargo run -p sigil-cli -- --backend mock device list --json` and `cargo run -p sigil-gui -- --mock`. On Linux, the mock remains the default until the native backend is implemented; `--backend native` reports an explicit error. The CLI binary is named `cms`.
 
 The Windows backend enumerates YubiKey smart-card readers through WinSCard/PC/SC, then reads the Yubico management applet for serial, firmware, form factor, and supported versus enabled USB applications. It separately enumerates FIDO-only Yubico USB product IDs through HID. FIDO-only HID presence alone does not establish CTAP2 support, so its application and firmware fields remain unknown. The retail model is also left generic when it cannot be verified. Smart-card insertion/removal uses reader notifications; HID-only discovery refreshes every five seconds. Multiple readers and keys keep separate opaque device IDs. Reader-name matching can miss nonstandard reader names. Hardware-generated attributes require validation on physical devices before relying on them operationally.

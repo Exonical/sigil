@@ -7,7 +7,8 @@ use std::sync::{
 
 use sigil_core::{
     Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    FirmwareVersion, Result, Transport,
+    DiscoverableCredential, FidoInspection, FidoStatus, FirmwareVersion, MetadataAccess, Result,
+    Transport,
 };
 
 #[derive(Default)]
@@ -52,6 +53,7 @@ impl MockDiscovery {
                 Application::Oath,
             ],
             simulated: true,
+            metadata_access: MetadataAccess::Available,
         }])
     }
 
@@ -102,6 +104,31 @@ impl MockDiscovery {
             .map_err(|_| CredentialError::InventoryUnavailable)?
             .retain(|listener| listener.send(event.clone()).is_ok());
         Ok(())
+    }
+}
+
+impl FidoInspection for MockDiscovery {
+    fn fido_status(&self, id: &DeviceId) -> Result<FidoStatus> {
+        if !self.list()?.iter().any(|device| &device.id == id) {
+            return Err(CredentialError::DeviceNotFound(id.0.clone()));
+        }
+        Ok(FidoStatus {
+            versions: vec!["FIDO_2_1".into(), "U2F_V2".into()],
+            pin_set: Some(true),
+            pin_retries: Some(8),
+            credential_management: true,
+        })
+    }
+
+    fn discoverable_credentials(
+        &self,
+        id: &DeviceId,
+        _pin: &str,
+    ) -> Result<Vec<DiscoverableCredential>> {
+        if !self.list()?.iter().any(|device| &device.id == id) {
+            return Err(CredentialError::DeviceNotFound(id.0.clone()));
+        }
+        Ok(Vec::new())
     }
 }
 

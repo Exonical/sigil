@@ -16,3 +16,6 @@ sigil-core = { path = "../sigil-core" }
 sigil-mock = { path = "../sigil-mock" }
 sigil-platform = { path = "../sigil-platform" }
 tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

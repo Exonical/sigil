@@ -2,7 +2,10 @@
 
 #[cfg(not(target_os = "windows"))]
 use sigil_core::CredentialError;
-use sigil_core::{DeviceDiscovery, DeviceEvent, DeviceInfo, Result};
+use sigil_core::{
+    DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoInspection,
+    FidoStatus, Result,
+};
 use std::sync::mpsc::Receiver;
 #[cfg(any(target_os = "windows", test))]
 use std::sync::mpsc::Sender;
@@ -69,10 +72,42 @@ impl DeviceDiscovery for NativeDiscovery {
     }
 }
 
+impl FidoInspection for NativeDiscovery {
+    fn fido_status(&self, id: &DeviceId) -> Result<FidoStatus> {
+        #[cfg(target_os = "windows")]
+        return windows::fido_status(id);
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = id;
+            Err(CredentialError::BackendUnavailable(
+                "native FIDO inspection is not implemented for this platform",
+            ))
+        }
+    }
+
+    fn discoverable_credentials(
+        &self,
+        id: &DeviceId,
+        pin: &str,
+    ) -> Result<Vec<DiscoverableCredential>> {
+        #[cfg(target_os = "windows")]
+        return windows::discoverable_credentials(id, pin);
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, pin);
+            Err(CredentialError::BackendUnavailable(
+                "native FIDO inspection is not implemented for this platform",
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sigil_core::{Application, DeviceId, FirmwareVersion, Transport};
+    use sigil_core::{Application, DeviceId, FirmwareVersion, MetadataAccess, Transport};
 
     fn fixture(id: &str) -> DeviceInfo {
         DeviceInfo {
@@ -90,6 +125,7 @@ mod tests {
             applications: vec![Application::Piv],
             supported_applications: vec![Application::Piv],
             simulated: false,
+            metadata_access: MetadataAccess::Unknown,
         }
     }
 

@@ -38,6 +38,26 @@ enum Command {
         #[command(subcommand)]
         command: DeviceCommand,
     },
+    Fido {
+        #[command(subcommand)]
+        command: FidoCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum FidoCommand {
+    Info {
+        device: String,
+    },
+    Credentials {
+        #[command(subcommand)]
+        command: CredentialCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum CredentialCommand {
+    List { device: String },
 }
 
 #[derive(Subcommand)]
@@ -111,6 +131,54 @@ fn run(args: Args) -> Result<String> {
                 ))
             }
         }
+        Command::Fido {
+            command: FidoCommand::Info { device },
+        } => {
+            let status = service.fido_status(&DeviceId(device))?;
+            if args.json {
+                Ok(serde_json::to_string_pretty(&status)?)
+            } else {
+                Ok(format!(
+                    "Versions: {}\nPIN set: {:?}\nPIN retries: {:?}\nCredential management: {}",
+                    status.versions.join(", "),
+                    status.pin_set,
+                    status.pin_retries,
+                    status.credential_management
+                ))
+            }
+        }
+        Command::Fido {
+            command:
+                FidoCommand::Credentials {
+                    command: CredentialCommand::List { device },
+                },
+        } => {
+            let id = DeviceId(device);
+            let status = service.fido_status(&id)?;
+            if !status.credential_management {
+                anyhow::bail!("this key does not support discoverable credential management");
+            }
+            eprint!("FIDO2 PIN: ");
+            let pin = rpassword::read_password()?;
+            eprintln!();
+            let credentials = service.discoverable_credentials(&id, &pin)?;
+            if args.json {
+                Ok(serde_json::to_string_pretty(&credentials)?)
+            } else if credentials.is_empty() {
+                Ok("No discoverable credentials found.".into())
+            } else {
+                Ok(credentials
+                    .iter()
+                    .map(|entry| {
+                        format!(
+                            "{}  {}  {}",
+                            entry.rp_id, entry.user_name, entry.credential_id
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"))
+            }
+        }
     }
 }
 
@@ -154,6 +222,23 @@ mod tests {
         ])?;
         let value: DeviceInfo = serde_json::from_str(&run(args)?)?;
         assert_eq!(value.serial.as_deref(), Some("12345678"));
+        Ok(())
+    }
+
+    #[test]
+    fn fido_status_is_structured_for_selected_device() -> Result<()> {
+        let args = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "fido",
+            "info",
+            "mock-yubikey-12345678",
+            "--json",
+        ])?;
+        let value: sigil_core::FidoStatus = serde_json::from_str(&run(args)?)?;
+        assert!(value.credential_management);
+        assert_eq!(value.pin_retries, Some(8));
         Ok(())
     }
 }
