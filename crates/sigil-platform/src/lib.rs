@@ -4,7 +4,8 @@
 use sigil_core::CredentialError;
 use sigil_core::{
     DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoInspection,
-    FidoStatus, Fingerprint, FingerprintProgress, Result,
+    FidoStatus, Fingerprint, FingerprintProgress, PivCertificate, PivInfo, PivInspection, PivSlot,
+    PivSlotInfo, Result,
 };
 use std::sync::mpsc::Receiver;
 #[cfg(any(target_os = "windows", test))]
@@ -140,6 +141,44 @@ impl FidoInspection for NativeDiscovery {
             let _ = (id, pin);
             Err(CredentialError::BackendUnavailable(
                 "native FIDO inspection is not implemented for this platform",
+            ))
+        }
+    }
+}
+
+impl PivInspection for NativeDiscovery {
+    fn piv_info(&self, id: &DeviceId) -> Result<PivInfo> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::piv_info(id);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = id;
+            Err(CredentialError::BackendUnavailable(
+                "native PIV inspection is not implemented for this platform",
+            ))
+        }
+    }
+
+    fn piv_slots(&self, id: &DeviceId) -> Result<Vec<PivSlotInfo>> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::piv_slots(id);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = id;
+            Err(CredentialError::BackendUnavailable(
+                "native PIV inspection is not implemented for this platform",
+            ))
+        }
+    }
+
+    fn piv_certificate(&self, id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::piv_certificate(id, slot);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, slot);
+            Err(CredentialError::BackendUnavailable(
+                "native PIV inspection is not implemented for this platform",
             ))
         }
     }

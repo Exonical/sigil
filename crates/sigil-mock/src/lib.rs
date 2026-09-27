@@ -8,7 +8,9 @@ use std::sync::{
 use sigil_core::{
     Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
     DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint, FingerprintProgress,
-    FirmwareVersion, MetadataAccess, Result, Transport,
+    FirmwareVersion, KeyOrigin, KeyStatus, ManagementKeyStatus, MetadataAccess, PinPolicy,
+    PivAlgorithm, PivCertificate, PivInfo, PivInspection, PivKeyMetadata, PivSlot, PivSlotInfo,
+    Result, RetryStatus, TouchPolicy, Transport,
 };
 
 #[derive(Default)]
@@ -156,6 +158,105 @@ impl FidoInspection for MockDiscovery {
             "fingerprint deletion on simulated hardware",
         ))
     }
+}
+
+impl PivInspection for MockDiscovery {
+    fn piv_info(&self, id: &DeviceId) -> Result<PivInfo> {
+        self.require_known_device(id)?;
+        Ok(PivInfo {
+            version: Some(FirmwareVersion {
+                major: 5,
+                minor: 7,
+                patch: 1,
+            }),
+            pin: Some(RetryStatus {
+                remaining: 3,
+                total: Some(3),
+                default_value: Some(false),
+            }),
+            puk: Some(RetryStatus {
+                remaining: 3,
+                total: Some(3),
+                default_value: Some(false),
+            }),
+            management_key: Some(ManagementKeyStatus {
+                algorithm: PivAlgorithm::Aes192,
+                default_value: Some(false),
+                touch_policy: Some(TouchPolicy::Never),
+            }),
+        })
+    }
+
+    fn piv_slots(&self, id: &DeviceId) -> Result<Vec<PivSlotInfo>> {
+        self.require_known_device(id)?;
+        Ok(vec![
+            PivSlotInfo {
+                slot: PivSlot::AUTHENTICATION,
+                certificate: Some(fixture_summary(P256_CERT)?),
+                key: present(PivAlgorithm::EccP256, PinPolicy::Once),
+            },
+            PivSlotInfo {
+                slot: PivSlot::SIGNATURE,
+                certificate: None,
+                key: KeyStatus::Absent,
+            },
+            PivSlotInfo {
+                slot: PivSlot::KEY_MANAGEMENT,
+                certificate: Some(fixture_summary(RSA_CERT)?),
+                key: present(PivAlgorithm::Rsa2048, PinPolicy::Once),
+            },
+            PivSlotInfo {
+                slot: PivSlot::CARD_AUTHENTICATION,
+                certificate: Some(fixture_summary(CARD_AUTH_CERT)?),
+                key: present(PivAlgorithm::EccP256, PinPolicy::Never),
+            },
+        ])
+    }
+
+    fn piv_certificate(&self, id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>> {
+        self.require_known_device(id)?;
+        let der = match slot {
+            PivSlot::AUTHENTICATION => Some(P256_CERT),
+            PivSlot::KEY_MANAGEMENT => Some(RSA_CERT),
+            PivSlot::CARD_AUTHENTICATION => Some(CARD_AUTH_CERT),
+            _ => None,
+        };
+        der.map(|der| {
+            Ok(PivCertificate {
+                slot,
+                summary: sigil_piv::summarize_certificate(der)?,
+                der: der.to_vec(),
+            })
+        })
+        .transpose()
+    }
+}
+
+impl MockDiscovery {
+    fn require_known_device(&self, id: &DeviceId) -> Result<()> {
+        if self.list()?.iter().any(|device| &device.id == id) {
+            Ok(())
+        } else {
+            Err(CredentialError::DeviceNotFound(id.0.clone()))
+        }
+    }
+}
+
+const P256_CERT: &[u8] = include_bytes!("../fixtures/piv-9a-p256.der");
+const RSA_CERT: &[u8] = include_bytes!("../fixtures/piv-9d-rsa2048.der");
+const CARD_AUTH_CERT: &[u8] = include_bytes!("../fixtures/piv-9e-p256.der");
+
+fn fixture_summary(der: &[u8]) -> Result<sigil_core::CertificateSummary> {
+    sigil_piv::summarize_certificate(der)
+}
+
+fn present(algorithm: PivAlgorithm, pin_policy: PinPolicy) -> KeyStatus {
+    KeyStatus::Present(PivKeyMetadata {
+        algorithm,
+        pin_policy,
+        touch_policy: TouchPolicy::Never,
+        origin: Some(KeyOrigin::Generated),
+    })
 }
 
 impl DeviceDiscovery for MockDiscovery {

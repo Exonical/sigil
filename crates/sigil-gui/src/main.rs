@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use sigil_app::CredentialService;
+mod piv;
+
 use sigil_core::{
     DeviceDiscovery, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, Fingerprint,
     MetadataAccess, Transport,
@@ -52,7 +54,17 @@ fn main() {
         )
         .with_writer(std::io::stderr)
         .init();
-    dioxus::launch(app);
+    dioxus::LaunchBuilder::desktop()
+        .with_cfg(
+            dioxus::desktop::Config::new().with_window(
+                dioxus::desktop::WindowBuilder::new()
+                    .with_title("Sigil")
+                    .with_inner_size(dioxus::desktop::LogicalSize::new(1280.0, 860.0))
+                    .with_min_inner_size(dioxus::desktop::LogicalSize::new(900.0, 600.0))
+                    .with_position(dioxus::desktop::LogicalPosition::new(80.0, 80.0)),
+            ),
+        )
+        .launch(app);
 }
 
 fn app() -> Element {
@@ -65,6 +77,7 @@ fn app() -> Element {
         };
         (CredentialService::new(backend), is_mock)
     });
+    use_context_provider(|| service.clone());
     let initial = use_hook(|| service.devices().map_err(|error| error.to_string()));
     let mut devices = use_signal_sync(|| initial.as_ref().cloned().unwrap_or_default());
     let mut status = use_signal_sync(|| initial.as_ref().err().cloned().unwrap_or_default());
@@ -408,7 +421,9 @@ fn app() -> Element {
                                 }
                             }
                         }
-                        p { class: "muted", "PIV inspection and management are planned for later milestones." }
+                        if info.transports.contains(&Transport::UsbSmartCard) || info.simulated {
+                            piv::PivPanel { key: "{info.id.0}", device: info.id.clone() }
+                        }
                     } else {
                         h2 { "No device selected" }
                         if !is_mock { p { class: "muted", "Connect a YubiKey, then refresh the device list." } }

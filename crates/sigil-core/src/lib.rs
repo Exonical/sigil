@@ -5,6 +5,13 @@ use std::sync::mpsc::Receiver;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod piv;
+pub use piv::{
+    CertificateFormat, CertificateSummary, KeyOrigin, KeyStatus, ManagementKeyStatus, PinPolicy,
+    PivAlgorithm, PivCertificate, PivInfo, PivKeyMetadata, PivSlot, PivSlotInfo, RetryStatus,
+    TouchPolicy,
+};
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct DeviceId(pub String);
@@ -125,13 +132,25 @@ pub enum CredentialError {
     FidoAccessRestricted,
     #[error("FIDO operation failed: {0}")]
     FidoOperation(String),
+    #[error("invalid PIV slot: {0}")]
+    InvalidSlot(String),
+    #[error("PIV application is not available on this device")]
+    PivUnavailable,
+    #[error("smart-card operation failed: {0}")]
+    SmartCardOperation(String),
+    #[error("card returned status {0:04X}")]
+    CardStatus(u16),
+    #[error("certificate could not be parsed: {0}")]
+    CertificateParse(String),
+    #[error("slot {0} has no certificate")]
+    CertificateNotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, CredentialError>;
 
 /// A snapshot followed by a subscription can have a race; callers should subscribe
 /// before fetching a snapshot and reconcile subsequent events by device ID.
-pub trait DeviceDiscovery: FidoInspection + Send + Sync {
+pub trait DeviceDiscovery: FidoInspection + PivInspection + Send + Sync {
     fn list(&self) -> Result<Vec<DeviceInfo>>;
     fn subscribe(&self) -> Result<Receiver<DeviceEvent>>;
 }
@@ -140,8 +159,7 @@ pub trait CredentialDevice: Send + Sync {
     fn info(&self) -> Result<DeviceInfo>;
 }
 
-/// A PIV capability is separate from generic credential devices. Operations will be
-/// added with typed slot, algorithm, and authorization types in the PIV milestone.
+/// A PIV capability is separate from generic credential devices.
 pub trait PivDevice: CredentialDevice {
     fn piv_available(&self) -> Result<bool>;
 }
@@ -166,4 +184,10 @@ pub trait FidoInspection: Send + Sync {
         on_progress: &mut dyn FnMut(FingerprintProgress),
     ) -> Result<Fingerprint>;
     fn remove_fingerprint(&self, id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()>;
+}
+
+pub trait PivInspection: Send + Sync {
+    fn piv_info(&self, id: &DeviceId) -> Result<PivInfo>;
+    fn piv_slots(&self, id: &DeviceId) -> Result<Vec<PivSlotInfo>>;
+    fn piv_certificate(&self, id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>>;
 }

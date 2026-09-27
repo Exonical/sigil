@@ -3,8 +3,9 @@
 use std::sync::{Arc, mpsc::Receiver};
 
 use sigil_core::{
-    CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
-    FidoStatus, Fingerprint, FingerprintProgress, Result,
+    CertificateFormat, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
+    DiscoverableCredential, FidoStatus, Fingerprint, FingerprintProgress, PivCertificate, PivInfo,
+    PivSlot, PivSlotInfo, Result,
 };
 
 #[derive(Clone)]
@@ -62,5 +63,29 @@ impl CredentialService {
 
     pub fn remove_fingerprint(&self, id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()> {
         self.discovery.remove_fingerprint(id, pin, fingerprint_id)
+    }
+
+    pub fn piv_info(&self, id: &DeviceId) -> Result<PivInfo> {
+        self.discovery.piv_info(id)
+    }
+
+    pub fn piv_slots(&self, id: &DeviceId) -> Result<Vec<PivSlotInfo>> {
+        self.discovery.piv_slots(id)
+    }
+
+    pub fn piv_certificate(&self, id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>> {
+        self.discovery.piv_certificate(id, slot)
+    }
+
+    pub fn export_certificate(
+        &self,
+        id: &DeviceId,
+        slot: PivSlot,
+        format: CertificateFormat,
+    ) -> Result<Vec<u8>> {
+        let certificate = self
+            .piv_certificate(id, slot)?
+            .ok_or_else(|| CredentialError::CertificateNotFound(slot.to_string()))?;
+        Ok(sigil_piv::encode_certificate(&certificate.der, format))
     }
 }

@@ -34,6 +34,7 @@ use windows_sys::Win32::{
 use crate::reconcile;
 
 mod ctap;
+pub(super) mod piv;
 
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
 const MAX_INFO_PAGES: u8 = 4;

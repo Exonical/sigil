@@ -5,6 +5,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use sigil_app::CredentialService;
 use sigil_core::{DeviceDiscovery, DeviceId, DeviceInfo};
 
+mod piv;
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum Backend {
     Mock,
@@ -41,6 +43,10 @@ enum Command {
     Fido {
         #[command(subcommand)]
         command: FidoCommand,
+    },
+    Piv {
+        #[command(subcommand)]
+        command: piv::PivCommand,
     },
 }
 
@@ -151,6 +157,7 @@ fn run(args: Args) -> Result<String> {
                 ))
             }
         }
+        Command::Piv { command } => piv::handle(&service, command, args.json),
         Command::Fido {
             command: FidoCommand::Info { device },
         } => {
@@ -328,6 +335,118 @@ mod tests {
         let value: sigil_core::FidoStatus = serde_json::from_str(&run(args)?)?;
         assert!(value.credential_management);
         assert_eq!(value.pin_retries, Some(8));
+        Ok(())
+    }
+
+    #[test]
+    fn piv_slots_json_includes_fixture_and_absent_standard_slot() -> Result<()> {
+        let args = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "piv",
+            "slots",
+            "mock-yubikey-12345678",
+            "--json",
+        ])?;
+        let slots: Vec<sigil_core::PivSlotInfo> = serde_json::from_str(&run(args)?)?;
+        assert_eq!(slots.len(), 4);
+        let signature = slots
+            .iter()
+            .find(|slot| slot.slot == sigil_core::PivSlot::SIGNATURE)
+            .unwrap();
+        assert_eq!(signature.key, sigil_core::KeyStatus::Absent);
+        let authentication = slots
+            .iter()
+            .find(|slot| slot.slot == sigil_core::PivSlot::AUTHENTICATION)
+            .unwrap();
+        assert!(
+            authentication
+                .certificate
+                .as_ref()
+                .unwrap()
+                .subject
+                .contains("Simulated PIV Authentication")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn piv_info_json_reports_retry_status() -> Result<()> {
+        let args = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "piv",
+            "info",
+            "mock-yubikey-12345678",
+            "--json",
+        ])?;
+        let info: sigil_core::PivInfo = serde_json::from_str(&run(args)?)?;
+        assert_eq!(info.pin.unwrap().remaining, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn piv_certificate_show_and_export_handle_missing_and_existing_paths() -> Result<()> {
+        let missing = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "piv",
+            "certificate",
+            "show",
+            "mock-yubikey-12345678",
+            "9c",
+        ])?;
+        assert!(run(missing).is_err());
+
+        let path = std::env::temp_dir().join(format!(
+            "sigil-piv-{}.pem",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_argument = path.to_string_lossy().to_string();
+        let export_args = || {
+            Args::try_parse_from([
+                "cms",
+                "--backend",
+                "mock",
+                "piv",
+                "certificate",
+                "export",
+                "mock-yubikey-12345678",
+                "9a",
+                "--output",
+                &path_argument,
+            ])
+        };
+        run(export_args()?)?;
+        let pem = std::fs::read(&path)?;
+        assert!(pem.starts_with(b"-----BEGIN CERTIFICATE-----"));
+        assert!(run(export_args()?).is_err());
+        std::fs::remove_file(path)?;
+
+        let der = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "piv",
+            "certificate",
+            "export",
+            "mock-yubikey-12345678",
+            "9a",
+            "--format",
+            "der",
+        ])?;
+        assert!(
+            run(der)
+                .unwrap_err()
+                .to_string()
+                .contains("DER output requires --output")
+        );
         Ok(())
     }
 }

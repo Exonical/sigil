@@ -1,6 +1,6 @@
 # Sigil
 
-Sigil is a local credential manager for YubiKeys and, later, other hardware credentials. Windows discovery and FIDO inspection are read-only; explicit fingerprint enrollment and deletion are available for supported Bio keys. PIV management and enrollment are later milestones.
+Sigil is a local credential manager for YubiKeys and, later, other hardware credentials. Windows discovery, FIDO inspection, and PIV inspection are read-only; explicit fingerprint enrollment and deletion are available for supported Bio keys. PIV mutation and enrollment are later milestones.
 
 ## Run it
 
@@ -22,7 +22,21 @@ cargo run -p sigil-cli -- fido fingerprints enroll '<device-id>' --json
 cargo run -p sigil-cli -- fido fingerprints remove '<device-id>' '<fingerprint-id>' --yes
 ```
 
-The GUI can open a second, elevated instance on request when Windows restricts FIDO HID access. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires a second confirmation and a fresh PIN entry. Fingerprint deletion is permanent. Sigil does not save PINs or enumerate non-discoverable credentials. The Bio operations compile for Windows but require validation with a physical Bio key before operational use.
+PIV inspection is read-only. It displays PIN/PUK retry metadata, key policy and algorithm metadata when available, and certificate summaries. Certificates can be shown or exported as PEM/DER; export paths are created exclusively and are never overwritten.
+
+```powershell
+cargo run -p sigil-cli -- --backend mock piv info mock-yubikey-12345678 --json
+cargo run -p sigil-cli -- --backend mock piv slots mock-yubikey-12345678 --json
+cargo run -p sigil-cli -- --backend mock piv certificate show mock-yubikey-12345678 9a
+cargo run -p sigil-cli -- --backend mock piv certificate export mock-yubikey-12345678 9a
+cargo run -p sigil-cli -- piv info '<smart-card-device-id>'
+cargo run -p sigil-cli -- piv slots '<smart-card-device-id>'
+cargo run -p sigil-cli -- piv certificate export '<smart-card-device-id>' 9a --format der --output .\authentication.der
+```
+
+Mock certificates are self-signed public test fixtures and do not contain private keys. Native PIV commands require a discovered `windows-pcsc:` device with an enabled PIV application. A FIDO-only key is not a smart-card device. No real PIV hardware was available for validation on the development machine (the attached YubiKey is FIDO-only and Windows `SCardSvr` is stopped); all regular tests are hardware-free. The native read-only hardware test is skipped unless `SIGIL_HARDWARE_TESTS=1` is set.
+
+Run the gated hardware test with `$env:SIGIL_HARDWARE_TESTS='1'; cargo test -p sigil-platform --test hardware_piv`; without the environment variable it returns without touching hardware. The GUI can open a second, elevated instance on request when Windows restricts FIDO HID access. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires a second confirmation and a fresh PIN entry. Fingerprint deletion is permanent. Sigil does not save PINs or enumerate non-discoverable credentials. The Bio operations compile for Windows but require validation with a physical Bio key before operational use.
 
 On Windows, these commands use native discovery. Select a returned opaque ID with `cms device info <id>`; `--json` is available for both device commands. For hardware-free development use `cargo run -p sigil-cli -- --backend mock device list --json` and `cargo run -p sigil-gui -- --mock`. On Linux, the mock remains the default until the native backend is implemented; `--backend native` reports an explicit error. The CLI binary is named `cms`.
 
@@ -38,17 +52,18 @@ If the Windows Smart Card service (`SCardSvr`) is stopped, the CLI warns on stde
 | `sigil-app` | Shared inventory and explicit device selection used by both entry points |
 | `sigil-mock` | Hardware-free inventory and connection/update/removal events |
 | `sigil-platform` | Windows PC/SC and HID discovery; Linux native implementation remains a placeholder |
-| `sigil-yubikey` | Read-only management response parser and provider skeleton |
+| `sigil-yubikey` | Read-only YubiKey management and PIV metadata provider |
+| `sigil-piv` | Vendor-neutral read-only PIV APDU flow, BER-TLV, certificate parsing and encoding |
 | `sigil-cli` | Clap commands and JSON rendering |
 | `sigil-gui` | Dioxus desktop presentation calling the same service |
 
 `DeviceId` is opaque and scoped to its discovery backend. Serial numbers can be absent and are not used as a unique selection key. A consumer subscribes to events before reading a snapshot and reconciles later events by ID; the mock backend exercises this contract. No general-purpose APDU service is exposed.
 
-PIV operations, authorization, secure secret handling, PIN/PUK workflows, key generation, CSR, and the centralized Go service are future milestones. The `PivDevice` and `FidoDevice` traits currently advertise only availability; typed operational interfaces will be added alongside implementation and tests rather than exposing an unsafe generic command API.
+PIV mutation, authorization, secure secret handling, PIN/PUK changes, key generation, CSR creation, and the centralized Go service are future milestones. The `PivDevice` and `FidoDevice` traits retain capability-level availability checks; discovery backends additionally implement typed read-only inspection through their respective inspection traits. No general-purpose APDU service is exposed.
 
-## Next: PIV inspection and hardware validation
+## Next: Milestone 4 — PIV mutation
 
-Validate Windows discovery with zero, one, and multiple physical devices, including a FIDO-only Security Key and a YubiKey 5 with CCID enabled. Record behavior when the smart-card service is stopped, a token is removed mid-scan, and another application holds the card exclusively. PIV inspection will add typed slots and certificate parsing, without exposing a general-purpose APDU API. Linux later adds pcsc-lite and HID behind the same discovery interface. The PC/SC event watcher uses its own context so blocking notifications do not block scans.
+The next milestone adds carefully authorized PIV mutation workflows, including PIN/PUK management, key generation, and CSR creation. These operations must keep PINs out of command-line arguments and logs, and must remain separate from the provider-internal APDU transport. Validate all mutating hardware behavior on dedicated test devices before operational use. Linux later adds pcsc-lite and HID behind the same discovery interface. The PC/SC event watcher uses its own context so blocking notifications do not block scans.
 
 ## Quality gates
 

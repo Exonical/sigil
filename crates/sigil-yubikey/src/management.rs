@@ -28,36 +28,15 @@ pub fn parse_page(encoded: &[u8]) -> std::result::Result<Tags, ParseError> {
     if encoded.is_empty() || encoded.len() > 256 || usize::from(encoded[0]) != encoded.len() - 1 {
         return Err(ParseError::InvalidLength);
     }
-    let mut bytes = &encoded[1..];
-    let mut tags = Tags::new();
-    while !bytes.is_empty() {
-        if bytes.len() < 2 {
-            return Err(ParseError::InvalidTlv);
-        }
-        let tag = bytes[0];
-        let length = bytes[1];
-        bytes = &bytes[2..];
-        let length = if length < 0x80 {
-            usize::from(length)
-        } else {
-            let count = usize::from(length & 0x7f);
-            if count == 0 || count > 2 || bytes.len() < count {
-                return Err(ParseError::InvalidTlv);
-            }
-            let mut value = 0usize;
-            for byte in &bytes[..count] {
-                value = (value << 8) | usize::from(*byte);
-            }
-            bytes = &bytes[count..];
-            value
-        };
-        if length > bytes.len() {
-            return Err(ParseError::InvalidTlv);
-        }
-        tags.insert(tag, bytes[..length].to_vec());
-        bytes = &bytes[length..];
-    }
-    Ok(tags)
+    sigil_piv::tlv::parse(&encoded[1..])
+        .map_err(|_| ParseError::InvalidTlv)?
+        .into_iter()
+        .map(|(tag, value)| {
+            u8::try_from(tag)
+                .map(|tag| (tag, value))
+                .map_err(|_| ParseError::InvalidTlv)
+        })
+        .collect()
 }
 
 #[derive(Debug, PartialEq, Eq)]
