@@ -30,6 +30,8 @@ use windows_sys::Win32::{
 
 use crate::reconcile;
 
+mod ctap;
+
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
 const MAX_INFO_PAGES: u8 = 4;
 
@@ -131,7 +133,11 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
         .as_ref()
         .map(|hid| {
             hid.device_list()
-                .filter_map(|info| fido_device(info, include_ccid))
+                .filter_map(|info| {
+                    let mut device = fido_device(info, include_ccid)?;
+                    enrich_hid(&mut device, hid, info.path());
+                    Some(device)
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -155,7 +161,7 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                 if devices.iter().any(|device| device.id == id) {
                     continue;
                 }
-                devices.push(DeviceInfo {
+                let mut device = DeviceInfo {
                     id,
                     vendor: "Yubico".into(),
                     model: "Yubico FIDO security key".into(),
@@ -166,7 +172,11 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     applications: Vec::new(),
                     supported_applications: Vec::new(),
                     simulated: false,
-                });
+                };
+                if let (Ok(hid), Ok(path)) = (&hid_result, CString::new(path)) {
+                    enrich_hid(&mut device, hid, &path);
+                }
+                devices.push(device);
             }
         }
         Err(error) if hid_result.is_err() => {
@@ -176,6 +186,34 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
     }
     devices.sort_by(|a, b| a.id.0.cmp(&b.id.0));
     Ok(devices)
+}
+
+fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
+    let handle = match hid.open_path(path) {
+        Ok(handle) => handle,
+        Err(error) => {
+            tracing::debug!(%error, id = %device.id.0, "FIDO metadata access unavailable");
+            return;
+        }
+    };
+    if let Some(metadata) = ctap::read_info(&handle) {
+        device.firmware = metadata.firmware;
+        if let Some(details) = metadata.details {
+            device.serial = details.serial;
+            device.firmware = details.firmware.or(device.firmware.take());
+            device.form_factor = details.form_factor;
+            device.applications = details.enabled_applications;
+            device.supported_applications = details.supported_applications;
+            if details.transports.contains(&Transport::UsbOtp) {
+                device.transports.push(Transport::UsbOtp);
+            }
+            if details.transports.contains(&Transport::Nfc) {
+                device.transports.push(Transport::Nfc);
+            }
+        }
+    } else {
+        tracing::debug!(id = %device.id.0, "FIDO management metadata unavailable from device");
+    }
 }
 
 fn yubico_pid_from_path(path: &str) -> Option<u16> {

@@ -14,3 +14,4 @@ tracing.workspace = true
 pcsc = "2.9"
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_HumanInterfaceDevice", "Win32_Foundation"] }
+getrandom = "0.3"
