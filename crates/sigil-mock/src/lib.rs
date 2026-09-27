@@ -28,6 +28,7 @@ impl MockDiscovery {
                 minor: 7,
                 patch: 1,
             }),
+            form_factor: Some("Keychain (USB-A)".into()),
             transports: vec![
                 Transport::UsbSmartCard,
                 Transport::UsbHid,
@@ -35,6 +36,14 @@ impl MockDiscovery {
                 Transport::Nfc,
             ],
             applications: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+            ],
+            supported_applications: vec![
                 Application::Piv,
                 Application::Fido2,
                 Application::U2f,

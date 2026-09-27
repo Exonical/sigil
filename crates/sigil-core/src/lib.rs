@@ -44,8 +44,13 @@ pub struct DeviceInfo {
     pub model: String,
     pub serial: Option<String>,
     pub firmware: Option<FirmwareVersion>,
+    /// Device form factor, when reported by the provider.
+    pub form_factor: Option<String>,
     pub transports: Vec<Transport>,
+    /// Applications verified as enabled on the current USB configuration.
     pub applications: Vec<Application>,
+    /// Applications the device reports it can support, including disabled ones.
+    pub supported_applications: Vec<Application>,
     /// True for fixtures. Consumers must clearly distinguish simulated hardware.
     pub simulated: bool,
 }
@@ -67,6 +72,8 @@ pub enum CredentialError {
     UnsupportedOperation(&'static str),
     #[error("platform backend is unavailable: {0}")]
     BackendUnavailable(&'static str),
+    #[error("Windows smart-card service is unavailable: {0}")]
+    PcscUnavailable(String),
     #[error("device inventory is unavailable")]
     InventoryUnavailable,
 }

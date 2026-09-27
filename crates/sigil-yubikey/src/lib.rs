@@ -2,6 +2,8 @@
 
 use sigil_core::{Application, CredentialDevice, DeviceInfo, FidoDevice, PivDevice, Result};
 
+pub mod management;
+
 pub struct YubiKeyDevice {
     info: DeviceInfo,
 }

@@ -7,4 +7,9 @@ rust-version.workspace = true
 
 [dependencies]
 sigil-core = { path = "../sigil-core" }
+sigil-yubikey = { path = "../sigil-yubikey" }
+tracing.workspace = true
 
+[target.'cfg(target_os = "windows")'.dependencies]
+pcsc = "2.9"
+hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }

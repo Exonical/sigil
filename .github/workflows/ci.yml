@@ -1,0 +1,35 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Test workspace without hardware
+        run: cargo test --workspace
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Exercise CLI inventory JSON
+        shell: pwsh
+        run: |
+          $inventory = cargo run -q -p sigil-cli -- --backend mock device list --json | ConvertFrom-Json
+          if ($inventory.Count -ne 1 -or -not $inventory[0].simulated) { throw 'Mock inventory JSON check failed' }
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust components
+        run: rustup component add rustfmt clippy
+      - name: Test non-GUI workspace without hardware
+        run: cargo test --workspace --exclude sigil-gui
+      - name: Lint non-GUI workspace
+        run: cargo clippy --workspace --exclude sigil-gui --all-targets -- -D warnings

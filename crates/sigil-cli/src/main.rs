@@ -5,20 +5,26 @@ use clap::{Parser, Subcommand, ValueEnum};
 use sigil_app::CredentialService;
 use sigil_core::{DeviceDiscovery, DeviceId, DeviceInfo};
 
-#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+#[derive(Clone, Copy, Debug, ValueEnum)]
 enum Backend {
-    #[default]
     Mock,
     Native,
 }
 
+impl Default for Backend {
+    fn default() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Native
+        } else {
+            Self::Mock
+        }
+    }
+}
+
 #[derive(Parser)]
-#[command(
-    name = "cms",
-    about = "Sigil credential manager (milestone 1 prototype)"
-)]
+#[command(name = "cms", about = "Sigil credential manager")]
 struct Args {
-    #[arg(long, global = true, value_enum, default_value_t = Backend::Mock)]
+    #[arg(long, global = true, value_enum, default_value_t = Backend::default())]
     backend: Backend,
     #[arg(long, global = true)]
     json: bool,
@@ -81,7 +87,7 @@ fn run(args: Args) -> Result<String> {
                 Ok(serde_json::to_string_pretty(&info)?)
             } else {
                 Ok(format!(
-                    "{}\nID: {}\nVendor: {}\nSerial: {}\nFirmware: {}\nApplications: {}\nSimulated: {}",
+                    "{}\nID: {}\nVendor: {}\nSerial: {}\nFirmware: {}\nForm factor: {}\nEnabled applications: {}\nSupported applications: {}\nSimulated: {}",
                     info.model,
                     info.id.0,
                     info.vendor,
@@ -90,7 +96,13 @@ fn run(args: Args) -> Result<String> {
                         .as_ref()
                         .map(|v| format!("{}.{}.{}", v.major, v.minor, v.patch))
                         .unwrap_or_else(|| "unknown".into()),
+                    info.form_factor.as_deref().unwrap_or("unknown"),
                     info.applications
+                        .iter()
+                        .map(|app| format!("{app:?}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    info.supported_applications
                         .iter()
                         .map(|app| format!("{app:?}"))
                         .collect::<Vec<_>>()
@@ -118,7 +130,7 @@ mod tests {
 
     #[test]
     fn json_list_is_parseable_and_clearly_simulated() -> Result<()> {
-        let args = Args::try_parse_from(["cms", "device", "list", "--json"])?;
+        let args = Args::try_parse_from(["cms", "--backend", "mock", "device", "list", "--json"])?;
         let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
         assert_eq!(result.len(), 1);
         assert!(result[0].simulated);
@@ -128,8 +140,15 @@ mod tests {
 
     #[test]
     fn explicit_device_selection() -> Result<()> {
-        let args =
-            Args::try_parse_from(["cms", "device", "info", "mock-yubikey-12345678", "--json"])?;
+        let args = Args::try_parse_from([
+            "cms",
+            "--backend",
+            "mock",
+            "device",
+            "info",
+            "mock-yubikey-12345678",
+            "--json",
+        ])?;
         let value: DeviceInfo = serde_json::from_str(&run(args)?)?;
         assert_eq!(value.serial.as_deref(), Some("12345678"));
         Ok(())
