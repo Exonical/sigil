@@ -22,31 +22,37 @@ const MAX_INFO_PAGES: u8 = 4;
 pub(super) fn list() -> Result<Vec<DeviceInfo>> {
     match establish() {
         Ok(context) => scan(&context),
-        Err(pcsc_error) => match scan_hid() {
-            Ok(devices) if !devices.is_empty() => Ok(devices),
-            _ => Err(pcsc_error),
-        },
+        Err(error) if service_stopped(error) => {
+            tracing::warn!(
+                "Windows Smart Card service (SCardSvr) is stopped; CCID details are unavailable"
+            );
+            scan_hid(true).map_err(|hid_error| {
+                CredentialError::PcscUnavailable(format!(
+                    "{error}; HID enumeration also failed: {hid_error}"
+                ))
+            })
+        }
+        Err(error) => Err(CredentialError::PcscUnavailable(error.to_string())),
     }
 }
 
 pub(super) fn subscribe() -> Result<Receiver<DeviceEvent>> {
-    let context = establish().ok();
     let (sender, receiver) = mpsc::channel();
     thread::Builder::new()
         .name("sigil-device-events".into())
-        .spawn(move || match context {
-            Some(context) => watch(context, sender),
-            None => watch_hid_only(sender),
-        })
+        .spawn(move || watch_devices(sender))
         .map_err(|_| {
             CredentialError::BackendUnavailable("could not start the smart-card event watcher")
         })?;
     Ok(receiver)
 }
 
-fn establish() -> Result<Context> {
+fn establish() -> std::result::Result<Context, PcscError> {
     Context::establish(Scope::User)
-        .map_err(|error| CredentialError::PcscUnavailable(error.to_string()))
+}
+
+fn service_stopped(error: PcscError) -> bool {
+    matches!(error, PcscError::NoService | PcscError::ServiceStopped)
 }
 
 fn reader_names(context: &Context) -> Result<Vec<CString>> {
@@ -86,7 +92,7 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
     }
     // FIDO-only product IDs have no CCID interface, so these cannot duplicate
     // a PC/SC result. HID presence does not prove CTAP2 or a firmware version.
-    match scan_hid() {
+    match scan_hid(false) {
         Ok(hid_devices) => devices.extend(hid_devices),
         Err(error) => tracing::warn!(%error, "FIDO HID enumeration unavailable"),
     }
@@ -94,27 +100,41 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
     Ok(devices)
 }
 
-fn scan_hid() -> std::result::Result<Vec<DeviceInfo>, hidapi::HidError> {
+fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, hidapi::HidError> {
     let hid = hidapi::HidApi::new()?;
-    Ok(hid.device_list().filter_map(fido_only_device).collect())
+    Ok(hid
+        .device_list()
+        .filter_map(|info| fido_device(info, include_ccid))
+        .collect())
 }
 
-fn watch_hid_only(sender: Sender<DeviceEvent>) {
+fn watch_devices(sender: Sender<DeviceEvent>) {
     let mut previous = Vec::new();
     loop {
-        if let Ok(current) = scan_hid()
-            && !reconcile(&mut previous, current, &sender)
-        {
-            return;
+        match establish() {
+            Ok(context) => {
+                if !watch(context, &sender, &mut previous) {
+                    return;
+                }
+            }
+            Err(error) if service_stopped(error) => {
+                if let Ok(current) = scan_hid(true)
+                    && !reconcile(&mut previous, current, &sender)
+                {
+                    return;
+                }
+            }
+            Err(error) => tracing::warn!(%error, "smart-card watcher could not connect"),
         }
         thread::sleep(Duration::from_secs(5));
     }
 }
 
-fn fido_only_device(info: &hidapi::DeviceInfo) -> Option<DeviceInfo> {
+fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceInfo> {
     const YUBICO_VENDOR_ID: u16 = 0x1050;
     if info.vendor_id() != YUBICO_VENDOR_ID
-        || !is_fido_only_pid(info.product_id())
+        || !(is_fido_only_pid(info.product_id())
+            || (include_ccid && is_fido_ccid_pid(info.product_id())))
         || info.usage_page() != 0xf1d0
         || info.usage() != 1
     {
@@ -141,6 +161,11 @@ fn fido_only_device(info: &hidapi::DeviceInfo) -> Option<DeviceInfo> {
 fn is_fido_only_pid(pid: u16) -> bool {
     // Yubico's USB product IDs with FIDO but no CCID interface.
     matches!(pid, 0x0113 | 0x0114 | 0x0120 | 0x0402 | 0x0403 | 0x0410)
+}
+
+fn is_fido_ccid_pid(pid: u16) -> bool {
+    // These products expose both interfaces; use HID only while PC/SC is down.
+    matches!(pid, 0x0115 | 0x0116 | 0x0406 | 0x0407)
 }
 
 fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInfo {
@@ -218,8 +243,8 @@ fn parse_select_version(response: &[u8]) -> Option<FirmwareVersion> {
     })
 }
 
-fn watch(context: Context, sender: Sender<DeviceEvent>) {
-    let mut previous = Vec::new();
+// Return to the supervisor when PC/SC stops so HID monitoring can continue.
+fn watch(context: Context, sender: &Sender<DeviceEvent>, previous: &mut Vec<DeviceInfo>) -> bool {
     let mut names = Vec::new();
     let mut states = vec![ReaderState::new(
         pcsc::PNP_NOTIFICATION().to_owned(),
@@ -230,7 +255,7 @@ fn watch(context: Context, sender: Sender<DeviceEvent>) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(%error, "smart-card watcher stopped");
-                return;
+                return true;
             }
         };
         if names != current_names {
@@ -251,18 +276,18 @@ fn watch(context: Context, sender: Sender<DeviceEvent>) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(%error, "smart-card watcher stopped");
-                return;
+                return true;
             }
         };
-        if !reconcile(&mut previous, current, &sender) {
-            return;
+        if !reconcile(previous, current, sender) {
+            return false;
         }
         match context.get_status_change(Duration::from_secs(5), &mut states) {
             Ok(()) => states.iter_mut().for_each(ReaderState::sync_current_state),
             Err(PcscError::Timeout) => {}
             Err(error) => {
                 tracing::warn!(%error, "smart-card watcher stopped");
-                return;
+                return true;
             }
         }
     }
@@ -278,6 +303,15 @@ mod tests {
         assert!(is_fido_only_pid(0x0403));
         assert!(!is_fido_only_pid(0x0407));
         assert!(!is_fido_only_pid(0x0406));
+        assert!(is_fido_ccid_pid(0x0407));
+        assert!(!is_fido_ccid_pid(0x0403));
+    }
+
+    #[test]
+    fn stopped_service_is_a_distinct_recoverable_condition() {
+        assert!(service_stopped(PcscError::NoService));
+        assert!(service_stopped(PcscError::ServiceStopped));
+        assert!(!service_stopped(PcscError::NoReadersAvailable));
     }
 
     #[test]

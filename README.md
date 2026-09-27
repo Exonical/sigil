@@ -16,6 +16,8 @@ On Windows, these commands use native discovery. Select a returned opaque ID wit
 
 The Windows backend enumerates YubiKey smart-card readers through WinSCard/PC/SC, then reads the Yubico management applet for serial, firmware, form factor, and supported versus enabled USB applications. It separately enumerates FIDO-only Yubico USB product IDs through HID. FIDO-only HID presence alone does not establish CTAP2 support, so its application and firmware fields remain unknown. The retail model is also left generic when it cannot be verified. Smart-card insertion/removal uses reader notifications; HID-only discovery refreshes every five seconds. Multiple readers and keys keep separate opaque device IDs. Reader-name matching can miss nonstandard reader names. Hardware-generated attributes require validation on physical devices before relying on them operationally.
 
+If the Windows Smart Card service (`SCardSvr`) is stopped, the CLI warns on stderr and HID discovery can still list FIDO-capable YubiKeys, including models with a CCID interface. Their smart-card metadata is unavailable until the service starts. An empty list while the service is stopped does not rule out a CCID-only key. The watcher retries the service every five seconds. Check `Get-Service SCardSvr` in PowerShell; if a connected CCID key is still missing, run `Start-Service SCardSvr` in an elevated PowerShell and repeat `cargo run -p sigil-cli -- device list --json`. Windows may stop the service when no smart-card reader is attached.
+
 ## Architecture
 
 | Crate | Responsibility |

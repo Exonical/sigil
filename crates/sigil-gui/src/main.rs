@@ -6,7 +6,10 @@ use sigil_core::{DeviceDiscovery, DeviceId, DeviceInfo};
 
 fn main() {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
+        )
         .with_writer(std::io::stderr)
         .init();
     dioxus::launch(app);
@@ -140,6 +143,7 @@ fn app() -> Element {
                         p { class: "muted", "PIV inspection and management are planned for later milestones." }
                     } else {
                         h2 { "No device selected" }
+                        if !is_mock { p { class: "muted", "If a YubiKey is connected but missing, check the Windows Smart Card service (SCardSvr)." } }
                     }
                 }
             }
