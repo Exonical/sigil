@@ -150,13 +150,13 @@ impl FidoInspection for MockDiscovery {
         _on_progress: &mut dyn FnMut(FingerprintProgress),
     ) -> Result<Fingerprint> {
         Err(CredentialError::UnsupportedOperation(
-            "fingerprint enrollment on simulated hardware",
+            "fingerprint enrollment on simulated hardware".into(),
         ))
     }
 
     fn remove_fingerprint(&self, _id: &DeviceId, _pin: &str, _fingerprint_id: &str) -> Result<()> {
         Err(CredentialError::UnsupportedOperation(
-            "fingerprint deletion on simulated hardware",
+            "fingerprint deletion on simulated hardware".into(),
         ))
     }
 }

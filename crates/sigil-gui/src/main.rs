@@ -2,49 +2,14 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use sigil_app::CredentialService;
+use sigil_client::AgentClient;
+
 mod piv;
 
 use sigil_core::{
-    DeviceDiscovery, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, Fingerprint,
-    MetadataAccess, Transport,
+    DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, Fingerprint, MetadataAccess,
+    Transport,
 };
-
-#[cfg(target_os = "windows")]
-fn open_elevated() -> std::io::Result<()> {
-    use std::{iter, os::windows::ffi::OsStrExt, ptr};
-    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
-    let executable = std::env::current_exe()?;
-    let path: Vec<u16> = executable
-        .as_os_str()
-        .encode_wide()
-        .chain(iter::once(0))
-        .collect();
-    let verb: Vec<u16> = "runas".encode_utf16().chain(iter::once(0)).collect();
-    // SAFETY: Both UTF-16 strings are NUL terminated and live across the call.
-    let result = unsafe {
-        ShellExecuteW(
-            ptr::null_mut(),
-            verb.as_ptr(),
-            path.as_ptr(),
-            ptr::null(),
-            ptr::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    if result as isize <= 32 {
-        Err(std::io::Error::last_os_error())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn open_elevated() -> std::io::Result<()> {
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "Windows only",
-    ))
-}
 
 fn main() {
     tracing_subscriber::fmt()
@@ -67,16 +32,43 @@ fn main() {
         .launch(app);
 }
 
+fn agent_endpoint() -> Option<String> {
+    let mut arguments = std::env::args().skip(1);
+    while let Some(argument) = arguments.next() {
+        if argument == "--agent" {
+            return arguments.next();
+        }
+    }
+    None
+}
+
 fn app() -> Element {
-    let (service, is_mock) = use_hook(|| {
-        let is_mock = !cfg!(target_os = "windows") || std::env::args().any(|arg| arg == "--mock");
-        let backend: Arc<dyn DeviceDiscovery> = if is_mock {
-            Arc::new(sigil_mock::MockDiscovery::with_example())
-        } else {
-            Arc::new(sigil_platform::NativeDiscovery)
-        };
-        (CredentialService::new(backend), is_mock)
+    let connected = use_hook(|| {
+        AgentClient::connect(agent_endpoint().as_deref())
+            .map(|client| CredentialService::new(Arc::new(client)))
+            .map_err(|error| error.to_string())
     });
+    use_context_provider(|| connected.as_ref().ok().cloned());
+    match connected {
+        Ok(_) => rsx! { AgentUi {} },
+        Err(error) => rsx! {
+            style { {include_str!("style.css")} }
+            div { class: "shell",
+                header { h1 { "Sigil" } }
+                main { section {
+                    h2 { "Sigil agent is not running" }
+                    p { class: "error", "{error}" }
+                    p { class: "muted", "Start sigil-agent or install the Windows service, then restart Sigil." }
+                } }
+            }
+        },
+    }
+}
+
+#[component]
+fn AgentUi() -> Element {
+    let service = use_context::<Option<CredentialService>>()
+        .expect("connected agent service is provided by app");
     use_context_provider(|| service.clone());
     let initial = use_hook(|| service.devices().map_err(|error| error.to_string()));
     let mut devices = use_signal_sync(|| initial.as_ref().cloned().unwrap_or_default());
@@ -185,7 +177,7 @@ fn app() -> Element {
         div { class: "shell",
             header {
                 h1 { "Sigil" }
-                span { class: "badge", if is_mock { "SIMULATED HARDWARE" } else { "WINDOWS DEVICES" } }
+                span { class: "badge", "LOCAL AGENT" }
                 button { onclick: move |_| {
                     match refresh_service.devices() {
                         Ok(updated) => {
@@ -223,6 +215,7 @@ fn app() -> Element {
                     if !status_message.is_empty() { p { class: "error", "{status_message}" } }
                     if let Some(info) = current {
                         h2 { "{info.model}" }
+                        if info.simulated { span { class: "badge", "SIMULATED HARDWARE" } }
                         if info.simulated { p { class: "muted", "Fixture data for interface development. No physical YubiKey is connected by this backend." } }
                         dl {
                             dt { "Vendor" } dd { "{info.vendor}" }
@@ -235,10 +228,7 @@ fn app() -> Element {
                             dt { "Metadata access" } dd { "{info.metadata_access:?}" }
                         }
                         if info.metadata_access == MetadataAccess::Restricted {
-                            p { class: "muted", "Windows restricts FIDO HID access in this session. Open Sigil as administrator to inspect this key." }
-                            button { onclick: move |_| {
-                                if let Err(error) = open_elevated() { status.set(format!("Could not open elevated Sigil: {error}")); }
-                            }, "Open elevated Sigil" }
+                            p { class: "muted", "The agent cannot access this device's FIDO HID metadata in the current session." }
                         }
                         h3 { "Interfaces" }
                         div { class: "chips",
@@ -432,7 +422,7 @@ fn app() -> Element {
                         }
                     } else {
                         h2 { "No device selected" }
-                        if !is_mock { p { class: "muted", "Connect a YubiKey, then refresh the device list." } }
+                        p { class: "muted", "Connect a YubiKey, then refresh the device list." }
                     }
                 }
             }

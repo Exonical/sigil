@@ -1,33 +1,18 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use sigil_app::CredentialService;
-use sigil_core::{DeviceDiscovery, DeviceId, DeviceInfo};
+use sigil_client::AgentClient;
+use sigil_core::{DeviceId, DeviceInfo};
 
 mod piv;
-
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum Backend {
-    Mock,
-    Native,
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        if cfg!(target_os = "windows") {
-            Self::Native
-        } else {
-            Self::Mock
-        }
-    }
-}
 
 #[derive(Parser)]
 #[command(name = "cms", about = "Sigil credential manager")]
 struct Args {
-    #[arg(long, global = true, value_enum, default_value_t = Backend::default())]
-    backend: Backend,
+    #[arg(long, global = true)]
+    agent: Option<String>,
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -92,12 +77,10 @@ enum DeviceCommand {
     Info { device: String },
 }
 
-fn service(backend: Backend) -> CredentialService {
-    let discovery: Arc<dyn DeviceDiscovery> = match backend {
-        Backend::Mock => Arc::new(sigil_mock::MockDiscovery::with_example()),
-        Backend::Native => Arc::new(sigil_platform::NativeDiscovery),
-    };
-    CredentialService::new(discovery)
+fn service(endpoint: Option<&str>) -> Result<CredentialService> {
+    Ok(CredentialService::new(Arc::new(AgentClient::connect(
+        endpoint,
+    )?)))
 }
 
 fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
@@ -120,7 +103,7 @@ fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
 }
 
 fn run(args: Args) -> Result<String> {
-    let service = service(args.backend);
+    let service = service(args.agent.as_deref())?;
     match args.command {
         Command::Device {
             command: DeviceCommand::List,
@@ -297,11 +280,41 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Barrier, Mutex},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use p256::ecdsa::{Signature, SigningKey, signature::Signer};
+    use prost::Message;
+    use sigil_agent::{
+        grant::{GrantProvider, GrantRequest, GrantVerifier},
+        test_support::TestAgent,
+    };
+    use sigil_core::{DeviceDiscovery, DeviceEvent, FidoInspection};
+    use sigil_proto::v1::{OperationGrant, SignedGrant};
+
     use super::*;
+
+    fn parse_for_agent(agent: &TestAgent, command: &[&str]) -> Result<Args> {
+        let mut args = vec![
+            "cms".to_owned(),
+            "--agent".to_owned(),
+            agent.endpoint().to_owned(),
+        ];
+        args.extend(command.iter().map(|value| (*value).to_owned()));
+        Ok(Args::try_parse_from(args)?)
+    }
+
+    fn start_mock_agent() -> Result<TestAgent> {
+        TestAgent::spawn_mock()
+    }
 
     #[test]
     fn json_list_is_parseable_and_clearly_simulated() -> Result<()> {
-        let args = Args::try_parse_from(["cms", "--backend", "mock", "device", "list", "--json"])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["device", "list", "--json"])?;
         let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
         assert_eq!(result.len(), 1);
         assert!(result[0].simulated);
@@ -311,15 +324,11 @@ mod tests {
 
     #[test]
     fn explicit_device_selection() -> Result<()> {
-        let args = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "device",
-            "info",
-            "mock-yubikey-12345678",
-            "--json",
-        ])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(
+            &agent,
+            &["device", "info", "mock-yubikey-12345678", "--json"],
+        )?;
         let output: serde_json::Value = serde_json::from_str(&run(args)?)?;
         assert_eq!(output["connection"], "usb_smart_card");
         let value: DeviceInfo = serde_json::from_value(output)?;
@@ -329,15 +338,8 @@ mod tests {
 
     #[test]
     fn fido_status_is_structured_for_selected_device() -> Result<()> {
-        let args = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "fido",
-            "info",
-            "mock-yubikey-12345678",
-            "--json",
-        ])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["fido", "info", "mock-yubikey-12345678", "--json"])?;
         let value: sigil_core::FidoStatus = serde_json::from_str(&run(args)?)?;
         assert!(value.credential_management);
         assert_eq!(value.pin_retries, Some(8));
@@ -346,15 +348,8 @@ mod tests {
 
     #[test]
     fn piv_slots_json_includes_fixture_and_absent_standard_slot() -> Result<()> {
-        let args = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "piv",
-            "slots",
-            "mock-yubikey-12345678",
-            "--json",
-        ])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["piv", "slots", "mock-yubikey-12345678", "--json"])?;
         let slots: Vec<sigil_core::PivSlotInfo> = serde_json::from_str(&run(args)?)?;
         assert_eq!(slots.len(), 4);
         let signature = slots
@@ -379,15 +374,8 @@ mod tests {
 
     #[test]
     fn piv_info_json_reports_retry_status() -> Result<()> {
-        let args = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "piv",
-            "info",
-            "mock-yubikey-12345678",
-            "--json",
-        ])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["piv", "info", "mock-yubikey-12345678", "--json"])?;
         let info: sigil_core::PivInfo = serde_json::from_str(&run(args)?)?;
         assert_eq!(info.pin.unwrap().remaining, 3);
         Ok(())
@@ -395,16 +383,11 @@ mod tests {
 
     #[test]
     fn piv_certificate_show_and_export_handle_missing_and_existing_paths() -> Result<()> {
-        let missing = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "piv",
-            "certificate",
-            "show",
-            "mock-yubikey-12345678",
-            "9c",
-        ])?;
+        let agent = start_mock_agent()?;
+        let missing = parse_for_agent(
+            &agent,
+            &["piv", "certificate", "show", "mock-yubikey-12345678", "9c"],
+        )?;
         assert!(run(missing).is_err());
 
         let path = std::env::temp_dir().join(format!(
@@ -416,18 +399,18 @@ mod tests {
         ));
         let path_argument = path.to_string_lossy().to_string();
         let export_args = || {
-            Args::try_parse_from([
-                "cms",
-                "--backend",
-                "mock",
-                "piv",
-                "certificate",
-                "export",
-                "mock-yubikey-12345678",
-                "9a",
-                "--output",
-                &path_argument,
-            ])
+            parse_for_agent(
+                &agent,
+                &[
+                    "piv",
+                    "certificate",
+                    "export",
+                    "mock-yubikey-12345678",
+                    "9a",
+                    "--output",
+                    &path_argument,
+                ],
+            )
         };
         run(export_args()?)?;
         let pem = std::fs::read(&path)?;
@@ -435,24 +418,215 @@ mod tests {
         assert!(run(export_args()?).is_err());
         std::fs::remove_file(path)?;
 
-        let der = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "piv",
-            "certificate",
-            "export",
-            "mock-yubikey-12345678",
-            "9a",
-            "--format",
-            "der",
-        ])?;
+        let der = parse_for_agent(
+            &agent,
+            &[
+                "piv",
+                "certificate",
+                "export",
+                "mock-yubikey-12345678",
+                "9a",
+                "--format",
+                "der",
+            ],
+        )?;
         assert!(
             run(der)
                 .unwrap_err()
                 .to_string()
                 .contains("DER output requires --output")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn watch_devices_receives_mock_connection_events_over_ipc() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let client = AgentClient::connect(Some(agent.endpoint()))?;
+        let events = client.subscribe()?;
+        let mock = agent.mock().expect("mock backend");
+        let mut device = mock.list()?.remove(0);
+        device.id = DeviceId("mock-connected-2".into());
+        mock.connect(device.clone())?;
+        assert_eq!(
+            events.recv_timeout(std::time::Duration::from_secs(5))?,
+            DeviceEvent::Connected(device)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn named_pipe_accepts_concurrent_clients_and_a_later_client() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let endpoint = agent.endpoint().to_owned();
+        let barrier = Arc::new(Barrier::new(3));
+        let clients: Vec<_> = (0..2)
+            .map(|_| {
+                let endpoint = endpoint.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let client = AgentClient::connect(Some(&endpoint)).expect("test agent client");
+                    client.list().expect("mock device list").len()
+                })
+            })
+            .collect();
+        barrier.wait();
+        for client in clients {
+            assert_eq!(client.join().expect("client thread"), 1);
+        }
+        let client = AgentClient::connect(Some(&endpoint))?;
+        assert_eq!(client.list()?.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn unconfigured_agent_denies_fingerprint_mutations() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let client = AgentClient::connect(Some(agent.endpoint()))?;
+        assert!(matches!(
+            client.remove_fingerprint(&DeviceId("mock-yubikey-12345678".into()), "1234", "0102"),
+            Err(sigil_core::CredentialError::OperationUnauthorized(_))
+        ));
+        Ok(())
+    }
+
+    #[derive(Clone, Copy)]
+    enum GrantScenario {
+        Valid,
+        WrongSerial,
+        Expired,
+        Replay,
+    }
+
+    struct TestGrantProvider {
+        signing_key: SigningKey,
+        scenario: GrantScenario,
+        replayed: Mutex<Option<SignedGrant>>,
+    }
+
+    impl GrantProvider for TestGrantProvider {
+        fn obtain(
+            &self,
+            caller: &sigil_agent::caller::CallerIdentity,
+            request: &GrantRequest,
+        ) -> sigil_core::Result<SignedGrant> {
+            if matches!(self.scenario, GrantScenario::Replay)
+                && let Some(signed) = self
+                    .replayed
+                    .lock()
+                    .map_err(|_| sigil_core::CredentialError::InventoryUnavailable)?
+                    .clone()
+            {
+                return Ok(signed);
+            }
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock")
+                .as_secs() as i64;
+            let (not_before, expires) = if matches!(self.scenario, GrantScenario::Expired) {
+                (now - 600, now - 400)
+            } else {
+                (now - 1, now + 120)
+            };
+            let grant = OperationGrant {
+                version: 1,
+                grant_id: if matches!(self.scenario, GrantScenario::Replay) {
+                    "replayed-grant".into()
+                } else {
+                    format!("grant-{now}")
+                },
+                operation: request.operation as i32,
+                subject: caller.os_user.clone(),
+                station_id: request.station_id.clone(),
+                token_serial: if matches!(self.scenario, GrantScenario::WrongSerial) {
+                    "wrong-serial".into()
+                } else {
+                    request.token_serial.clone()
+                },
+                caller_os_user: request.caller_os_user.clone(),
+                not_before_unix: not_before,
+                expires_at_unix: expires,
+                fingerprint_id: request.fingerprint_id.clone().unwrap_or_default(),
+            };
+            let grant = grant.encode_to_vec();
+            let signature: Signature = self.signing_key.sign(&grant);
+            let signed = SignedGrant {
+                grant,
+                signature: signature.to_der().as_bytes().to_vec(),
+                key_id: "test-key".into(),
+            };
+            if matches!(self.scenario, GrantScenario::Replay) {
+                *self
+                    .replayed
+                    .lock()
+                    .map_err(|_| sigil_core::CredentialError::InventoryUnavailable)? =
+                    Some(signed.clone());
+            }
+            Ok(signed)
+        }
+    }
+
+    fn agent_with_grant(scenario: GrantScenario) -> Result<TestAgent> {
+        let signing_key = SigningKey::from_bytes((&[9u8; 32]).into()).expect("test signing key");
+        let verifier = GrantVerifier::new(HashMap::from([(
+            "test-key".into(),
+            *signing_key.verifying_key(),
+        )]));
+        let provider = TestGrantProvider {
+            signing_key,
+            scenario,
+            replayed: Mutex::new(None),
+        };
+        TestAgent::spawn_mock_with_grants(Arc::new(provider), Arc::new(verifier))
+    }
+
+    fn remove_with_agent(agent: &TestAgent) -> sigil_core::Result<()> {
+        let client = AgentClient::connect(Some(agent.endpoint()))
+            .map_err(|error| sigil_core::CredentialError::AgentUnavailable(error.to_string()))?;
+        client.remove_fingerprint(&DeviceId("mock-yubikey-12345678".into()), "1234", "0102")
+    }
+
+    #[test]
+    fn verified_fingerprint_grants_reach_mock_and_reject_wrong_or_expired_context() -> Result<()> {
+        let valid = agent_with_grant(GrantScenario::Valid)?;
+        assert!(matches!(
+            remove_with_agent(&valid),
+            Err(sigil_core::CredentialError::UnsupportedOperation(_))
+        ));
+
+        for scenario in [GrantScenario::WrongSerial, GrantScenario::Expired] {
+            let agent = agent_with_grant(scenario)?;
+            assert!(matches!(
+                remove_with_agent(&agent),
+                Err(sigil_core::CredentialError::OperationUnauthorized(_))
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn verified_fingerprint_grant_is_single_use_over_ipc() -> Result<()> {
+        let agent = agent_with_grant(GrantScenario::Replay)?;
+        assert!(matches!(
+            remove_with_agent(&agent),
+            Err(sigil_core::CredentialError::UnsupportedOperation(_))
+        ));
+        assert!(matches!(
+            remove_with_agent(&agent),
+            Err(sigil_core::CredentialError::OperationUnauthorized(_))
+        ));
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn named_pipe_agent_info_reports_the_sid_and_current_pid() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let client = AgentClient::connect(Some(agent.endpoint()))?;
+        let caller = client.agent_info().caller.as_ref().expect("caller info");
+        assert!(caller.os_user.starts_with("S-1-5-"));
+        assert_eq!(caller.pid, std::process::id());
         Ok(())
     }
 }

@@ -125,9 +125,9 @@ pub enum CredentialError {
     #[error("device was removed during the operation")]
     DeviceRemoved,
     #[error("operation is not supported: {0}")]
-    UnsupportedOperation(&'static str),
+    UnsupportedOperation(String),
     #[error("platform backend is unavailable: {0}")]
-    BackendUnavailable(&'static str),
+    BackendUnavailable(String),
     #[error("Windows smart-card service is unavailable: {0}")]
     PcscUnavailable(String),
     #[error("device inventory is unavailable")]
@@ -148,6 +148,16 @@ pub enum CredentialError {
     CertificateParse(String),
     #[error("slot {0} has no certificate")]
     CertificateNotFound(String),
+    #[error("operation unauthorized: {0}")]
+    OperationUnauthorized(String),
+    #[error("caller rejected: {0}")]
+    CallerRejected(String),
+    #[error("Sigil agent is unavailable: {0}")]
+    AgentUnavailable(String),
+    #[error("the process serving {0} is not the Sigil agent")]
+    AgentUntrusted(String),
+    #[error("agent protocol {agent} does not match client protocol {client}")]
+    ProtocolMismatch { agent: u32, client: u32 },
 }
 
 pub type Result<T> = std::result::Result<T, CredentialError>;

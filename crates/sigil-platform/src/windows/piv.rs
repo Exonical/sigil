@@ -37,16 +37,16 @@ fn parse_device_id(id: &DeviceId) -> Result<(String, Option<String>)> {
     let rest =
         id.0.strip_prefix("windows-pcsc:")
             .ok_or(CredentialError::UnsupportedOperation(
-                "PIV inspection requires a smart-card interface",
+                "PIV inspection requires a smart-card interface".into(),
             ))?;
     let (reader, serial) = rest
         .rsplit_once(':')
         .ok_or(CredentialError::UnsupportedOperation(
-            "PIV inspection requires a smart-card interface",
+            "PIV inspection requires a smart-card interface".into(),
         ))?;
     if reader.is_empty() || serial.is_empty() {
         return Err(CredentialError::UnsupportedOperation(
-            "PIV inspection requires a smart-card interface",
+            "PIV inspection requires a smart-card interface".into(),
         ));
     }
     Ok((

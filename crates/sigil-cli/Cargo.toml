@@ -12,10 +12,15 @@ path = "src/main.rs"
 [dependencies]
 sigil-core = { path = "../sigil-core" }
 sigil-app = { path = "../sigil-app" }
-sigil-mock = { path = "../sigil-mock" }
-sigil-platform = { path = "../sigil-platform" }
+sigil-client = { path = "../sigil-client" }
 clap.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tracing-subscriber.workspace = true
 rpassword = "7"
+
+[dev-dependencies]
+p256 = { version = "0.14.0", features = ["ecdsa"] }
+prost = "0.14.4"
+sigil-agent = { path = "../sigil-agent", features = ["test-support"] }
+sigil-proto = { path = "../sigil-proto" }

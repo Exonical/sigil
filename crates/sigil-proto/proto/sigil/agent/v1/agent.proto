@@ -1,0 +1,295 @@
+syntax = "proto3";
+
+package sigil.agent.v1;
+
+service Agent {
+  rpc GetAgentInfo(Empty) returns (GetAgentInfoResponse);
+  rpc ListDevices(Empty) returns (ListDevicesResponse);
+  rpc GetDevice(GetDeviceRequest) returns (DeviceInfo);
+  rpc WatchDevices(Empty) returns (stream DeviceEvent);
+  rpc GetFidoStatus(DeviceRequest) returns (FidoStatus);
+  rpc ListDiscoverableCredentials(PinRequest) returns (DiscoverableCredentialList);
+  rpc ListFingerprints(PinRequest) returns (FingerprintList);
+  rpc EnrollFingerprint(EnrollFingerprintRequest) returns (stream EnrollFingerprintEvent);
+  rpc RemoveFingerprint(RemoveFingerprintRequest) returns (Empty);
+  rpc GetPivInfo(DeviceRequest) returns (PivInfo);
+  rpc ListPivSlots(DeviceRequest) returns (PivSlotInfoList);
+  rpc GetPivCertificate(GetPivCertificateRequest) returns (GetPivCertificateResponse);
+}
+
+message Empty {}
+
+message Caller {
+  string os_user = 1;
+  optional uint32 session_id = 2;
+  uint32 pid = 3;
+}
+
+message GetAgentInfoResponse {
+  uint32 protocol_version = 1;
+  string agent_version = 2;
+  string platform = 3;
+  string station_id = 4;
+  Caller caller = 5;
+}
+
+message FirmwareVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+  uint32 patch = 3;
+}
+
+enum Transport {
+  TRANSPORT_UNSPECIFIED = 0;
+  TRANSPORT_USB_SMART_CARD = 1;
+  TRANSPORT_USB_HID = 2;
+  TRANSPORT_USB_OTP = 3;
+  TRANSPORT_NFC = 4;
+}
+
+enum Application {
+  APPLICATION_UNSPECIFIED = 0;
+  APPLICATION_PIV = 1;
+  APPLICATION_FIDO2 = 2;
+  APPLICATION_U2F = 3;
+  APPLICATION_OTP = 4;
+  APPLICATION_OPEN_PGP = 5;
+  APPLICATION_OATH = 6;
+}
+
+enum MetadataAccess {
+  METADATA_ACCESS_UNKNOWN = 0;
+  METADATA_ACCESS_AVAILABLE = 1;
+  METADATA_ACCESS_RESTRICTED = 2;
+}
+
+message DeviceInfo {
+  string id = 1;
+  string vendor = 2;
+  string model = 3;
+  optional string serial = 4;
+  optional FirmwareVersion firmware = 5;
+  optional string form_factor = 6;
+  optional Transport connection = 7;
+  repeated Transport transports = 8;
+  repeated Application applications = 9;
+  repeated Application supported_applications = 10;
+  bool simulated = 11;
+  MetadataAccess metadata_access = 12;
+}
+
+message DeviceRequest {
+  string id = 1;
+}
+
+message GetDeviceRequest {
+  string id = 1;
+}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message DeviceEvent {
+  oneof event {
+    DeviceInfo connected = 1;
+    DeviceInfo updated = 2;
+    string disconnected_id = 3;
+  }
+}
+
+message FidoStatus {
+  repeated string versions = 1;
+  optional bool pin_set = 2;
+  optional int32 pin_retries = 3;
+  bool credential_management = 4;
+  bool fingerprint_enrollment = 5;
+}
+
+message PinRequest {
+  string id = 1;
+  string pin = 2;
+}
+
+message DiscoverableCredential {
+  string rp_id = 1;
+  string rp_name = 2;
+  string user_name = 3;
+  string user_display_name = 4;
+  string credential_id = 5;
+}
+
+message DiscoverableCredentialList {
+  repeated DiscoverableCredential credentials = 1;
+}
+
+message Fingerprint {
+  string id = 1;
+  optional string name = 2;
+}
+
+message FingerprintList {
+  repeated Fingerprint fingerprints = 1;
+}
+
+message EnrollFingerprintRequest {
+  string id = 1;
+  string pin = 2;
+}
+
+message FingerprintProgress {
+  string message = 1;
+  uint32 remaining_samples = 2;
+}
+
+message EnrollFingerprintEvent {
+  oneof event {
+    FingerprintProgress progress = 1;
+    Fingerprint result = 2;
+  }
+}
+
+message RemoveFingerprintRequest {
+  string id = 1;
+  string pin = 2;
+  string fingerprint_id = 3;
+}
+
+enum PivAlgorithmKind {
+  PIV_ALGORITHM_KIND_UNSPECIFIED = 0;
+  PIV_ALGORITHM_KIND_RSA_1024 = 1;
+  PIV_ALGORITHM_KIND_RSA_2048 = 2;
+  PIV_ALGORITHM_KIND_RSA_3072 = 3;
+  PIV_ALGORITHM_KIND_RSA_4096 = 4;
+  PIV_ALGORITHM_KIND_ECC_P256 = 5;
+  PIV_ALGORITHM_KIND_ECC_P384 = 6;
+  PIV_ALGORITHM_KIND_ED25519 = 7;
+  PIV_ALGORITHM_KIND_X25519 = 8;
+  PIV_ALGORITHM_KIND_TDES = 9;
+  PIV_ALGORITHM_KIND_AES_128 = 10;
+  PIV_ALGORITHM_KIND_AES_192 = 11;
+  PIV_ALGORITHM_KIND_AES_256 = 12;
+  PIV_ALGORITHM_KIND_UNKNOWN = 13;
+}
+
+message PivAlgorithm {
+  PivAlgorithmKind kind = 1;
+  uint32 unknown_id = 2;
+}
+
+enum PinPolicy {
+  PIN_POLICY_UNSPECIFIED = 0;
+  PIN_POLICY_DEFAULT = 1;
+  PIN_POLICY_NEVER = 2;
+  PIN_POLICY_ONCE = 3;
+  PIN_POLICY_ALWAYS = 4;
+  PIN_POLICY_MATCH_ONCE = 5;
+  PIN_POLICY_MATCH_ALWAYS = 6;
+}
+
+enum TouchPolicy {
+  TOUCH_POLICY_UNSPECIFIED = 0;
+  TOUCH_POLICY_DEFAULT = 1;
+  TOUCH_POLICY_NEVER = 2;
+  TOUCH_POLICY_ALWAYS = 3;
+  TOUCH_POLICY_CACHED = 4;
+}
+
+enum KeyOrigin {
+  KEY_ORIGIN_UNSPECIFIED = 0;
+  KEY_ORIGIN_GENERATED = 1;
+  KEY_ORIGIN_IMPORTED = 2;
+}
+
+message PivKeyMetadata {
+  PivAlgorithm algorithm = 1;
+  PinPolicy pin_policy = 2;
+  TouchPolicy touch_policy = 3;
+  optional KeyOrigin origin = 4;
+}
+
+message KeyStatus {
+  oneof status {
+    PivKeyMetadata present = 1;
+    bool absent = 2;
+    bool unknown = 3;
+  }
+}
+
+message CertificateSummary {
+  string subject = 1;
+  string issuer = 2;
+  string serial = 3;
+  string not_before = 4;
+  string not_after = 5;
+  optional PivAlgorithm public_key_algorithm = 6;
+  string sha256_fingerprint = 7;
+}
+
+message PivSlotInfo {
+  uint32 slot_byte = 1;
+  optional CertificateSummary certificate = 2;
+  KeyStatus key = 3;
+}
+
+message PivSlotInfoList {
+  repeated PivSlotInfo slots = 1;
+}
+
+message RetryStatus {
+  uint32 remaining = 1;
+  optional uint32 total = 2;
+  optional bool default_value = 3;
+}
+
+message ManagementKeyStatus {
+  PivAlgorithm algorithm = 1;
+  optional bool default_value = 2;
+  optional TouchPolicy touch_policy = 3;
+}
+
+message PivInfo {
+  optional FirmwareVersion version = 1;
+  optional RetryStatus pin = 2;
+  optional RetryStatus puk = 3;
+  optional ManagementKeyStatus management_key = 4;
+}
+
+message GetPivCertificateRequest {
+  string id = 1;
+  uint32 slot_byte = 2;
+}
+
+message GetPivCertificateResponse {
+  bool found = 1;
+  optional CertificateSummary summary = 2;
+  bytes der = 3;
+}
+
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  ERROR_DEVICE_NOT_FOUND = 1;
+  ERROR_DEVICE_REMOVED = 2;
+  ERROR_UNSUPPORTED_OPERATION = 3;
+  ERROR_BACKEND_UNAVAILABLE = 4;
+  ERROR_PCSC_UNAVAILABLE = 5;
+  ERROR_INVENTORY_UNAVAILABLE = 6;
+  ERROR_FIDO_ACCESS_RESTRICTED = 7;
+  ERROR_FIDO_OPERATION = 8;
+  ERROR_INVALID_SLOT = 9;
+  ERROR_PIV_UNAVAILABLE = 10;
+  ERROR_SMART_CARD_OPERATION = 11;
+  ERROR_CARD_STATUS = 12;
+  ERROR_CERTIFICATE_PARSE = 13;
+  ERROR_CERTIFICATE_NOT_FOUND = 14;
+  OPERATION_UNAUTHORIZED = 15;
+  CALLER_REJECTED = 16;
+  AGENT_UNAVAILABLE = 17;
+  PROTOCOL_MISMATCH = 18;
+  AGENT_UNTRUSTED = 19;
+}
+
+message AgentError {
+  ErrorKind kind = 1;
+  string detail = 2;
+}

@@ -19,6 +19,10 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - Never pass PINs or PUKs as CLI arguments. Prompt securely when authorization is introduced, and never persist or log secrets.
 - Keep PIV inspection read-only. Gate hardware-specific tests with `SIGIL_HARDWARE_TESTS=1` and never make tests mutate a physical token.
 - Prefer focused changes, follow the existing Rust style, and add hardware-free tests for protocol parsing and service behavior.
+- Only `sigil-agent` may access hardware; CLI and GUI are untrusted local-IPC clients.
+- Every read-only RPC is audit-logged. Never log PINs, PUKs, signed grants, or raw APDUs.
+- Mutations require a grant verified by `sigil-agent`; the `dev-grants` feature must never be enabled in release builds.
+- Fingerprint grant preflight reads the token serial before opening the device for the operation. M4 mutations must re-verify the serial inside the same card transaction, as PIV reads already do.
 
 ## Product decisions
 

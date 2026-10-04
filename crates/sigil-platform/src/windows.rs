@@ -60,7 +60,9 @@ pub(super) fn subscribe() -> Result<Receiver<DeviceEvent>> {
         .name("sigil-device-events".into())
         .spawn(move || watch_devices(sender))
         .map_err(|_| {
-            CredentialError::BackendUnavailable("could not start the smart-card event watcher")
+            CredentialError::BackendUnavailable(
+                "could not start the smart-card event watcher".into(),
+            )
         })?;
     Ok(receiver)
 }
@@ -253,7 +255,7 @@ fn open_fido(id: &DeviceId) -> Result<FidoKeyHid> {
     let path =
         id.0.strip_prefix("windows-hid:")
             .ok_or(CredentialError::UnsupportedOperation(
-                "FIDO inspection requires a HID device",
+                "FIDO inspection requires a HID device".into(),
             ))?;
     // Only open a present device we discovered. An opaque ID is not a general HID path API.
     let device = list()?
@@ -329,7 +331,7 @@ fn open_bio(id: &DeviceId) -> Result<FidoKeyHid> {
         .versions;
     if !standard && !(preview && versions.iter().any(|version| version == "FIDO_2_1_PRE")) {
         return Err(CredentialError::UnsupportedOperation(
-            "FIDO fingerprint enrollment",
+            "FIDO fingerprint enrollment".into(),
         ));
     }
     key.use_pre_bio_enrollment = !standard;
@@ -459,7 +461,7 @@ pub(super) fn discoverable_credentials(
             != Some(true)
     {
         return Err(CredentialError::UnsupportedOperation(
-            "FIDO credential management",
+            "FIDO credential management".into(),
         ));
     }
     key.use_pre_credential_management = !standard;

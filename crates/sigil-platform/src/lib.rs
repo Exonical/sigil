@@ -58,7 +58,7 @@ impl DeviceDiscovery for NativeDiscovery {
 
         #[cfg(not(target_os = "windows"))]
         Err(CredentialError::BackendUnavailable(
-            "native device discovery is not implemented for this platform",
+            "native device discovery is not implemented for this platform".into(),
         ))
     }
 
@@ -68,7 +68,7 @@ impl DeviceDiscovery for NativeDiscovery {
 
         #[cfg(not(target_os = "windows"))]
         Err(CredentialError::BackendUnavailable(
-            "native device events are not implemented for this platform",
+            "native device events are not implemented for this platform".into(),
         ))
     }
 }
@@ -81,7 +81,7 @@ impl FidoInspection for NativeDiscovery {
         {
             let _ = (id, pin);
             Err(CredentialError::BackendUnavailable(
-                "native fingerprint management is not implemented for this platform",
+                "native fingerprint management is not implemented for this platform".into(),
             ))
         }
     }
@@ -98,7 +98,7 @@ impl FidoInspection for NativeDiscovery {
         {
             let _ = (id, pin, on_progress);
             Err(CredentialError::BackendUnavailable(
-                "native fingerprint management is not implemented for this platform",
+                "native fingerprint management is not implemented for this platform".into(),
             ))
         }
     }
@@ -110,7 +110,7 @@ impl FidoInspection for NativeDiscovery {
         {
             let _ = (id, pin, fingerprint_id);
             Err(CredentialError::BackendUnavailable(
-                "native fingerprint management is not implemented for this platform",
+                "native fingerprint management is not implemented for this platform".into(),
             ))
         }
     }
@@ -123,7 +123,7 @@ impl FidoInspection for NativeDiscovery {
         {
             let _ = id;
             Err(CredentialError::BackendUnavailable(
-                "native FIDO inspection is not implemented for this platform",
+                "native FIDO inspection is not implemented for this platform".into(),
             ))
         }
     }
@@ -140,7 +140,7 @@ impl FidoInspection for NativeDiscovery {
         {
             let _ = (id, pin);
             Err(CredentialError::BackendUnavailable(
-                "native FIDO inspection is not implemented for this platform",
+                "native FIDO inspection is not implemented for this platform".into(),
             ))
         }
     }
@@ -154,7 +154,7 @@ impl PivInspection for NativeDiscovery {
         {
             let _ = id;
             Err(CredentialError::BackendUnavailable(
-                "native PIV inspection is not implemented for this platform",
+                "native PIV inspection is not implemented for this platform".into(),
             ))
         }
     }
@@ -166,7 +166,7 @@ impl PivInspection for NativeDiscovery {
         {
             let _ = id;
             Err(CredentialError::BackendUnavailable(
-                "native PIV inspection is not implemented for this platform",
+                "native PIV inspection is not implemented for this platform".into(),
             ))
         }
     }
@@ -178,7 +178,7 @@ impl PivInspection for NativeDiscovery {
         {
             let _ = (id, slot);
             Err(CredentialError::BackendUnavailable(
-                "native PIV inspection is not implemented for this platform",
+                "native PIV inspection is not implemented for this platform".into(),
             ))
         }
     }
