@@ -10,6 +10,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+From the repository root, `gofmt -l $(find backend -type f -name '*.go')` must print nothing. From `backend/`, run:
+
+```sh
+go generate ./...
+go vet ./...
+go tool staticcheck ./...
+go test ./...
+```
+
+After `go generate ./...`, run `git diff --exit-code` from the repository root to ensure generated code is up to date.
+
 The Windows PC/SC hardware test is read-only and returns without hardware access unless `SIGIL_HARDWARE_TESTS=1` is set. Regular tests must remain hardware-free.
 
 ## Conventions
@@ -22,7 +33,7 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - Only `sigil-agent` may access hardware; CLI and GUI are untrusted local-IPC clients.
 - Every read-only RPC is audit-logged. Never log PINs, PUKs, signed grants, or raw APDUs.
 - Mutations require a grant verified by `sigil-agent`; the `dev-grants` feature must never be enabled in release builds.
-- Fingerprint grant preflight reads the token serial before opening the device for the operation. M4 mutations must re-verify the serial inside the same card transaction, as PIV reads already do.
+- M4 PIV mutations must verify the grant against the token serial read inside the same card transaction that performs the mutation.
 
 ## Product decisions
 
@@ -34,6 +45,9 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - PIN recovery is per profile: `reenroll` (reset PIV and reissue) or `puk_escrow` (random PUK held by the secrets provider and released only for an approved unblock).
 - Management key storage is per profile: `pin_protected` (on the card behind the user's PIN) or `escrowed` (secrets provider).
 - The agent runs in two modes: station mode (help-desk provisioning workstation, station mTLS identity, full operations) and user mode (end-user machine, IdP login, limited to the user's own token: PIN change and recovery as the profile allows).
-- Windows blocks raw CTAP access for non-admin processes over both USB-HID and NFC/PC/SC (the FIDO applet SELECT is denied). Station mode may run elevated; user-mode FIDO on Windows must use the Windows WebAuthn API. PIV over PC/SC (USB or NFC) does not need admin.
+- Windows blocks raw CTAP access for non-admin processes over both USB-HID and NFC/PC/SC (the FIDO applet SELECT is denied). Station mode may run elevated; user-mode FIDO on Windows must use the Windows WebAuthn API. PIV over PC/SC (USB or NFC) does not need admin; neither do OATH (CCID) or YubiKey OTP slot configuration (keyboard HID), matching Yubico Authenticator, where only WebAuthn/passkey changes require elevation.
+- Because a local user can reach PIV, OATH, and OTP directly without the agent, the agent cannot be the only control for those applets on user machines. PIV enforcement relies on secrets the user never holds (randomized PUK and management key) plus backend checks (attestation, CA binding, inventory/serial reconciliation). A user can always change their own PIN or reset PIV after blocking PIN and PUK; the backend must detect that (missing or unattested certificates) rather than assume it is impossible.
 - FIDO2 enrollment IdPs, in priority order: Authentik, Keycloak. Whether each supports API import of credentials or needs browser registration is still unverified.
+- Policy (backend grants) applies only where a system-held secret makes it enforceable: PIV operations that need the management key or PUK (key generation, certificate import/delete, PIN unblock, management-key or PUK change, retry-count changes). Everything the user can already do with their own credentials or with stock tools is user-configurable and only audit-logged: PIV PIN change, OATH accounts and the OATH password, YubiKey OTP slots 1/2, and FIDO PIN change. Windows Settings also lets non-admin users change the FIDO PIN and reset a security key.
+- OATH accounts and YubiKey OTP slots 1/2 are in scope after the Go backend (M7), as user-configurable features.
 - Backend: Go 1.27 server and web portal (inventory, revocation by "delete key", lost keys by token nickname).

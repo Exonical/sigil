@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc};
+use std::pin::Pin;
 
 use futures_util::Stream;
 use sigil_app::CredentialService;
@@ -9,10 +9,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
-use crate::{
-    caller::{self, CallerIdentity, CallerPolicy},
-    grant::{GrantExpectation, GrantProvider, GrantRequest, GrantVerifier, now_unix},
-};
+use crate::caller::{self, CallerIdentity, CallerPolicy};
 
 pub type WatchDevicesStream =
     Pin<Box<dyn Stream<Item = std::result::Result<v1::DeviceEvent, Status>> + Send + 'static>>;
@@ -27,23 +24,14 @@ pub struct AgentService {
     credentials: CredentialService,
     station_id: String,
     policy: CallerPolicy,
-    grant_provider: Arc<dyn GrantProvider>,
-    grant_verifier: Arc<GrantVerifier>,
 }
 
 impl AgentService {
-    pub fn new(
-        credentials: CredentialService,
-        station_id: impl Into<String>,
-        grant_provider: Arc<dyn GrantProvider>,
-        grant_verifier: Arc<GrantVerifier>,
-    ) -> Self {
+    pub fn new(credentials: CredentialService, station_id: impl Into<String>) -> Self {
         Self {
             credentials,
             station_id: station_id.into(),
             policy: CallerPolicy::production(),
-            grant_provider,
-            grant_verifier,
         }
     }
 
@@ -71,43 +59,17 @@ impl AgentService {
         Ok(identity)
     }
 
-    async fn verified_grant(
-        &self,
-        caller: &CallerIdentity,
-        id: &DeviceId,
-        operation: v1::Operation,
-        fingerprint_id: Option<&str>,
-    ) -> std::result::Result<(), Status> {
+    async fn ensure_device_serial(&self, id: &DeviceId) -> std::result::Result<(), Status> {
         let credentials = self.credentials.clone();
         let device_id = id.clone();
         let info = blocking(move || credentials.device(&device_id)).await?;
-        let serial = info.serial.ok_or_else(|| {
-            status_from_error(&CredentialError::OperationUnauthorized(
+        if info.serial.is_some() {
+            Ok(())
+        } else {
+            Err(status_from_error(&CredentialError::OperationUnauthorized(
                 "the device serial number is unavailable".into(),
-            ))
-        })?;
-        let request = GrantRequest {
-            operation,
-            station_id: self.station_id.clone(),
-            token_serial: serial.clone(),
-            caller_os_user: caller.os_user.clone(),
-            fingerprint_id: fingerprint_id.map(str::to_owned),
-        };
-        let signed = self
-            .grant_provider
-            .obtain(caller, &request)
-            .map_err(|error| status_from_error(&error))?;
-        let expected = GrantExpectation {
-            operation,
-            station_id: self.station_id.clone(),
-            token_serial: serial,
-            caller_os_user: Some(caller.os_user.clone()),
-            fingerprint_id: fingerprint_id.map(str::to_owned),
-        };
-        self.grant_verifier
-            .verify(&signed, &expected, now_unix())
-            .map_err(|error| status_from_error(&error))?;
-        Ok(())
+            )))
+        }
     }
 }
 
@@ -294,17 +256,15 @@ impl v1::agent_server::Agent for AgentService {
         let input = request.into_inner();
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
-        self.verified_grant(&caller, &id, v1::Operation::FidoFingerprintEnroll, None)
-            .await
-            .inspect_err(|status| {
-                audit_static(
-                    &caller,
-                    "EnrollFingerprint",
-                    &device_id,
-                    false,
-                    Some(status.code()),
-                );
-            })?;
+        self.ensure_device_serial(&id).await.inspect_err(|status| {
+            audit_static(
+                &caller,
+                "EnrollFingerprint",
+                &device_id,
+                false,
+                Some(status.code()),
+            );
+        })?;
         let (sender, receiver) = mpsc::channel(32);
         let progress_sender = sender.clone();
         let credentials = self.credentials.clone();
@@ -367,14 +327,7 @@ impl v1::agent_server::Agent for AgentService {
         let input = request.into_inner();
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
-        self.verified_grant(
-            &caller,
-            &id,
-            v1::Operation::FidoFingerprintRemove,
-            Some(&input.fingerprint_id),
-        )
-        .await
-        .inspect_err(|status| {
+        self.ensure_device_serial(&id).await.inspect_err(|status| {
             audit_static(
                 &caller,
                 "RemoveFingerprint",

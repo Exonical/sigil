@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "grant_id": "AAECAwQFBgcICQoLDA0ODw",
+  "operation": "PIV_GENERATE_KEY",
+  "subject": "https://idp.example|golden-user",
+  "station_id": "station-golden",
+  "token_serial": "39192733",
+  "caller_os_user": "S-1-5-21-golden",
+  "not_before_unix": 1900000000,
+  "expires_at_unix": 1900000120,
+  "piv_slot": 154,
+  "key_id": "golden-test-key"
+}

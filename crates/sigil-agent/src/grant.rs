@@ -34,7 +34,7 @@ pub struct GrantExpectation {
     pub station_id: String,
     pub token_serial: String,
     pub caller_os_user: Option<String>,
-    pub fingerprint_id: Option<String>,
+    pub piv_slot: Option<u8>,
 }
 
 #[derive(Default)]
@@ -124,10 +124,9 @@ impl GrantVerifier {
                 "grant caller does not match the connected user",
             ));
         }
-        if operation == Operation::FidoFingerprintRemove
-            && expected.fingerprint_id.as_deref() != Some(grant.fingerprint_id.as_str())
-        {
-            return Err(unauthorized("grant fingerprint does not match the request"));
+        let expected_slot = expected.piv_slot.map(u32::from).unwrap_or_default();
+        if grant.piv_slot != expected_slot {
+            return Err(unauthorized("grant PIV slot does not match the request"));
         }
         if grant.grant_id.is_empty() {
             return Err(unauthorized("grant ID is empty"));
@@ -151,6 +150,7 @@ fn unauthorized(message: &str) -> CredentialError {
     CredentialError::OperationUnauthorized(message.into())
 }
 
+#[allow(dead_code)] // Used by M4 PIV mutations.
 pub(crate) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -164,7 +164,7 @@ pub struct GrantRequest {
     pub station_id: String,
     pub token_serial: String,
     pub caller_os_user: String,
-    pub fingerprint_id: Option<String>,
+    pub piv_slot: Option<u8>,
 }
 
 pub trait GrantProvider: Send + Sync {
@@ -253,7 +253,7 @@ impl GrantProvider for DevSigner {
             caller_os_user: request.caller_os_user.clone(),
             not_before_unix: now,
             expires_at_unix: now + 120,
-            fingerprint_id: request.fingerprint_id.clone().unwrap_or_default(),
+            piv_slot: request.piv_slot.map(u32::from).unwrap_or_default(),
         };
         let bytes = grant.encode_to_vec();
         let signature: Signature = self.signing_key.sign(&bytes);
@@ -269,6 +269,7 @@ impl GrantProvider for DevSigner {
 mod tests {
     use super::*;
     use p256::ecdsa::signature::Signer;
+    use serde::Deserialize;
     use sigil_proto::v1::Operation;
 
     const NOW: i64 = 1_750_000_000;
@@ -284,7 +285,13 @@ mod tests {
             station_id: "station-1".into(),
             token_serial: "12345678".into(),
             caller_os_user: Some("S-1-5-21-test".into()),
-            fingerprint_id: (operation == Operation::FidoFingerprintRemove).then(|| "aabb".into()),
+            piv_slot: matches!(
+                operation,
+                Operation::PivGenerateKey
+                    | Operation::PivImportCertificate
+                    | Operation::PivDeleteCertificate
+            )
+            .then_some(0x9a),
         }
     }
 
@@ -299,10 +306,15 @@ mod tests {
             caller_os_user: "S-1-5-21-test".into(),
             not_before_unix: NOW - 1,
             expires_at_unix: NOW + 120,
-            fingerprint_id: if operation == Operation::FidoFingerprintRemove {
-                "aabb".into()
+            piv_slot: if matches!(
+                operation,
+                Operation::PivGenerateKey
+                    | Operation::PivImportCertificate
+                    | Operation::PivDeleteCertificate
+            ) {
+                0x9a
             } else {
-                String::new()
+                0
             },
         }
     }
@@ -328,45 +340,50 @@ mod tests {
     fn accepts_signed_grants_and_rejects_replays() {
         let signing_key = key();
         let verifier = verifier(&signing_key);
-        let signed = sign(grant(Operation::FidoFingerprintEnroll), &signing_key);
+        let signed = sign(grant(Operation::PivGenerateKey), &signing_key);
         assert_eq!(
             verifier
-                .verify(&signed, &expectation(Operation::FidoFingerprintEnroll), NOW)
+                .verify(&signed, &expectation(Operation::PivGenerateKey), NOW)
                 .unwrap()
                 .grant_id,
-            "grant-FidoFingerprintEnroll"
+            "grant-PivGenerateKey"
         );
         assert!(matches!(
-            verifier.verify(&signed, &expectation(Operation::FidoFingerprintEnroll), NOW),
+            verifier.verify(&signed, &expectation(Operation::PivGenerateKey), NOW),
             Err(CredentialError::OperationUnauthorized(_))
         ));
+        for operation in [
+            Operation::PivImportCertificate,
+            Operation::PivDeleteCertificate,
+            Operation::PivUnblockPin,
+            Operation::PivChangePuk,
+            Operation::PivChangeManagementKey,
+            Operation::PivSetRetries,
+        ] {
+            let signed = sign(grant(operation), &signing_key);
+            verifier
+                .verify(&signed, &expectation(operation), NOW)
+                .unwrap();
+        }
     }
 
     #[test]
     fn rejects_unknown_keys_bad_signatures_and_bad_protobuf() {
         let signing_key = key();
         let verifier = verifier(&signing_key);
-        let signed = sign(grant(Operation::FidoFingerprintEnroll), &signing_key);
+        let signed = sign(grant(Operation::PivGenerateKey), &signing_key);
         let mut unknown = signed.clone();
         unknown.key_id = "unknown".into();
         assert!(
             verifier
-                .verify(
-                    &unknown,
-                    &expectation(Operation::FidoFingerprintEnroll),
-                    NOW
-                )
+                .verify(&unknown, &expectation(Operation::PivGenerateKey), NOW)
                 .is_err()
         );
         let mut bad_signature = signed.clone();
         bad_signature.signature[0] ^= 1;
         assert!(
             verifier
-                .verify(
-                    &bad_signature,
-                    &expectation(Operation::FidoFingerprintEnroll),
-                    NOW
-                )
+                .verify(&bad_signature, &expectation(Operation::PivGenerateKey), NOW)
                 .is_err()
         );
         let malformed_grant = b"not protobuf".to_vec();
@@ -378,11 +395,7 @@ mod tests {
         };
         assert!(
             verifier
-                .verify(
-                    &malformed,
-                    &expectation(Operation::FidoFingerprintEnroll),
-                    NOW
-                )
+                .verify(&malformed, &expectation(Operation::PivGenerateKey), NOW)
                 .is_err()
         );
     }
@@ -394,62 +407,178 @@ mod tests {
         for grant_value in [
             OperationGrant {
                 version: 2,
-                ..grant(Operation::FidoFingerprintEnroll)
+                ..grant(Operation::PivGenerateKey)
             },
-            grant(Operation::FidoFingerprintRemove),
+            grant(Operation::PivDeleteCertificate),
             OperationGrant {
                 not_before_unix: NOW + 100,
                 expires_at_unix: NOW + 200,
-                ..grant(Operation::FidoFingerprintEnroll)
+                ..grant(Operation::PivGenerateKey)
             },
             OperationGrant {
                 not_before_unix: NOW - 200,
                 expires_at_unix: NOW - 100,
-                ..grant(Operation::FidoFingerprintEnroll)
+                ..grant(Operation::PivGenerateKey)
             },
             OperationGrant {
                 not_before_unix: NOW - 1,
                 expires_at_unix: NOW + 301,
-                ..grant(Operation::FidoFingerprintEnroll)
+                ..grant(Operation::PivGenerateKey)
             },
             OperationGrant {
                 grant_id: String::new(),
-                ..grant(Operation::FidoFingerprintEnroll)
+                ..grant(Operation::PivGenerateKey)
             },
         ] {
             let signed = sign(grant_value, &signing_key);
             assert!(
                 verifier
-                    .verify(&signed, &expectation(Operation::FidoFingerprintEnroll), NOW)
+                    .verify(&signed, &expectation(Operation::PivGenerateKey), NOW)
                     .is_err()
             );
         }
     }
 
     #[test]
-    fn rejects_context_and_remove_fingerprint_mismatches() {
+    fn rejects_context_and_piv_slot_mismatches() {
         let signing_key = key();
         let verifier = verifier(&signing_key);
-        let signed = sign(grant(Operation::FidoFingerprintRemove), &signing_key);
+        let signed = sign(grant(Operation::PivGenerateKey), &signing_key);
         for expected in [
             GrantExpectation {
                 station_id: "other".into(),
-                ..expectation(Operation::FidoFingerprintRemove)
+                ..expectation(Operation::PivGenerateKey)
             },
             GrantExpectation {
                 token_serial: "other".into(),
-                ..expectation(Operation::FidoFingerprintRemove)
+                ..expectation(Operation::PivGenerateKey)
             },
             GrantExpectation {
                 caller_os_user: Some("other".into()),
-                ..expectation(Operation::FidoFingerprintRemove)
+                ..expectation(Operation::PivGenerateKey)
             },
             GrantExpectation {
-                fingerprint_id: Some("other".into()),
-                ..expectation(Operation::FidoFingerprintRemove)
+                piv_slot: Some(0x9d),
+                ..expectation(Operation::PivGenerateKey)
             },
         ] {
             assert!(verifier.verify(&signed, &expected, NOW).is_err());
         }
+        let mut unexpected_slot = grant(Operation::PivUnblockPin);
+        unexpected_slot.piv_slot = 0x9a;
+        let signed = sign(unexpected_slot, &signing_key);
+        assert!(
+            verifier
+                .verify(&signed, &expectation(Operation::PivUnblockPin), NOW)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn verifies_go_golden_piv_grant_and_rejects_mismatched_serial() {
+        #[derive(Deserialize)]
+        struct ExpectedGrant {
+            version: u32,
+            grant_id: String,
+            operation: String,
+            subject: String,
+            station_id: String,
+            token_serial: String,
+            caller_os_user: String,
+            not_before_unix: i64,
+            expires_at_unix: i64,
+            piv_slot: u32,
+            key_id: String,
+        }
+
+        let expected: ExpectedGrant = serde_json::from_str(include_str!(
+            "../../../testdata/grants/golden-v1/expected.json"
+        ))
+        .expect("Go golden expected.json");
+        let key = VerifyingKey::from_public_key_pem(include_str!(
+            "../../../testdata/grants/golden-v1/public_key.pem"
+        ))
+        .expect("Go golden public key");
+        let signed = SignedGrant::decode(
+            include_bytes!("../../../testdata/grants/golden-v1/signed_grant.bin").as_slice(),
+        )
+        .expect("Go golden SignedGrant protobuf");
+        let verifier = GrantVerifier::new(HashMap::from([(expected.key_id.clone(), key)]));
+        let operation = Operation::PivGenerateKey;
+        assert_eq!(expected.operation, "PIV_GENERATE_KEY");
+        let expectation = GrantExpectation {
+            operation,
+            station_id: expected.station_id.clone(),
+            token_serial: expected.token_serial.clone(),
+            caller_os_user: Some(expected.caller_os_user.clone()),
+            piv_slot: Some(u8::try_from(expected.piv_slot).expect("PIV slot fits u8")),
+        };
+        let grant = verifier
+            .verify(&signed, &expectation, expected.not_before_unix + 1)
+            .expect("Rust verifier accepts Go-signed fixture");
+        assert_eq!(grant.version, expected.version);
+        assert_eq!(grant.grant_id, expected.grant_id);
+        assert_eq!(grant.operation, operation as i32);
+        assert_eq!(grant.subject, expected.subject);
+        assert_eq!(grant.station_id, expected.station_id);
+        assert_eq!(grant.token_serial, expected.token_serial);
+        assert_eq!(grant.caller_os_user, expected.caller_os_user);
+        assert_eq!(grant.not_before_unix, expected.not_before_unix);
+        assert_eq!(grant.expires_at_unix, expected.expires_at_unix);
+        assert_eq!(grant.piv_slot, expected.piv_slot);
+
+        let mismatched_serial = GrantExpectation {
+            token_serial: "wrong-serial".into(),
+            ..expectation
+        };
+        assert!(matches!(
+            verifier.verify(&signed, &mismatched_serial, expected.not_before_unix + 1),
+            Err(CredentialError::OperationUnauthorized(_))
+        ));
+    }
+
+    #[cfg(feature = "dev-grants")]
+    #[test]
+    fn dev_signer_issues_piv_slot_grants() {
+        use p256::pkcs8::{EncodePrivateKey, LineEnding};
+
+        let signing_key = key();
+        let key_path =
+            std::env::temp_dir().join(format!("sigil-dev-grant-{}.pem", std::process::id()));
+        std::fs::write(
+            &key_path,
+            signing_key
+                .to_pkcs8_pem(LineEnding::LF)
+                .expect("PKCS#8 test key")
+                .as_bytes(),
+        )
+        .expect("write temporary development key");
+        let signer =
+            DevSigner::from_pem_path("station-1", KEY_ID, &key_path).expect("development signer");
+        let _ = std::fs::remove_file(&key_path);
+        let caller = crate::caller::CallerIdentity {
+            os_user: "S-1-5-21-test".into(),
+            session_id: Some(1),
+            pid: std::process::id(),
+        };
+        let signed = signer
+            .obtain(
+                &caller,
+                &GrantRequest {
+                    operation: Operation::PivGenerateKey,
+                    station_id: "station-1".into(),
+                    token_serial: "12345678".into(),
+                    caller_os_user: caller.os_user.clone(),
+                    piv_slot: Some(0x9a),
+                },
+            )
+            .expect("signed PIV grant");
+        assert_eq!(
+            verifier(&signing_key)
+                .verify(&signed, &expectation(Operation::PivGenerateKey), now_unix())
+                .unwrap()
+                .piv_slot,
+            0x9a
+        );
     }
 }

@@ -1,6 +1,6 @@
 # Sigil
 
-Sigil is a local credential manager for YubiKeys and other hardware credentials. The privileged `sigil-agent` is the only process that accesses hardware; the CLI (`cms`) and Dioxus GUI are unprivileged clients over local IPC. Read-only inventory, FIDO inspection, and PIV inspection are available to the active console user. Mutations require a backend-signed operation grant and are denied until backend authorization is configured.
+Sigil is a local credential manager for YubiKeys and other hardware credentials. The privileged `sigil-agent` is the only process that accesses hardware; the CLI (`cms`) and Dioxus GUI are unprivileged clients over local IPC. Read-only inventory, FIDO inspection, and PIV inspection are available to the active console user. Backend grants apply only to PIV operations enforced with system-held management keys or PUKs. FIDO fingerprint enroll/remove uses the user's FIDO PIN and is audit-logged without a backend grant.
 
 ## Run it
 
@@ -50,7 +50,7 @@ cargo run -p sigil-cli -- piv certificate export '<smart-card-device-id>' 9a --f
 
 Mock certificates are self-signed public test fixtures and do not contain private keys. Native PIV commands require a discovered smart-card reader and an enabled PIV application; PIV inspection works over both USB CCID and NFC. A FIDO-only key is not a smart-card device. No physical PIV key or NFC reader was available for hardware validation; regular tests are hardware-free and the read-only PC/SC test is skipped unless `SIGIL_HARDWARE_TESTS=1` is set.
 
-Run the gated hardware test from the agent/platform development workflow with `$env:SIGIL_HARDWARE_TESTS='1'; cargo test -p sigil-platform --test hardware_piv`; without the variable it returns without touching hardware. Read-only RPCs are allowed for the active console user without backend sign-in and are audit-logged locally. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires confirmation. Both mutations require a backend-signed grant and return `OperationUnauthorized` until authorization is configured. PINs are not saved or logged. Bio operations require validation with a physical Bio key before operational use.
+Run the gated hardware tests with `$env:SIGIL_HARDWARE_TESTS='1'; cargo test -p sigil-platform --test hardware_piv` and `cargo test -p sigil-platform --test hardware_fido_resolution`; without the variable they return without touching hardware. Read-only RPCs are allowed for the active console user without backend sign-in and are audit-logged locally. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires confirmation. Enroll/list/remove uses the user's FIDO PIN, remains user-configurable, and is audit-logged without a backend grant. PINs are not saved or logged. Bio operations require validation with a physical Bio key before operational use.
 
 The CLI and GUI always connect to `sigil-agent`; they have no in-process mock or native hardware backend. The client authenticates the local process serving the pipe/socket before sending RPCs. Select a returned opaque ID with `cms device info <id>`; `--json` is available for device commands. For real Windows hardware, run the foreground agent elevated or install the LocalSystem service with `sigil-agent install`; the install command refuses binaries in user-writable directories unless the debug-only development override is explicitly supplied. On Linux, the agent currently supports mock hardware only; native discovery is not implemented. The CLI binary is named `cms`.
 
@@ -76,9 +76,37 @@ NFC discovery and PIV-over-NFC have not been validated on hardware because no NF
 | `sigil-cli` | `cms` commands and JSON rendering over `sigil-client` |
 | `sigil-gui` | Dioxus desktop client over `sigil-client` |
 
-Only `sigil-agent` links the hardware providers. The CLI and GUI are unprivileged local-IPC clients; `DeviceId` remains opaque and serial numbers are never treated as unique selection keys. Read-only calls are available to the active console user without backend sign-in and every call is audit-logged. Mutating calls require a single-use backend-signed protobuf grant (ECDSA P-256 over the exact transmitted grant bytes). With no backend authorization configured, mutation is denied by default with `OperationUnauthorized`. The optional `dev-grants` signer is for debug development only and is rejected in release builds. Fingerprint grants currently read the serial before opening the device for the operation; M4 mutations must verify the serial again inside the same card transaction, as PIV reads already do.
+Only `sigil-agent` links the hardware providers. The CLI and GUI are unprivileged local-IPC clients; `DeviceId` remains opaque and serial numbers are never treated as unique selection keys. Read-only calls are available to the active console user without backend sign-in and every call is audit-logged. FIDO fingerprint enroll/remove is controlled by the user's FIDO PIN and does not require a grant. PIV operations requiring a system-held management key or PUK will require a single-use backend-signed protobuf grant (ECDSA P-256 over the exact transmitted grant bytes) when M4 mutation RPCs are introduced. The optional `dev-grants` signer is for debug development only and is rejected in release builds. M4 PIV mutations must verify the grant against the token serial read inside the same card transaction that performs the mutation.
 
-PIV mutation, PIN/PUK changes, key generation, CSR creation, and the centralized Go service remain future milestones. No raw APDU interface is exposed to the client applications or remote protocols.
+PIV mutation, PIN/PUK changes, key generation, and CSR creation remain future milestones. No raw APDU interface is exposed to the client applications or remote protocols.
+
+## Backend (M7a)
+
+The Go backend provides an mTLS gRPC gateway for agents, validates OIDC access tokens, inventories tokens, records an append-only hash-chained audit trail, and signs policy-approved PIV grants. It does not include the portal/BFF or agent login/client yet, and it has no development authentication bypass.
+
+Start the local PostgreSQL 17 service from the repository root:
+
+```sh
+podman compose -f deploy/dev/compose.yaml up -d
+```
+
+Provision the backend TLS server/client certificates and configure a real OIDC issuer (Authentik first, Keycloak second) in a private copy of `deploy/dev/sigil-server.example.toml`. From `backend/`, generate protobuf code and run the tests:
+
+```sh
+go generate ./...
+go test ./...
+```
+
+Generate the P-256 grant signing key, apply migrations, register a station certificate, and start the service:
+
+```sh
+go run ./cmd/sigil-server keygen --out ../deploy/dev/keys/grant-private.pem --public-out ../deploy/dev/keys/grant-public.pem
+go run ./cmd/sigil-server migrate --config ../deploy/dev/sigil-server.example.toml
+go run ./cmd/sigil-server station add --config ../deploy/dev/sigil-server.example.toml --id station-1 --name "Provisioning station" --mode station --cert ../deploy/dev/certs/station.pem
+go run ./cmd/sigil-server serve --config ../deploy/dev/sigil-server.example.toml
+```
+
+Keep the signing key and server TLS private key readable only by the backend service account. `keygen` writes private keys with mode 0600 on Unix and prints only the public-key path.
 
 ## Next: Milestone 4 — PIV mutation
 

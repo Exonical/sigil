@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package sigil.backend.v1;
+
+import "sigil/agent/v1/grant.proto";
+
+option go_package = "github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1";
+
+service AgentGateway {
+  rpc RequestGrant(RequestGrantRequest) returns (RequestGrantResponse);
+  rpc ReportTokens(ReportTokensRequest) returns (ReportTokensResponse);
+}
+
+message RequestGrantRequest {
+  string access_token = 1;
+  sigil.agent.v1.Operation operation = 2;
+  string token_vendor = 3;
+  string token_serial = 4;
+  string caller_os_user = 5;
+  uint32 piv_slot = 6;
+}
+
+message RequestGrantResponse {
+  sigil.agent.v1.SignedGrant grant = 1;
+}
+
+message ObservedToken {
+  string vendor = 1;
+  string model = 2;
+  string serial = 3;
+  string firmware = 4;
+  string form_factor = 5;
+  string connection = 6;
+}
+
+message ReportTokensRequest {
+  repeated ObservedToken tokens = 1;
+}
+
+message ReportTokensResponse {}

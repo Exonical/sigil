@@ -36,9 +36,8 @@ pub async fn run(
         Arc::new(sigil_platform::NativeDiscovery)
     };
     let credentials = CredentialService::new(discovery);
-    let (provider, verifier) = config.authorization()?;
     let station_id = config.station_id();
-    let service = AgentService::new(credentials, station_id, provider, verifier);
+    let service = AgentService::new(credentials, station_id);
     ipc::serve(service, endpoint, policy, ready, shutdown).await?;
     Ok(())
 }
@@ -60,11 +59,7 @@ pub mod test_support {
     use sigil_mock::MockDiscovery;
     use tokio::{runtime::Builder, sync::oneshot};
 
-    use crate::{
-        grant::{GrantProvider, GrantVerifier, Unconfigured},
-        ipc,
-        server::AgentService,
-    };
+    use crate::{ipc, server::AgentService};
 
     static NEXT_TEST_ENDPOINT: AtomicU64 = AtomicU64::new(1);
 
@@ -77,33 +72,11 @@ pub mod test_support {
 
     impl TestAgent {
         pub fn spawn_mock() -> Result<Self> {
-            Self::spawn_mock_with_grants(
-                Arc::new(Unconfigured),
-                Arc::new(GrantVerifier::new(Default::default())),
-            )
-        }
-
-        pub fn spawn_mock_with_grants(
-            provider: Arc<dyn GrantProvider>,
-            verifier: Arc<GrantVerifier>,
-        ) -> Result<Self> {
             let mock = Arc::new(MockDiscovery::with_example());
             let discovery: Arc<dyn DeviceDiscovery> = mock.clone();
             let service = CredentialService::new(discovery);
-            let agent_service =
-                AgentService::new(service, "sigil-test-station", provider, verifier);
+            let agent_service = AgentService::new(service, "sigil-test-station");
             Self::spawn_service_inner(agent_service, Some(mock))
-        }
-
-        pub fn spawn_with_grants(
-            discovery: Arc<dyn DeviceDiscovery>,
-            station_id: impl Into<String>,
-            provider: Arc<dyn GrantProvider>,
-            verifier: Arc<GrantVerifier>,
-        ) -> Result<Self> {
-            let credentials = CredentialService::new(discovery);
-            let service = AgentService::new(credentials, station_id, provider, verifier);
-            Self::spawn_service_inner(service, None)
         }
 
         pub fn spawn_service(service: AgentService) -> Result<Self> {

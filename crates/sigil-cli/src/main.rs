@@ -280,20 +280,10 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, Barrier, Mutex},
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::sync::{Arc, Barrier};
 
-    use p256::ecdsa::{Signature, SigningKey, signature::Signer};
-    use prost::Message;
-    use sigil_agent::{
-        grant::{GrantProvider, GrantRequest, GrantVerifier},
-        test_support::TestAgent,
-    };
+    use sigil_agent::test_support::TestAgent;
     use sigil_core::{DeviceDiscovery, DeviceEvent, FidoInspection};
-    use sigil_proto::v1::{OperationGrant, SignedGrant};
 
     use super::*;
 
@@ -481,140 +471,17 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_agent_denies_fingerprint_mutations() -> Result<()> {
+    fn fingerprint_requests_do_not_require_backend_grants() -> Result<()> {
         let agent = start_mock_agent()?;
         let client = AgentClient::connect(Some(agent.endpoint()))?;
+        let id = DeviceId("mock-yubikey-12345678".into());
         assert!(matches!(
-            client.remove_fingerprint(&DeviceId("mock-yubikey-12345678".into()), "1234", "0102"),
-            Err(sigil_core::CredentialError::OperationUnauthorized(_))
-        ));
-        Ok(())
-    }
-
-    #[derive(Clone, Copy)]
-    enum GrantScenario {
-        Valid,
-        WrongSerial,
-        Expired,
-        Replay,
-    }
-
-    struct TestGrantProvider {
-        signing_key: SigningKey,
-        scenario: GrantScenario,
-        replayed: Mutex<Option<SignedGrant>>,
-    }
-
-    impl GrantProvider for TestGrantProvider {
-        fn obtain(
-            &self,
-            caller: &sigil_agent::caller::CallerIdentity,
-            request: &GrantRequest,
-        ) -> sigil_core::Result<SignedGrant> {
-            if matches!(self.scenario, GrantScenario::Replay)
-                && let Some(signed) = self
-                    .replayed
-                    .lock()
-                    .map_err(|_| sigil_core::CredentialError::InventoryUnavailable)?
-                    .clone()
-            {
-                return Ok(signed);
-            }
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock")
-                .as_secs() as i64;
-            let (not_before, expires) = if matches!(self.scenario, GrantScenario::Expired) {
-                (now - 600, now - 400)
-            } else {
-                (now - 1, now + 120)
-            };
-            let grant = OperationGrant {
-                version: 1,
-                grant_id: if matches!(self.scenario, GrantScenario::Replay) {
-                    "replayed-grant".into()
-                } else {
-                    format!("grant-{now}")
-                },
-                operation: request.operation as i32,
-                subject: caller.os_user.clone(),
-                station_id: request.station_id.clone(),
-                token_serial: if matches!(self.scenario, GrantScenario::WrongSerial) {
-                    "wrong-serial".into()
-                } else {
-                    request.token_serial.clone()
-                },
-                caller_os_user: request.caller_os_user.clone(),
-                not_before_unix: not_before,
-                expires_at_unix: expires,
-                fingerprint_id: request.fingerprint_id.clone().unwrap_or_default(),
-            };
-            let grant = grant.encode_to_vec();
-            let signature: Signature = self.signing_key.sign(&grant);
-            let signed = SignedGrant {
-                grant,
-                signature: signature.to_der().as_bytes().to_vec(),
-                key_id: "test-key".into(),
-            };
-            if matches!(self.scenario, GrantScenario::Replay) {
-                *self
-                    .replayed
-                    .lock()
-                    .map_err(|_| sigil_core::CredentialError::InventoryUnavailable)? =
-                    Some(signed.clone());
-            }
-            Ok(signed)
-        }
-    }
-
-    fn agent_with_grant(scenario: GrantScenario) -> Result<TestAgent> {
-        let signing_key = SigningKey::from_bytes((&[9u8; 32]).into()).expect("test signing key");
-        let verifier = GrantVerifier::new(HashMap::from([(
-            "test-key".into(),
-            *signing_key.verifying_key(),
-        )]));
-        let provider = TestGrantProvider {
-            signing_key,
-            scenario,
-            replayed: Mutex::new(None),
-        };
-        TestAgent::spawn_mock_with_grants(Arc::new(provider), Arc::new(verifier))
-    }
-
-    fn remove_with_agent(agent: &TestAgent) -> sigil_core::Result<()> {
-        let client = AgentClient::connect(Some(agent.endpoint()))
-            .map_err(|error| sigil_core::CredentialError::AgentUnavailable(error.to_string()))?;
-        client.remove_fingerprint(&DeviceId("mock-yubikey-12345678".into()), "1234", "0102")
-    }
-
-    #[test]
-    fn verified_fingerprint_grants_reach_mock_and_reject_wrong_or_expired_context() -> Result<()> {
-        let valid = agent_with_grant(GrantScenario::Valid)?;
-        assert!(matches!(
-            remove_with_agent(&valid),
-            Err(sigil_core::CredentialError::UnsupportedOperation(_))
-        ));
-
-        for scenario in [GrantScenario::WrongSerial, GrantScenario::Expired] {
-            let agent = agent_with_grant(scenario)?;
-            assert!(matches!(
-                remove_with_agent(&agent),
-                Err(sigil_core::CredentialError::OperationUnauthorized(_))
-            ));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn verified_fingerprint_grant_is_single_use_over_ipc() -> Result<()> {
-        let agent = agent_with_grant(GrantScenario::Replay)?;
-        assert!(matches!(
-            remove_with_agent(&agent),
+            client.remove_fingerprint(&id, "1234", "0102"),
             Err(sigil_core::CredentialError::UnsupportedOperation(_))
         ));
         assert!(matches!(
-            remove_with_agent(&agent),
-            Err(sigil_core::CredentialError::OperationUnauthorized(_))
+            client.enroll_fingerprint(&id, "1234", &mut |_| {}),
+            Err(sigil_core::CredentialError::UnsupportedOperation(_))
         ));
         Ok(())
     }

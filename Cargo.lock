@@ -5081,6 +5081,7 @@ dependencies = [
  "p256",
  "prost",
  "serde",
+ "serde_json",
  "sigil-app",
  "sigil-core",
  "sigil-mock",
@@ -5113,15 +5114,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "p256",
- "prost",
  "rpassword",
  "serde_json",
  "sigil-agent",
  "sigil-app",
  "sigil-client",
  "sigil-core",
- "sigil-proto",
  "tracing-subscriber",
 ]
 

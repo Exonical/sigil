@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package sigil.agent.v1;
 
+option go_package = "github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1";
+
 service Agent {
   rpc GetAgentInfo(Empty) returns (GetAgentInfoResponse);
   rpc ListDevices(Empty) returns (ListDevicesResponse);
