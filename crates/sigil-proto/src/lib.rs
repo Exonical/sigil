@@ -596,6 +596,7 @@ fn agent_error(value: &core::CredentialError) -> v1::AgentError {
         core::CredentialError::PcscUnavailable(detail) => (5, detail.clone()),
         core::CredentialError::InventoryUnavailable => (6, String::new()),
         core::CredentialError::FidoAccessRestricted => (7, String::new()),
+        core::CredentialError::FidoPinNotSet => (20, String::new()),
         core::CredentialError::FidoOperation(detail) => (8, detail.clone()),
         core::CredentialError::InvalidSlot(detail) => (9, detail.clone()),
         core::CredentialError::PivUnavailable => (10, String::new()),
@@ -623,6 +624,7 @@ fn credential_error(value: v1::AgentError) -> core::CredentialError {
         5 => core::CredentialError::PcscUnavailable(value.detail),
         6 => core::CredentialError::InventoryUnavailable,
         7 => core::CredentialError::FidoAccessRestricted,
+        20 => core::CredentialError::FidoPinNotSet,
         8 => core::CredentialError::FidoOperation(value.detail),
         9 => core::CredentialError::InvalidSlot(value.detail),
         10 => core::CredentialError::PivUnavailable,
@@ -663,6 +665,7 @@ fn status_code(value: &core::CredentialError) -> Code {
         | core::CredentialError::CallerRejected(_)
         | core::CredentialError::AgentUntrusted(_) => Code::PermissionDenied,
         core::CredentialError::FidoOperation(_)
+        | core::CredentialError::FidoPinNotSet
         | core::CredentialError::PivUnavailable
         | core::CredentialError::CardStatus(_) => Code::FailedPrecondition,
         core::CredentialError::InvalidSlot(_) => Code::InvalidArgument,
@@ -807,6 +810,7 @@ mod tests {
             core::CredentialError::PcscUnavailable("pcsc".into()),
             core::CredentialError::InventoryUnavailable,
             core::CredentialError::FidoAccessRestricted,
+            core::CredentialError::FidoPinNotSet,
             core::CredentialError::FidoOperation("fido".into()),
             core::CredentialError::InvalidSlot("bad".into()),
             core::CredentialError::PivUnavailable,
@@ -824,7 +828,12 @@ mod tests {
             },
         ];
         for error in errors {
-            assert_eq!(error_from_status(&status_from_error(&error)), error);
+            let status = status_from_error(&error);
+            assert_eq!(error_from_status(&status), error);
+            if error == core::CredentialError::FidoPinNotSet {
+                assert_eq!(status.code(), Code::FailedPrecondition);
+                assert_eq!(status.message(), error.to_string());
+            }
         }
     }
 }

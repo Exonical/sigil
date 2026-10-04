@@ -100,6 +100,7 @@ pub fn metadata<T: CardTransport>(
     let (data, sw) = transceive(transport, &[0x00, 0xf7, 0x00, key_ref])?;
     match sw {
         0x9000 => parse_metadata(&data).map(Some),
+        0x6a82 | 0x6a88 => Ok(None),
         0x6d00 | 0x6e00 => Ok(None),
         other => Err(CredentialError::CardStatus(other)),
     }
@@ -136,7 +137,7 @@ pub fn serial<T: CardTransport>(transport: &mut T) -> Result<Option<u32>> {
 pub fn slot_key_status<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Result<KeyStatus> {
     let (data, sw) = transceive(transport, &[0x00, 0xf7, 0x00, slot.byte()])?;
     match sw {
-        0x6a82 => Ok(KeyStatus::Absent),
+        0x6a82 | 0x6a88 => Ok(KeyStatus::Absent),
         0x6d00 | 0x6e00 => Ok(KeyStatus::Unknown),
         0x9000 => {
             let value = parse_metadata(&data)?;
@@ -340,17 +341,39 @@ mod tests {
 
     #[test]
     fn maps_slot_key_status_responses() {
-        let mut absent = ScriptedTransport::new([(vec![0x00, 0xf7, 0x00, 0x9a], vec![0x6a, 0x82])]);
-        assert_eq!(
-            slot_key_status(&mut absent, PivSlot::AUTHENTICATION),
-            Ok(KeyStatus::Absent)
-        );
+        for status in [0x6a82u16, 0x6a88] {
+            let mut absent = ScriptedTransport::new([(
+                vec![0x00, 0xf7, 0x00, 0x9a],
+                status.to_be_bytes().to_vec(),
+            )]);
+            assert_eq!(
+                slot_key_status(&mut absent, PivSlot::AUTHENTICATION),
+                Ok(KeyStatus::Absent)
+            );
+        }
         let mut unknown =
             ScriptedTransport::new([(vec![0x00, 0xf7, 0x00, 0x9a], vec![0x6d, 0x00])]);
         assert_eq!(
             slot_key_status(&mut unknown, PivSlot::AUTHENTICATION),
             Ok(KeyStatus::Unknown)
         );
+        let mut unauthorized =
+            ScriptedTransport::new([(vec![0x00, 0xf7, 0x00, 0x9a], vec![0x69, 0x82])]);
+        assert_eq!(
+            slot_key_status(&mut unauthorized, PivSlot::AUTHENTICATION),
+            Err(CredentialError::CardStatus(0x6982))
+        );
+    }
+
+    #[test]
+    fn metadata_treats_missing_reference_data_as_absent() {
+        for status in [0x6a82u16, 0x6a88] {
+            let mut transport = ScriptedTransport::new([(
+                vec![0x00, 0xf7, 0x00, 0x9a],
+                status.to_be_bytes().to_vec(),
+            )]);
+            assert_eq!(metadata(&mut transport, 0x9a), Ok(None));
+        }
     }
 
     #[test]

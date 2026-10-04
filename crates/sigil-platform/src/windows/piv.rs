@@ -33,7 +33,7 @@ fn map_pcsc_error(error: PcscError) -> CredentialError {
     }
 }
 
-fn parse_device_id(id: &DeviceId) -> Result<(String, Option<String>)> {
+pub(super) fn parse_device_id(id: &DeviceId) -> Result<(String, Option<String>)> {
     let rest =
         id.0.strip_prefix("windows-pcsc:")
             .ok_or(CredentialError::UnsupportedOperation(

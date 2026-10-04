@@ -7,8 +7,8 @@ use sigil_client::AgentClient;
 mod piv;
 
 use sigil_core::{
-    DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, Fingerprint, MetadataAccess,
-    Transport,
+    CredentialError, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus, Fingerprint,
+    MetadataAccess, Transport,
 };
 
 fn main() {
@@ -89,13 +89,21 @@ fn AgentUi() -> Element {
             Ok(events) => {
                 let _ = std::thread::spawn(move || {
                     while events.recv().is_ok() {
-                        match service.devices() {
-                            Ok(updated) => {
-                                devices.set(updated);
-                                status.set(String::new());
-                            }
-                            Err(error) => status.set(error.to_string()),
+                        let (updated, message) = match service.devices() {
+                            Ok(updated) => (Some(updated), String::new()),
+                            Err(error) => (None, error.to_string()),
+                        };
+                        // The UI may have unmounted (window closed); stop instead of panicking.
+                        if let Some(updated) = updated {
+                            let Ok(mut current) = devices.try_write() else {
+                                break;
+                            };
+                            *current = updated;
                         }
+                        let Ok(mut current) = status.try_write() else {
+                            break;
+                        };
+                        *current = message;
                     }
                 });
             }
@@ -113,6 +121,7 @@ fn AgentUi() -> Element {
         .find(|item| Some(&item.id) == chosen_id.as_ref())
         .cloned();
     let status_message = status.read().clone();
+    let fido_pin_not_set_message = CredentialError::FidoPinNotSet.to_string();
     let inspection_visible = current
         .as_ref()
         .is_some_and(|device| inspected.read().as_ref() == Some(&device.id));
@@ -271,7 +280,7 @@ fn AgentUi() -> Element {
                                 }
                             }, "Inspect FIDO2" }
                             if !current_fido_error.is_empty() { p { class: "error", "{current_fido_error}" } }
-                            if let Some(detail) = current_fido_status {
+                            if let Some(detail) = current_fido_status.as_ref() {
                                 dl {
                                     dt { "CTAP versions" } dd { {detail.versions.join(", ")} }
                                     dt { "PIN configured" } dd { "{detail.pin_set:?}" }
@@ -279,10 +288,13 @@ fn AgentUi() -> Element {
                                     dt { "Passkey management" } dd { "{detail.credential_management}" }
                                     dt { "Fingerprint enrollment" } dd { "{detail.fingerprint_enrollment}" }
                                 }
-                                if detail.credential_management || detail.fingerprint_enrollment {
+                                if detail.pin_set == Some(false) {
+                                    p { class: "muted", "{fido_pin_not_set_message}" }
+                                }
+                                if detail.pin_set != Some(false) && (detail.credential_management || detail.fingerprint_enrollment) {
                                     input { r#type: "password", placeholder: "FIDO2 PIN", value: "{pin}", oninput: move |event| pin.set(event.value()) }
                                 }
-                                if detail.credential_management {
+                                if detail.pin_set != Some(false) && detail.credential_management {
                                     button { onclick: {
                                         let id = info.id.clone();
                                         let service = service.clone();
@@ -300,7 +312,7 @@ fn AgentUi() -> Element {
                                         }
                                     }, "List passkeys" }
                                 }
-                                if detail.fingerprint_enrollment {
+                                if detail.pin_set != Some(false) && detail.fingerprint_enrollment {
                                     h3 { "Fingerprints" }
                                     p { class: "muted", "Enter the FIDO2 PIN to list or manage fingerprints. Enrollment requires repeated touches of the same finger." }
                                     button { disabled: bio_busy(), onclick: {
@@ -406,10 +418,15 @@ fn AgentUi() -> Element {
                                     }
                                 }
                             }
-                            if let Some(entries) = current_passkeys {
-                                if entries.is_empty() { p { "No discoverable credentials found." } }
-                                for entry in entries.iter() {
-                                    p { key: "{entry.credential_id}", "{entry.rp_id} — {entry.user_name}" }
+                            if current_fido_status
+                                .as_ref()
+                                .is_some_and(|detail| detail.pin_set != Some(false))
+                            {
+                                if let Some(entries) = current_passkeys {
+                                    if entries.is_empty() { p { "No discoverable credentials found." } }
+                                    for entry in entries.iter() {
+                                        p { key: "{entry.credential_id}", "{entry.rp_id} - {entry.user_name}" }
+                                    }
                                 }
                             }
                         }

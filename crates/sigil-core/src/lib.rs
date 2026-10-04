@@ -134,6 +134,10 @@ pub enum CredentialError {
     InventoryUnavailable,
     #[error("FIDO access is restricted; on Windows, run Sigil as administrator")]
     FidoAccessRestricted,
+    #[error(
+        "This security key has no FIDO PIN yet. Set a FIDO PIN before managing passkeys or fingerprints."
+    )]
+    FidoPinNotSet,
     #[error("FIDO operation failed: {0}")]
     FidoOperation(String),
     #[error("invalid PIV slot: {0}")]

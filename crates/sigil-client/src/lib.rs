@@ -32,8 +32,49 @@ pub const DEFAULT_ENDPOINT: &str = "unsupported-local-agent-transport";
 type RpcClient = v1::agent_client::AgentClient<Channel>;
 type ChannelConnectResult = std::result::Result<Channel, (tonic::transport::Error, bool)>;
 
+struct ClientRuntime(Option<tokio::runtime::Runtime>);
+
+impl ClientRuntime {
+    fn new() -> std::io::Result<Self> {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map(|runtime| Self(Some(runtime)))
+    }
+
+    fn runtime(&self) -> &tokio::runtime::Runtime {
+        self.0
+            .as_ref()
+            .expect("agent client runtime is present until drop")
+    }
+
+    fn handle(&self) -> &tokio::runtime::Handle {
+        self.runtime().handle()
+    }
+
+    fn block_on<F>(&self, future: F) -> F::Output
+    where
+        F: Future + Send,
+        F::Output: Send,
+    {
+        if tokio::runtime::Handle::try_current().is_err() {
+            return self.runtime().block_on(future);
+        }
+        std::thread::scope(|scope| scope.spawn(|| self.runtime().block_on(future)).join())
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+}
+
+impl Drop for ClientRuntime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 pub struct AgentClient {
-    runtime: tokio::runtime::Runtime,
+    runtime: ClientRuntime,
     rpc: RpcClient,
     endpoint: String,
     agent_info: v1::GetAgentInfoResponse,
@@ -45,9 +86,7 @@ impl AgentClient {
             .map(str::to_owned)
             .or_else(|| std::env::var("SIGIL_AGENT_ENDPOINT").ok())
             .unwrap_or_else(|| DEFAULT_ENDPOINT.to_owned());
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
+        let runtime = ClientRuntime::new()
             .map_err(|error| CredentialError::AgentUnavailable(error.to_string()))?;
         let channel = runtime
             .block_on(connect_channel(endpoint.clone()))
@@ -241,36 +280,15 @@ impl FidoInspection for AgentClient {
         pin: &str,
         on_progress: &mut dyn FnMut(FingerprintProgress),
     ) -> Result<Fingerprint> {
-        self.runtime.block_on(async {
-            let response = self
-                .rpc
-                .clone()
-                .enroll_fingerprint(v1::EnrollFingerprintRequest {
-                    id: id.0.clone(),
-                    pin: pin.to_owned(),
-                })
-                .await
-                .map_err(Self::map_status)?;
-            let mut stream = response.into_inner();
-            while let Some(event) = stream.message().await.map_err(Self::map_status)? {
-                match event.event {
-                    Some(v1::enroll_fingerprint_event::Event::Progress(progress)) => {
-                        on_progress(progress.into());
-                    }
-                    Some(v1::enroll_fingerprint_event::Event::Result(fingerprint)) => {
-                        return Ok(fingerprint.into());
-                    }
-                    None => {
-                        return Err(CredentialError::FidoOperation(
-                            "agent returned an empty fingerprint event".into(),
-                        ));
-                    }
-                }
+        let (progress_sender, progress_receiver) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let job = scope.spawn(move || self.enroll_fingerprint_rpc(id, pin, progress_sender));
+            for progress in progress_receiver {
+                on_progress(progress);
             }
-            Err(CredentialError::FidoOperation(
-                "agent ended fingerprint enrollment without a result".into(),
-            ))
+            job.join()
         })
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
     fn remove_fingerprint(&self, id: &DeviceId, pin: &str, fingerprint_id: &str) -> Result<()> {
@@ -286,6 +304,46 @@ impl FidoInspection for AgentClient {
             )
             .map(|_| ())
             .map_err(Self::map_status)
+    }
+}
+
+impl AgentClient {
+    fn enroll_fingerprint_rpc(
+        &self,
+        id: &DeviceId,
+        pin: &str,
+        progress_sender: mpsc::Sender<FingerprintProgress>,
+    ) -> Result<Fingerprint> {
+        self.runtime.block_on(async move {
+            let response = self
+                .rpc
+                .clone()
+                .enroll_fingerprint(v1::EnrollFingerprintRequest {
+                    id: id.0.clone(),
+                    pin: pin.to_owned(),
+                })
+                .await
+                .map_err(Self::map_status)?;
+            let mut stream = response.into_inner();
+            while let Some(event) = stream.message().await.map_err(Self::map_status)? {
+                match event.event {
+                    Some(v1::enroll_fingerprint_event::Event::Progress(progress)) => {
+                        let _ = progress_sender.send(progress.into());
+                    }
+                    Some(v1::enroll_fingerprint_event::Event::Result(fingerprint)) => {
+                        return Ok(fingerprint.into());
+                    }
+                    None => {
+                        return Err(CredentialError::FidoOperation(
+                            "agent returned an empty fingerprint event".into(),
+                        ));
+                    }
+                }
+            }
+            Err(CredentialError::FidoOperation(
+                "agent ended fingerprint enrollment without a result".into(),
+            ))
+        })
     }
 }
 
@@ -363,6 +421,16 @@ mod tests {
     #[test]
     fn missing_named_pipe_maps_to_agent_unavailable() {
         let endpoint = format!(r"\\.\pipe\sigil-test-missing-{}", std::process::id());
+        let error = match AgentClient::connect(Some(&endpoint)) {
+            Ok(_) => panic!("the test pipe unexpectedly has a server"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, CredentialError::AgentUnavailable(_)));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn connecting_inside_a_runtime_does_not_panic() {
+        let endpoint = format!(r"\\.\pipe\sigil-test-in-runtime-{}", std::process::id());
         let error = match AgentClient::connect(Some(&endpoint)) {
             Ok(_) => panic!("the test pipe unexpectedly has a server"),
             Err(error) => error,

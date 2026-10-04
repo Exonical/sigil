@@ -18,6 +18,23 @@ mod windows;
 
 pub struct NativeDiscovery;
 
+#[cfg(target_os = "windows")]
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FidoHidResolution {
+    pub hid_path: String,
+    pub reader_composite_id: String,
+    pub hid_composite_id: String,
+}
+
+#[cfg(target_os = "windows")]
+impl NativeDiscovery {
+    #[doc(hidden)]
+    pub fn resolve_fido_hid_for_device(&self, id: &DeviceId) -> Result<Option<FidoHidResolution>> {
+        windows::resolve_fido_hid_for_device(id)
+    }
+}
+
 /// Diff snapshots by opaque identity, including changes in reported metadata.
 /// Used by the Windows watcher and exercised without smart-card hardware.
 #[cfg(any(target_os = "windows", test))]

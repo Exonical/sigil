@@ -14,14 +14,15 @@ fn read_only_piv_inspection_on_connected_smart_cards() {
         .iter()
         .filter(|device| device.id.0.starts_with("windows-pcsc:"))
     {
-        assert!(
-            discovery.piv_info(&device.id).is_ok(),
-            "PIV info failed for {}",
-            device.id.0
-        );
-        assert!(
-            discovery.piv_slots(&device.id).is_ok(),
-            "PIV slot inspection failed for {}",
+        discovery
+            .piv_info(&device.id)
+            .unwrap_or_else(|error| panic!("PIV info failed for {}: {error:?}", device.id.0));
+        let slots = discovery.piv_slots(&device.id).unwrap_or_else(|error| {
+            panic!("PIV slot inspection failed for {}: {error:?}", device.id.0)
+        });
+        println!(
+            "Read PIV info and {} slots from {}",
+            slots.len(),
             device.id.0
         );
     }

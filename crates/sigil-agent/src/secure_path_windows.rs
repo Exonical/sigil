@@ -9,7 +9,10 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use windows_sys::Win32::{
-    Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HLOCAL, LocalFree},
+    Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, ERROR_INVALID_OWNER, GetLastError, HLOCAL,
+        LocalFree,
+    },
     Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
         GetNamedSecurityInfoW, SDDL_REVISION_1, SE_FILE_OBJECT,
@@ -98,14 +101,22 @@ fn create_protected_directory(path: &Path) -> Result<()> {
     // SAFETY: The descriptor and SECURITY_ATTRIBUTES remain valid for the synchronous call.
     if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0 {
         // SAFETY: GetLastError has no pointer arguments and reads the calling thread's last error.
-        if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
-            return Err(std::io::Error::last_os_error()).with_context(|| {
-                format!(
-                    "could not create protected directory {}; create it as an administrator with SDDL {PROTECTED_SDDL}",
-                    path.display()
-                )
-            });
+        let error = unsafe { GetLastError() };
+        if error == ERROR_ALREADY_EXISTS {
+            return Ok(());
         }
+        if error == ERROR_INVALID_OWNER || error == ERROR_ACCESS_DENIED {
+            bail!(
+                "sigil-agent must run elevated (Run as administrator) or as the installed SigilAgent service to create {}; for mock development use `sigil-agent run --mock --dev-insecure-config`",
+                path.display()
+            );
+        }
+        return Err(std::io::Error::from_raw_os_error(error as i32)).with_context(|| {
+            format!(
+                "could not create protected directory {}; create it as an administrator with SDDL {PROTECTED_SDDL}",
+                path.display()
+            )
+        });
     }
     Ok(())
 }

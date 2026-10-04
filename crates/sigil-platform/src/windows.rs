@@ -31,9 +31,10 @@ use windows_sys::Win32::{
     Foundation::ERROR_NO_MORE_ITEMS,
 };
 
-use crate::reconcile;
+use crate::{FidoHidResolution, reconcile};
 
 mod ctap;
+mod fido_resolver;
 pub(super) mod piv;
 
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
@@ -251,24 +252,139 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FidoRoute<'a> {
+    Hid(&'a str),
+    PcscUsb,
+}
+
+fn fido_route<'a>(id: &'a DeviceId, connection: Option<&Transport>) -> Result<FidoRoute<'a>> {
+    if let Some(path) = id.0.strip_prefix("windows-hid:") {
+        return Ok(FidoRoute::Hid(path));
+    }
+    if id.0.starts_with("windows-pcsc:") {
+        return match connection {
+            Some(Transport::UsbSmartCard) => Ok(FidoRoute::PcscUsb),
+            Some(Transport::Nfc) => Err(CredentialError::UnsupportedOperation(
+                "FIDO over NFC is not supported yet".into(),
+            )),
+            _ => Err(CredentialError::UnsupportedOperation(
+                "FIDO inspection requires a USB HID or CCID device".into(),
+            )),
+        };
+    }
+    Err(CredentialError::UnsupportedOperation(
+        "FIDO inspection requires a supported HID or USB CCID device".into(),
+    ))
+}
+
+fn resolve_fido_hid_for_pcsc_device(device: &DeviceInfo) -> Result<Option<FidoHidResolution>> {
+    let (reader, _) = piv::parse_device_id(&device.id)?;
+    let reader = CString::new(reader).map_err(|_| {
+        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
+    })?;
+    fido_resolver::resolve_fido_hid_for_reader(&reader).map_err(CredentialError::SmartCardOperation)
+}
+
+fn fido_hid_path_for_reader(reader: &CStr) -> Result<Option<String>> {
+    fido_resolver::fido_hid_path_for_reader(reader).map_err(CredentialError::SmartCardOperation)
+}
+
+pub(super) fn resolve_fido_hid_for_device(id: &DeviceId) -> Result<Option<FidoHidResolution>> {
+    let device = list()?
+        .into_iter()
+        .find(|device| device.id == *id)
+        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))?;
+    if !matches!(
+        fido_route(id, device.connection.as_ref())?,
+        FidoRoute::PcscUsb
+    ) {
+        return Ok(None);
+    }
+    resolve_fido_hid_for_pcsc_device(&device)
+}
+
+fn map_hid_open_error(error: hidapi::HidError) -> CredentialError {
+    let detail = error.to_string();
+    let access_denied = matches!(
+        &error,
+        hidapi::HidError::IoError { error }
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                || error.raw_os_error() == Some(5)
+    ) || error_detail_is_access_denied(&detail);
+    if access_denied {
+        CredentialError::FidoAccessRestricted
+    } else {
+        CredentialError::FidoOperation(detail)
+    }
+}
+
+fn map_fido_factory_error(error: impl std::fmt::Display) -> CredentialError {
+    let detail = error.to_string();
+    if error_detail_is_access_denied(&detail) {
+        CredentialError::FidoAccessRestricted
+    } else {
+        CredentialError::FidoOperation(detail)
+    }
+}
+
+fn error_detail_is_access_denied(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    detail.contains("access is denied")
+        || detail.contains("access denied")
+        || detail.contains("os error 5")
+        || detail.contains("win32error(5)")
+}
+
+fn open_hid_fido(path: &str, expected_serial: Option<&str>) -> Result<FidoKeyHid> {
+    let hid =
+        hidapi::HidApi::new().map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    let hid_path = CString::new(path).map_err(|_| {
+        CredentialError::SmartCardOperation("FIDO HID path contains a NUL byte".into())
+    })?;
+    let handle = hid.open_path(&hid_path).map_err(map_hid_open_error)?;
+    if let Some(expected_serial) = expected_serial
+        && let Some(actual_serial) = ctap::read_info(&handle)
+            .and_then(|metadata| metadata.details)
+            .and_then(|details| details.serial)
+        && actual_serial != expected_serial
+    {
+        return Err(CredentialError::DeviceNotFound(format!(
+            "PC/SC serial {expected_serial} does not match FIDO HID serial {actual_serial}"
+        )));
+    }
+    drop(handle);
+    let mut config = Cfg::init();
+    config.keep_alive_msg.clear(); // Library diagnostics must not corrupt CLI JSON output.
+    FidoKeyHidFactory::create_by_params(&[HidParam::Path(path.to_owned())], &config)
+        .map_err(map_fido_factory_error)
+}
+
 fn open_fido(id: &DeviceId) -> Result<FidoKeyHid> {
-    let path =
-        id.0.strip_prefix("windows-hid:")
-            .ok_or(CredentialError::UnsupportedOperation(
-                "FIDO inspection requires a HID device".into(),
-            ))?;
     // Only open a present device we discovered. An opaque ID is not a general HID path API.
     let device = list()?
         .into_iter()
         .find(|device| device.id == *id)
         .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))?;
-    if device.metadata_access == MetadataAccess::Restricted {
+    let route = fido_route(id, device.connection.as_ref())?;
+    if matches!(route, FidoRoute::Hid(_)) && device.metadata_access == MetadataAccess::Restricted {
         return Err(CredentialError::FidoAccessRestricted);
     }
-    let mut config = Cfg::init();
-    config.keep_alive_msg.clear(); // Library diagnostics must not corrupt CLI JSON output.
-    FidoKeyHidFactory::create_by_params(&[HidParam::Path(path.to_owned())], &config)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))
+    match route {
+        FidoRoute::Hid(path) => open_hid_fido(path, None),
+        FidoRoute::PcscUsb => {
+            let (reader, _) = piv::parse_device_id(id)?;
+            let reader = CString::new(reader).map_err(|_| {
+                CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
+            })?;
+            let Some(path) = fido_hid_path_for_reader(&reader)? else {
+                return Err(CredentialError::UnsupportedOperation(
+                    "this device has no FIDO HID interface".into(),
+                ));
+            };
+            open_hid_fido(&path, device.serial.as_deref())
+        }
+    }
 }
 
 pub(super) fn fido_status(id: &DeviceId) -> Result<FidoStatus> {
@@ -315,8 +431,34 @@ pub(super) fn fido_status(id: &DeviceId) -> Result<FidoStatus> {
     })
 }
 
+fn map_fido_pin_error(error: impl std::fmt::Display) -> CredentialError {
+    let detail = error.to_string();
+    // ctap-hid-fido2 exposes CTAP status responses as anyhow message text, not a typed status.
+    if detail.contains("0x35 CTAP2_ERR_PIN_NOT_SET") {
+        CredentialError::FidoPinNotSet
+    } else {
+        CredentialError::FidoOperation(detail)
+    }
+}
+
+fn require_fido_pin_set(key: &FidoKeyHid) -> Result<()> {
+    let pin_set = key
+        .enable_info_option(&InfoOption::ClientPin)
+        .map_err(map_fido_pin_error)?;
+    require_fido_pin_configured(pin_set)
+}
+
+fn require_fido_pin_configured(pin_set: Option<bool>) -> Result<()> {
+    if pin_set == Some(false) {
+        Err(CredentialError::FidoPinNotSet)
+    } else {
+        Ok(())
+    }
+}
+
 fn open_bio(id: &DeviceId) -> Result<FidoKeyHid> {
     let mut key = open_fido(id)?;
+    require_fido_pin_set(&key)?;
     let standard = key
         .enable_info_option(&InfoOption::BioEnroll)
         .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
@@ -349,7 +491,7 @@ pub(super) fn fingerprints(id: &DeviceId, pin: &str) -> Result<Vec<Fingerprint>>
     let key = open_bio(id)?;
     let templates = key
         .bio_enrollment_enumerate_enrollments(pin)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     Ok(templates
         .into_iter()
         .map(|template| Fingerprint {
@@ -374,7 +516,7 @@ pub(super) fn enroll_fingerprint(
     });
     let (session, mut step) = key
         .bio_enrollment_begin(pin, Some(30_000))
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     let result = (|| {
         for _ in 0..40 {
             on_progress(FingerprintProgress {
@@ -393,7 +535,7 @@ pub(super) fn enroll_fingerprint(
             });
             step = key
                 .bio_enrollment_next(&session, Some(30_000))
-                .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+                .map_err(map_fido_pin_error)?;
         }
         Err(CredentialError::FidoOperation(
             "fingerprint capture limit reached".into(),
@@ -429,7 +571,7 @@ pub(super) fn remove_fingerprint(id: &DeviceId, pin: &str, fingerprint_id: &str)
     let key = open_bio(id)?;
     let templates = key
         .bio_enrollment_enumerate_enrollments(pin)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     if !templates
         .iter()
         .any(|template| template.template_id == bytes)
@@ -439,7 +581,7 @@ pub(super) fn remove_fingerprint(id: &DeviceId, pin: &str, fingerprint_id: &str)
         ));
     }
     key.bio_enrollment_remove(pin, &bytes)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))
+        .map_err(map_fido_pin_error)
 }
 
 pub(super) fn discoverable_credentials(
@@ -450,6 +592,7 @@ pub(super) fn discoverable_credentials(
         return Err(CredentialError::FidoOperation("enter the FIDO2 PIN".into()));
     }
     let mut key = open_fido(id)?;
+    require_fido_pin_set(&key)?;
     let standard = key
         .enable_info_option(&InfoOption::CredMgmt)
         .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
@@ -467,18 +610,18 @@ pub(super) fn discoverable_credentials(
     key.use_pre_credential_management = !standard;
     let count = key
         .credential_management_get_creds_metadata(Some(pin))
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     if count.existing_resident_credentials_count == 0 {
         return Ok(Vec::new());
     }
     let rps = key
         .credential_management_enumerate_rps(Some(pin))
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     let mut credentials = Vec::new();
     for rp in rps {
         let entries = key
             .credential_management_enumerate_credentials(Some(pin), &rp.rpid_hash)
-            .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+            .map_err(map_fido_pin_error)?;
         for entry in entries {
             credentials.push(DiscoverableCredential {
                 rp_id: rp.public_key_credential_rp_entity.id.clone(),
@@ -853,6 +996,60 @@ mod tests {
         ] {
             assert_eq!(reader_kind_from_name(name), ReaderKind::Other);
         }
+    }
+
+    #[test]
+    fn fido_dispatch_accepts_hid_and_pcsc_usb_ids() {
+        assert_eq!(
+            fido_route(
+                &DeviceId("windows-hid:fido-path".into()),
+                Some(&Transport::UsbHid),
+            )
+            .unwrap(),
+            FidoRoute::Hid("fido-path")
+        );
+        assert_eq!(
+            fido_route(
+                &DeviceId("windows-pcsc:Reader:39192733".into()),
+                Some(&Transport::UsbSmartCard),
+            )
+            .unwrap(),
+            FidoRoute::PcscUsb
+        );
+    }
+
+    #[test]
+    fn fido_dispatch_rejects_nfc_before_resolving_hid() {
+        assert!(matches!(
+            fido_route(
+                &DeviceId("windows-pcsc:Reader:39192733".into()),
+                Some(&Transport::Nfc),
+            ),
+            Err(CredentialError::UnsupportedOperation(message))
+                if message == "FIDO over NFC is not supported yet"
+        ));
+    }
+
+    #[test]
+    fn maps_pin_not_set_ctap_error_and_fails_fast_from_get_info() {
+        assert_eq!(
+            map_fido_pin_error(
+                "response_status err = 0x35 CTAP2_ERR_PIN_NOT_SET No PIN has been set."
+            ),
+            CredentialError::FidoPinNotSet
+        );
+        assert_eq!(
+            map_fido_pin_error("response_status err = 0x31 CTAP2_ERR_PIN_INVALID"),
+            CredentialError::FidoOperation(
+                "response_status err = 0x31 CTAP2_ERR_PIN_INVALID".into()
+            )
+        );
+        assert_eq!(
+            require_fido_pin_configured(Some(false)),
+            Err(CredentialError::FidoPinNotSet)
+        );
+        assert_eq!(require_fido_pin_configured(Some(true)), Ok(()));
+        assert_eq!(require_fido_pin_configured(None), Ok(()));
     }
 
     #[test]

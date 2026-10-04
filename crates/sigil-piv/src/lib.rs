@@ -93,7 +93,7 @@ pub fn read_certificate<T: CardTransport>(
         0x00, 0xcb, 0x3f, 0xff, 0x05, 0x5c, 0x03, tag[0], tag[1], tag[2], 0x00,
     ];
     let (data, sw) = transceive(transport, &command)?;
-    if sw == 0x6a82 {
+    if sw == 0x6a82 || sw == 0x6a88 {
         return Ok(None);
     }
     if sw != 0x9000 {
@@ -288,6 +288,14 @@ mod tests {
             vec![0x6a, 0x82],
         )]);
         assert_eq!(select(&mut missing), Err(CredentialError::PivUnavailable));
+        let mut reference_not_found = ScriptedTransport::new([(
+            vec![0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08],
+            vec![0x6a, 0x88],
+        )]);
+        assert_eq!(
+            select(&mut reference_not_found),
+            Err(CredentialError::CardStatus(0x6a88))
+        );
     }
 
     #[test]
@@ -308,11 +316,13 @@ mod tests {
             read_certificate(&mut transport, PivSlot::AUTHENTICATION).unwrap(),
             Some(P256_CERT.to_vec())
         );
-        let mut missing = ScriptedTransport::new([(command, vec![0x6a, 0x82])]);
-        assert_eq!(
-            read_certificate(&mut missing, PivSlot::AUTHENTICATION).unwrap(),
-            None
-        );
+        for status in [0x6a82u16, 0x6a88] {
+            let mut missing = ScriptedTransport::new([(command.clone(), response(&[], status))]);
+            assert_eq!(
+                read_certificate(&mut missing, PivSlot::AUTHENTICATION).unwrap(),
+                None
+            );
+        }
     }
 
     #[test]
