@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package Name="Sigil"
+           Manufacturer="Exonical"
+           Version="$(var.Version)"
+           UpgradeCode="{15E55C4A-7ACB-4DAF-ACD9-0B2320DE04E3}"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Sigil is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- WebView2 detection keys documented at https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution -->
+    <Property Id="WEBVIEW2_HKLM_WOW6432">
+      <RegistrySearch Id="WebView2HklmWow6432" Root="HKLM"
+                      Key="SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                      Name="pv" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="WEBVIEW2_HKLM">
+      <RegistrySearch Id="WebView2Hklm" Root="HKLM"
+                      Key="SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                      Name="pv" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="WEBVIEW2_HKCU">
+      <RegistrySearch Id="WebView2Hkcu" Root="HKCU"
+                      Key="Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+                      Name="pv" Type="raw" Bitness="always64" />
+    </Property>
+    <Launch Condition="(WEBVIEW2_HKLM_WOW6432 AND WEBVIEW2_HKLM_WOW6432 &lt;&gt; &quot;0.0.0.0&quot;) OR (WEBVIEW2_HKLM AND WEBVIEW2_HKLM &lt;&gt; &quot;0.0.0.0&quot;) OR (WEBVIEW2_HKCU AND WEBVIEW2_HKCU &lt;&gt; &quot;0.0.0.0&quot;)"
+            Message="The Microsoft Edge WebView2 Runtime is required. Install it from https://developer.microsoft.com/microsoft-edge/webview2/. Air-gapped administrators should deploy the Evergreen Standalone installer first." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Sigil" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="MICROSOFTFOLDER" Name="Microsoft">
+        <Directory Id="WINDOWSFOLDER" Name="Windows">
+          <Directory Id="STARTMENUFOLDER" Name="Start Menu">
+            <Directory Id="COMMONPROGRAMSFOLDER" Name="Programs">
+              <Directory Id="SIGILPROGRAMSFOLDER" Name="Sigil" />
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="Sigil" Level="1">
+      <ComponentGroupRef Id="ProgramFilesComponents" />
+      <ComponentRef Id="SystemPathComponent" />
+      <ComponentRef Id="StartMenuComponent" />
+    </Feature>
+
+    <ComponentGroup Id="ProgramFilesComponents" Directory="INSTALLFOLDER">
+      <Component Id="CmsComponent" Guid="*">
+        <File Id="CmsExe" Source="$(var.BuildDir)\cms.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="GuiComponent" Guid="*">
+        <File Id="SigilGuiExe" Source="$(var.BuildDir)\sigil-gui.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="AgentServiceComponent" Guid="*">
+        <File Id="SigilAgentExe" Source="$(var.BuildDir)\sigil-agent.exe" KeyPath="yes" />
+        <ServiceInstall Id="SigilAgentInstall"
+                        Name="SigilAgent"
+                        DisplayName="Sigil Agent"
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Arguments="service"
+                        Vital="yes">
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="none" />
+        </ServiceInstall>
+        <ServiceControl Id="SigilAgentControl"
+                        Name="SigilAgent"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Component Id="SystemPathComponent" Directory="INSTALLFOLDER" Guid="*">
+      <Environment Id="SigilSystemPath"
+                   Name="PATH"
+                   Value="[INSTALLFOLDER]"
+                   Action="set"
+                   Part="last"
+                   Separator=";"
+                   System="yes"
+                   Permanent="no" />
+      <RegistryValue Root="HKLM"
+                     Key="Software\Exonical\Sigil"
+                     Name="PathEntry"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+
+    <Component Id="StartMenuComponent" Directory="SIGILPROGRAMSFOLDER" Guid="*">
+      <Shortcut Id="SigilGuiShortcut"
+                Name="Sigil"
+                Description="Sigil credential manager"
+                Target="[INSTALLFOLDER]sigil-gui.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveSigilProgramMenuFolder"
+                    Directory="SIGILPROGRAMSFOLDER"
+                    On="uninstall" />
+      <RegistryValue Root="HKLM"
+                     Key="Software\Exonical\Sigil"
+                     Name="StartMenuShortcut"
+                     Type="integer"
+                     Value="1"
+                     KeyPath="yes" />
+    </Component>
+  </Package>
+</Wix>

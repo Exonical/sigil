@@ -13,7 +13,7 @@ use sigil_core::{
     CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
     FidoInspection, FidoStatus, Fingerprint, FingerprintProgress, ManagementKey,
     ManagementKeyAlgorithm, PinPolicy, PivAttestation, PivCertificate, PivInfo, PivInspection,
-    PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, TouchPolicy,
+    PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, TouchPolicy,
 };
 use sigil_proto::v1;
 use tonic::transport::{Channel, Endpoint};
@@ -127,7 +127,7 @@ impl AgentClient {
         &self.agent_info
     }
 
-    pub fn change_piv_pin(
+    fn rpc_change_piv_pin(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -145,7 +145,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn change_piv_puk(
+    fn rpc_change_piv_puk(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -163,7 +163,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn unblock_piv_pin(
+    fn rpc_unblock_piv_pin(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -181,31 +181,29 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn change_piv_management_key(
+    fn rpc_change_piv_management_key(
         &self,
         id: &DeviceId,
         expected_serial: &str,
         current: &ManagementKey,
-        target_algorithm: ManagementKeyAlgorithm,
-    ) -> Result<ManagementKey> {
-        let mut response = self
-            .runtime
+        new: &ManagementKey,
+    ) -> Result<()> {
+        self.runtime
             .block_on(self.rpc.clone().change_piv_management_key(
                 v1::ChangePivManagementKeyRequest {
                     id: id.0.clone(),
                     expected_serial: expected_serial.to_owned(),
                     current_management_key: current.as_bytes().to_vec(),
                     current_algorithm: management_key_algorithm_to_proto(current.algorithm()),
-                    target_algorithm: management_key_algorithm_to_proto(target_algorithm),
+                    new_algorithm: management_key_algorithm_to_proto(new.algorithm()),
+                    new_management_key: new.as_bytes().to_vec(),
                 },
             ))
-            .map_err(Self::map_status)?
-            .into_inner();
-        let algorithm = management_key_algorithm_from_proto(response.algorithm)?;
-        ManagementKey::new(algorithm, std::mem::take(&mut response.management_key))
+            .map(|_| ())
+            .map_err(Self::map_status)
     }
 
-    pub fn generate_piv_key(
+    fn rpc_generate_piv_key(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -240,7 +238,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn attest_piv_key(
+    fn rpc_attest_piv_key(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -262,7 +260,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn sign_piv_csr(
+    fn rpc_sign_piv_csr(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -282,7 +280,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn import_piv_certificate(
+    fn rpc_import_piv_certificate(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -309,7 +307,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn delete_piv_certificate(
+    fn rpc_delete_piv_certificate(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -334,7 +332,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn delete_piv_key(
+    fn rpc_delete_piv_key(
         &self,
         id: &DeviceId,
         expected_serial: &str,
@@ -355,7 +353,7 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
-    pub fn reset_piv(&self, id: &DeviceId, confirm_serial: &str) -> Result<()> {
+    fn rpc_reset_piv(&self, id: &DeviceId, confirm_serial: &str) -> Result<()> {
         self.runtime
             .block_on(self.rpc.clone().reset_piv(v1::ResetPivRequest {
                 id: id.0.clone(),
@@ -643,26 +641,118 @@ impl PivInspection for AgentClient {
     }
 }
 
+impl PivManagement for AgentClient {
+    fn change_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_pin: &PivPin,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        self.rpc_change_piv_pin(id, expected_serial, old_pin, new_pin)
+    }
+
+    fn change_puk(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_puk: &PivPuk,
+        new_puk: &PivPuk,
+    ) -> Result<()> {
+        self.rpc_change_piv_puk(id, expected_serial, old_puk, new_puk)
+    }
+
+    fn unblock_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        puk: &PivPuk,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        self.rpc_unblock_piv_pin(id, expected_serial, puk, new_pin)
+    }
+
+    fn change_management_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        current: &ManagementKey,
+        new: &ManagementKey,
+    ) -> Result<()> {
+        self.rpc_change_piv_management_key(id, expected_serial, current, new)
+    }
+
+    fn generate_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        configuration: PivKeyConfiguration,
+    ) -> Result<Vec<u8>> {
+        self.rpc_generate_piv_key(id, expected_serial, management_key, configuration)
+    }
+
+    fn attest(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+    ) -> Result<PivAttestation> {
+        self.rpc_attest_piv_key(id, expected_serial, slot)
+    }
+
+    fn sign_csr(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        pin: &PivPin,
+        slot: PivSlot,
+        subject_dn: &str,
+    ) -> Result<Vec<u8>> {
+        self.rpc_sign_piv_csr(id, expected_serial, pin, slot, subject_dn)
+    }
+
+    fn import_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+        certificate_der: &[u8],
+    ) -> Result<()> {
+        self.rpc_import_piv_certificate(id, expected_serial, management_key, slot, certificate_der)
+    }
+
+    fn delete_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        self.rpc_delete_piv_certificate(id, expected_serial, management_key, slot)
+    }
+
+    fn delete_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        self.rpc_delete_piv_key(id, expected_serial, management_key, slot)
+    }
+
+    fn reset(&self, id: &DeviceId, expected_serial: &str) -> Result<()> {
+        self.rpc_reset_piv(id, expected_serial)
+    }
+}
+
 fn management_key_algorithm_to_proto(algorithm: ManagementKeyAlgorithm) -> i32 {
     match algorithm {
         ManagementKeyAlgorithm::Aes128 => v1::ManagementKeyAlgorithm::Aes128 as i32,
         ManagementKeyAlgorithm::Aes192 => v1::ManagementKeyAlgorithm::Aes192 as i32,
         ManagementKeyAlgorithm::Aes256 => v1::ManagementKeyAlgorithm::Aes256 as i32,
-    }
-}
-
-fn management_key_algorithm_from_proto(value: i32) -> Result<ManagementKeyAlgorithm> {
-    match v1::ManagementKeyAlgorithm::try_from(value).map_err(|_| {
-        CredentialError::SmartCardOperation(
-            "agent returned unknown management-key algorithm".into(),
-        )
-    })? {
-        v1::ManagementKeyAlgorithm::Aes128 => Ok(ManagementKeyAlgorithm::Aes128),
-        v1::ManagementKeyAlgorithm::Aes192 => Ok(ManagementKeyAlgorithm::Aes192),
-        v1::ManagementKeyAlgorithm::Aes256 => Ok(ManagementKeyAlgorithm::Aes256),
-        v1::ManagementKeyAlgorithm::Unspecified => Err(CredentialError::SmartCardOperation(
-            "agent omitted management-key algorithm".into(),
-        )),
     }
 }
 

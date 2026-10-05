@@ -1,8 +1,8 @@
-use std::sync::Arc;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 
 use dioxus::prelude::*;
-use sigil_app::CredentialService;
-use sigil_client::AgentClient;
+use sigil_connect::{ConnectOptions, ConnectedService, ConnectionMode};
 
 mod piv;
 
@@ -32,45 +32,82 @@ fn main() {
         .launch(app);
 }
 
-fn agent_endpoint() -> Option<String> {
+fn connection_options() -> ConnectOptions {
     let mut arguments = std::env::args().skip(1);
+    let mut options = ConnectOptions::default();
     while let Some(argument) = arguments.next() {
-        if argument == "--agent" {
-            return arguments.next();
+        match argument.as_str() {
+            "--agent" => options.agent = arguments.next(),
+            "--direct" => options.direct = true,
+            _ => {}
         }
     }
-    None
+    options
 }
 
 fn app() -> Element {
     let connected = use_hook(|| {
-        AgentClient::connect(agent_endpoint().as_deref())
-            .map(|client| CredentialService::new(Arc::new(client)))
-            .map_err(|error| error.to_string())
+        sigil_connect::connect(connection_options()).map_err(|error| {
+            let agent_required = matches!(
+                &error,
+                sigil_connect::ConnectError::AgentRequired
+                    | sigil_connect::ConnectError::DirectModeDisabled
+            );
+            (error.to_string(), agent_required)
+        })
     });
     use_context_provider(|| connected.as_ref().ok().cloned());
     match connected {
-        Ok(_) => rsx! { AgentUi {} },
-        Err(error) => rsx! {
-            style { {include_str!("style.css")} }
-            div { class: "shell",
-                header { h1 { "Sigil" } }
-                main { section {
-                    h2 { "Sigil agent is not running" }
-                    p { class: "error", "{error}" }
-                    p { class: "muted", "Start sigil-agent or install the Windows service, then restart Sigil." }
-                } }
+        Ok(connection) => {
+            if let Some(warning) = &connection.warning {
+                tracing::warn!("{warning}");
             }
-        },
+            rsx! { AgentUi {} }
+        }
+        Err((error, agent_required)) => {
+            let heading = if agent_required {
+                "The Sigil agent is required by machine policy"
+            } else {
+                "Sigil could not connect to hardware"
+            };
+            rsx! {
+                style { {include_str!("style.css")} }
+                div { class: "shell",
+                    header {
+                        h1 { "Sigil" }
+                        span { class: "badge", "Offline" }
+                    }
+                    main { section {
+                        h2 { "{heading}" }
+                        p { class: "error", "{error}" }
+                        if agent_required {
+                            p { class: "muted", "Direct mode is disabled by machine policy. Start the agent service, then restart Sigil." }
+                        } else {
+                            p { class: "muted", "Check the agent, device connection, or local machine policy." }
+                        }
+                    } }
+                }
+            }
+        }
     }
 }
 
 #[component]
 fn AgentUi() -> Element {
-    let service = use_context::<Option<CredentialService>>()
-        .expect("connected agent service is provided by app");
+    let connection = use_context::<Option<ConnectedService>>().expect("app connected to a backend");
+    let service = connection.credentials.clone();
+    let mode = connection.mode.clone();
     use_context_provider(|| service.clone());
     let initial = use_hook(|| service.devices().map_err(|error| error.to_string()));
+    tracing::info!(
+        connection_mode = ?connection.mode,
+        device_count = initial.as_ref().map(Vec::len).unwrap_or_default(),
+        models = ?initial
+            .as_ref()
+            .map(|devices| devices.iter().map(|device| device.model.as_str()).collect::<Vec<_>>())
+            .unwrap_or_default(),
+        "GUI connection initialized"
+    );
     let mut devices = use_signal_sync(|| initial.as_ref().cloned().unwrap_or_default());
     let mut status = use_signal_sync(|| initial.as_ref().err().cloned().unwrap_or_default());
     let mut selected = use_signal(|| devices.read().first().map(|item| item.id.clone()));
@@ -180,13 +217,21 @@ fn AgentUi() -> Element {
         .and_then(|info| info.firmware.as_ref())
         .map(|v| format!("{}.{}.{}", v.major, v.minor, v.patch))
         .unwrap_or_else(|| "unavailable".into());
+    let mode_label = match &mode {
+        ConnectionMode::Agent { .. } => "Agent",
+        ConnectionMode::Direct { elevated: true } => "Direct · Administrator",
+        ConnectionMode::Direct { elevated: false } => "Direct",
+    };
+    let direct_mode = matches!(mode, ConnectionMode::Direct { .. });
+    let fido_access_restricted_message = CredentialError::FidoAccessRestricted.to_string();
+    let restart_admin_message = use_signal(String::new);
 
     rsx! {
         style { {include_str!("style.css")} }
         div { class: "shell",
             header {
                 h1 { "Sigil" }
-                span { class: "badge", "LOCAL AGENT" }
+                span { class: "badge", "{mode_label}" }
                 button { onclick: move |_| {
                     match refresh_service.devices() {
                         Ok(updated) => {
@@ -279,7 +324,12 @@ fn AgentUi() -> Element {
                                     });
                                 }
                             }, "Inspect FIDO2" }
-                            if !current_fido_error.is_empty() { p { class: "error", "{current_fido_error}" } }
+                            if !current_fido_error.is_empty() {
+                                p { class: "error", "{current_fido_error}" }
+                                if direct_mode && current_fido_error == fido_access_restricted_message {
+                                    RestartAsAdministrator { message: restart_admin_message }
+                                }
+                            }
                             if let Some(detail) = current_fido_status.as_ref() {
                                 dl {
                                     dt { "CTAP versions" } dd { {detail.versions.join(", ")} }
@@ -368,7 +418,12 @@ fn AgentUi() -> Element {
                                             });
                                         }
                                     }, "Enroll fingerprint" }
-                                    if !current_bio_message.is_empty() { p { "{current_bio_message}" } }
+                                    if !current_bio_message.is_empty() {
+                                        p { "{current_bio_message}" }
+                                        if direct_mode && current_bio_message == fido_access_restricted_message {
+                                            RestartAsAdministrator { message: restart_admin_message }
+                                        }
+                                    }
                                     if let Some(entries) = current_fingerprints {
                                         if entries.is_empty() { p { "No fingerprints enrolled." } }
                                         for entry in entries.iter() {
@@ -445,4 +500,102 @@ fn AgentUi() -> Element {
             }
         }
     }
+}
+
+#[component]
+fn RestartAsAdministrator(message: Signal<String>) -> Element {
+    rsx! {
+        button {
+            onclick: move |_| match restart_as_administrator() {
+                Ok(()) => std::process::exit(0),
+                Err(error) => message.set(error),
+            },
+            "Restart as administrator"
+        }
+        if !message.read().is_empty() {
+            p { class: "error", "{message}" }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn restart_as_administrator() -> std::result::Result<(), String> {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, ERROR_CANCELLED, GetLastError},
+        UI::{
+            Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW},
+            WindowsAndMessaging::SW_SHOWNORMAL,
+        },
+    };
+
+    let executable =
+        std::env::current_exe().map_err(|error| format!("could not locate Sigil: {error}"))?;
+    let file = wide_string(executable.as_os_str());
+    let verb = wide_string(std::ffi::OsStr::new("runas"));
+    let mut arguments = Vec::new();
+    for argument in std::env::args_os().skip(1) {
+        if !arguments.is_empty() {
+            arguments.push(u16::from(b' '));
+        }
+        arguments.extend(quote_windows_argument(&argument));
+    }
+    arguments.push(0);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: verb.as_ptr(),
+        lpFile: file.as_ptr(),
+        lpParameters: arguments.as_ptr(),
+        nShow: SW_SHOWNORMAL,
+        ..SHELLEXECUTEINFOW::default()
+    };
+    if unsafe { ShellExecuteExW(&mut info) } == 0 {
+        let error = unsafe { GetLastError() };
+        if error == ERROR_CANCELLED {
+            return Err("Administrator elevation was cancelled.".into());
+        }
+        return Err(format!(
+            "Could not restart Sigil as administrator (Windows error {error})."
+        ));
+    }
+    if !info.hProcess.is_null() {
+        unsafe { CloseHandle(info.hProcess) };
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn restart_as_administrator() -> std::result::Result<(), String> {
+    Err("Administrator relaunch is only available on Windows.".into())
+}
+
+#[cfg(windows)]
+fn wide_string(value: &std::ffi::OsStr) -> Vec<u16> {
+    value.encode_wide().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(windows)]
+fn quote_windows_argument(value: &std::ffi::OsStr) -> Vec<u16> {
+    let value = value.encode_wide().collect::<Vec<_>>();
+    if !value.is_empty() && !value.iter().any(|unit| matches!(*unit, 0x20 | 0x09 | 0x22)) {
+        return value;
+    }
+    let mut quoted = vec![0x22];
+    let mut backslashes = 0usize;
+    for unit in value {
+        if unit == 0x5c {
+            backslashes += 1;
+        } else if unit == 0x22 {
+            quoted.extend(std::iter::repeat_n(0x5c, backslashes * 2 + 1));
+            quoted.push(unit);
+            backslashes = 0;
+        } else {
+            quoted.extend(std::iter::repeat_n(0x5c, backslashes));
+            quoted.push(unit);
+            backslashes = 0;
+        }
+    }
+    quoted.extend(std::iter::repeat_n(0x5c, backslashes * 2));
+    quoted.push(0x22);
+    quoted
 }

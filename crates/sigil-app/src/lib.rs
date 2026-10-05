@@ -172,6 +172,16 @@ impl CredentialService {
             .change_management_key(id, expected_serial, current, new)
     }
 
+    pub fn generate_management_key(
+        algorithm: sigil_core::ManagementKeyAlgorithm,
+    ) -> Result<ManagementKey> {
+        let mut key = zeroize::Zeroizing::new(vec![0u8; algorithm.key_len()]);
+        getrandom::fill(key.as_mut_slice()).map_err(|_| {
+            CredentialError::BackendUnavailable("OS random source unavailable".into())
+        })?;
+        ManagementKey::new(algorithm, std::mem::take(&mut *key))
+    }
+
     pub fn generate_key(
         &self,
         id: &DeviceId,

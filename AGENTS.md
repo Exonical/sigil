@@ -23,6 +23,15 @@ After `go generate ./...`, run `git diff --exit-code` from the repository root t
 
 The Windows PC/SC hardware test is read-only and returns without hardware access unless `SIGIL_HARDWARE_TESTS=1` is set. Regular tests must remain hardware-free.
 
+To build the Windows x64 MSI with the pinned user-local .NET SDK and repo-local WiX tool, run from the workspace root:
+
+```powershell
+$env:CARGO_TARGET_DIR='target\sidekick'
+.\installer\windows\build.ps1
+```
+
+Validate it without installing it using `dotnet wix msi validate target\installer\Sigil-<version>-x64.msi`.
+
 ## Conventions
 
 - Keep `sigil-core` vendor-neutral and expose typed domain APIs through `sigil-app`.
@@ -30,10 +39,10 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - Never pass PINs or PUKs as CLI arguments. Prompt securely when authorization is introduced, and never persist or log secrets.
 - Keep PIV inspection read-only. Tests that change a physical token require `SIGIL_HARDWARE_TESTS=1` and `SIGIL_HARDWARE_MUTATION_SERIAL=<serial>`, must restore factory defaults with a PIV reset, and must never use touch-required policies.
 - Prefer focused changes, follow the existing Rust style, and add hardware-free tests for protocol parsing and service behavior.
-- Only `sigil-agent` may access hardware; CLI and GUI are untrusted local-IPC clients.
+- Hardware is accessed by `sigil-agent` or, in direct mode, in-process by the CLI/GUI as the current user. Operations that use system-held secrets (escrowed or randomized PUK/management key, configuration lock codes, backend grants) run only in `sigil-agent`. The CLI/GUI prefer a running, trusted agent; machine policy `RequireAgent` (`HKLM\SOFTWARE\Policies\Sigil` or `/etc/sigil/client.toml`) disables direct mode.
 - Every read-only RPC is audit-logged. Never log PINs, PUKs, signed grants, or raw APDUs.
-- PIV mutations that use a system-held management key or PUK require a grant verified by `sigil-agent`; PIN change, CSR signing, attestation reads, and PIV reset use caller policy and audit only. The `dev-grants` feature must never be enabled in release builds.
-- M4 PIV mutations must verify the grant against the token serial read inside the same card transaction that performs the mutation.
+- Backend grants are required only when the agent itself uses a system-held secret. Operations where the caller supplies the PIN, PUK, or management key are user-configurable and audit-only. The `dev-grants` feature must never be enabled in release builds.
+- Escrow-backed agent operations that use a system-held secret must verify the grant against the token serial read inside the same card transaction that performs the mutation.
 
 ## Product decisions
 
@@ -49,6 +58,6 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - YubiKey 5 FIPS firmware 5.7 requires an 8-character PIN and PUK, a non-default AES management key, and PIN complexity before key generation is approved; PIN policy `never`, RSA-1024, 3DES, and X25519 are unavailable. PIV reset returns the applet to unapproved mode. FIPS PIV over NFC requires SCP03/SCP11, which is not implemented.
 - Because a local user can reach PIV, OATH, and OTP directly without the agent, the agent cannot be the only control for those applets on user machines. PIV enforcement relies on secrets the user never holds (randomized PUK and management key) plus backend checks (attestation, CA binding, inventory/serial reconciliation). A user can always change their own PIN or reset PIV after blocking PIN and PUK; the backend must detect that (missing or unattested certificates) rather than assume it is impossible.
 - FIDO2 enrollment IdPs, in priority order: Authentik, Keycloak. Whether each supports API import of credentials or needs browser registration is still unverified.
-- Policy (backend grants) applies only where a system-held secret makes it enforceable: PIV operations that need the management key or PUK (key generation, certificate import/delete, PIN unblock, management-key or PUK change, retry-count changes). Everything the user can already do with their own credentials or with stock tools is user-configurable and only audit-logged: PIV PIN change, OATH accounts and the OATH password, YubiKey OTP slots 1/2, and FIDO PIN change. Windows Settings also lets non-admin users change the FIDO PIN and reset a security key.
+- Backend grants are required only when the agent itself uses a system-held secret. Operations where the caller supplies a PIN, PUK, or management key are user-configurable and audit-only. Everything the user can already do with stock tools remains user-configurable and only audit-logged, including PIV PIN change, OATH accounts and password, YubiKey OTP slots 1/2, and FIDO PIN change. Windows Settings also lets non-admin users change the FIDO PIN and reset a security key.
 - OATH accounts and YubiKey OTP slots 1/2 are in scope after the Go backend (M7), as user-configurable features.
 - Backend: Go 1.27 server and web portal (inventory, revocation by "delete key", lost keys by token nickname).

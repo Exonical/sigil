@@ -1,18 +1,21 @@
-use std::{ops::Deref, sync::Arc};
-
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use sigil_app::CredentialService;
-use sigil_client::AgentClient;
-use sigil_core::{DeviceId, DeviceInfo};
+use sigil_connect::{ConnectOptions, ConnectionMode};
+use sigil_core::{CredentialError, DeviceId, DeviceInfo};
 
 mod piv;
 
 #[derive(Parser)]
 #[command(name = "cms", about = "Sigil credential manager")]
 struct Args {
-    #[arg(long, global = true)]
+    #[arg(long, global = true, conflicts_with = "direct")]
     agent: Option<String>,
+    #[arg(long, global = true, conflicts_with = "agent")]
+    direct: bool,
+    #[cfg(debug_assertions)]
+    #[arg(long, global = true, hide = true, conflicts_with_all = ["agent", "direct"])]
+    direct_mock: bool,
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -77,28 +80,6 @@ enum DeviceCommand {
     Info { device: String },
 }
 
-struct Services {
-    credentials: CredentialService,
-    agent: Arc<AgentClient>,
-}
-
-impl Deref for Services {
-    type Target = CredentialService;
-
-    fn deref(&self) -> &Self::Target {
-        &self.credentials
-    }
-}
-
-fn service(endpoint: Option<&str>) -> Result<Services> {
-    let agent = Arc::new(AgentClient::connect(endpoint)?);
-    let discovery: Arc<dyn sigil_core::DeviceDiscovery> = agent.clone();
-    Ok(Services {
-        credentials: CredentialService::new(discovery),
-        agent,
-    })
-}
-
 fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
     if json {
         return Ok(serde_json::to_string_pretty(devices)?);
@@ -119,16 +100,39 @@ fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
 }
 
 fn run(args: Args) -> Result<String> {
-    let service = service(args.agent.as_deref())?;
-    match args.command {
+    let connection = sigil_connect::connect(ConnectOptions {
+        agent: args.agent,
+        direct: args.direct,
+        #[cfg(debug_assertions)]
+        direct_mock: args.direct_mock,
+    })?;
+    if let Some(warning) = &connection.warning {
+        eprintln!("{warning}");
+    }
+    let direct = matches!(connection.mode, ConnectionMode::Direct { .. });
+    run_command(&connection.credentials, args.command, args.json).map_err(|error| {
+        if direct
+            && error
+                .downcast_ref::<CredentialError>()
+                .is_some_and(|error| *error == CredentialError::FidoAccessRestricted)
+        {
+            anyhow::anyhow!("run from an elevated terminal or start the Sigil agent service")
+        } else {
+            error
+        }
+    })
+}
+
+fn run_command(service: &CredentialService, command: Command, json: bool) -> Result<String> {
+    match command {
         Command::Device {
             command: DeviceCommand::List,
-        } => render_list(&service.devices()?, args.json),
+        } => render_list(&service.devices()?, json),
         Command::Device {
             command: DeviceCommand::Info { device },
         } => {
             let info = service.device(&DeviceId(device))?;
-            if args.json {
+            if json {
                 Ok(serde_json::to_string_pretty(&info)?)
             } else {
                 Ok(format!(
@@ -160,14 +164,12 @@ fn run(args: Args) -> Result<String> {
                 ))
             }
         }
-        Command::Piv { command } => {
-            piv::handle(&service.credentials, &service.agent, command, args.json)
-        }
+        Command::Piv { command } => piv::handle(service, command, json),
         Command::Fido {
             command: FidoCommand::Info { device },
         } => {
             let status = service.fido_status(&DeviceId(device))?;
-            if args.json {
+            if json {
                 Ok(serde_json::to_string_pretty(&status)?)
             } else {
                 Ok(format!(
@@ -193,7 +195,7 @@ fn run(args: Args) -> Result<String> {
             let pin = rpassword::prompt_password("FIDO2 PIN: ")?;
             eprintln!();
             let credentials = service.discoverable_credentials(&id, &pin)?;
-            if args.json {
+            if json {
                 Ok(serde_json::to_string_pretty(&credentials)?)
             } else if credentials.is_empty() {
                 Ok("No discoverable credentials found.".into())
@@ -239,7 +241,7 @@ fn run(args: Args) -> Result<String> {
             match action {
                 (Some(fingerprint_id), _) => {
                     service.remove_fingerprint(&id, &pin, &fingerprint_id)?;
-                    Ok(if args.json {
+                    Ok(if json {
                         "{\"removed\":true}".into()
                     } else {
                         "Fingerprint removed.".into()
@@ -252,7 +254,7 @@ fn run(args: Args) -> Result<String> {
                             progress.message, progress.remaining_samples
                         );
                     })?;
-                    if args.json {
+                    if json {
                         Ok(serde_json::to_string_pretty(&fingerprint)?)
                     } else {
                         Ok(format!("Fingerprint enrolled: {}", fingerprint.id))
@@ -260,7 +262,7 @@ fn run(args: Args) -> Result<String> {
                 }
                 _ => {
                     let fingerprints = service.fingerprints(&id, &pin)?;
-                    if args.json {
+                    if json {
                         Ok(serde_json::to_string_pretty(&fingerprints)?)
                     } else if fingerprints.is_empty() {
                         Ok("No fingerprints enrolled.".into())
@@ -301,6 +303,7 @@ mod tests {
     use std::sync::{Arc, Barrier};
 
     use sigil_agent::test_support::TestAgent;
+    use sigil_client::AgentClient;
     use sigil_core::{DeviceDiscovery, DeviceEvent, FidoInspection};
 
     use super::*;
@@ -317,6 +320,17 @@ mod tests {
 
     fn start_mock_agent() -> Result<TestAgent> {
         TestAgent::spawn_mock()
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn direct_mock_inventory_json_is_available_without_an_agent() -> Result<()> {
+        let args = Args::try_parse_from(["cms", "--direct-mock", "device", "list", "--json"])?;
+        let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
+        assert_eq!(result.len(), 1);
+        assert!(result[0].simulated);
+        assert_eq!(result[0].id.0, "mock-yubikey-12345678");
+        Ok(())
     }
 
     #[test]

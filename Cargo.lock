@@ -5229,10 +5229,12 @@ dependencies = [
 name = "sigil-app"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.4.3",
  "sigil-core",
  "sigil-mock",
  "sigil-piv",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -5246,6 +5248,7 @@ dependencies = [
  "sigil-agent",
  "sigil-app",
  "sigil-client",
+ "sigil-connect",
  "sigil-core",
  "tracing-subscriber",
  "zeroize",
@@ -5265,6 +5268,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigil-connect"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "sigil-app",
+ "sigil-client",
+ "sigil-core",
+ "sigil-mock",
+ "sigil-platform",
+ "thiserror 2.0.21",
+ "toml 0.8.2",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "sigil-core"
 version = "0.1.0"
 dependencies = [
@@ -5280,9 +5299,11 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "sigil-app",
- "sigil-client",
+ "sigil-connect",
  "sigil-core",
+ "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

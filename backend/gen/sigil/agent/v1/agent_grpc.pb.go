@@ -63,7 +63,7 @@ type AgentClient interface {
 	ChangePivPin(ctx context.Context, in *ChangePivPinRequest, opts ...grpc.CallOption) (*Empty, error)
 	ChangePivPuk(ctx context.Context, in *ChangePivPukRequest, opts ...grpc.CallOption) (*Empty, error)
 	UnblockPivPin(ctx context.Context, in *UnblockPivPinRequest, opts ...grpc.CallOption) (*Empty, error)
-	ChangePivManagementKey(ctx context.Context, in *ChangePivManagementKeyRequest, opts ...grpc.CallOption) (*ChangePivManagementKeyResponse, error)
+	ChangePivManagementKey(ctx context.Context, in *ChangePivManagementKeyRequest, opts ...grpc.CallOption) (*Empty, error)
 	GeneratePivKey(ctx context.Context, in *GeneratePivKeyRequest, opts ...grpc.CallOption) (*GeneratePivKeyResponse, error)
 	AttestPivKey(ctx context.Context, in *AttestPivKeyRequest, opts ...grpc.CallOption) (*AttestPivKeyResponse, error)
 	SignPivCsr(ctx context.Context, in *SignPivCsrRequest, opts ...grpc.CallOption) (*SignPivCsrResponse, error)
@@ -249,9 +249,9 @@ func (c *agentClient) UnblockPivPin(ctx context.Context, in *UnblockPivPinReques
 	return out, nil
 }
 
-func (c *agentClient) ChangePivManagementKey(ctx context.Context, in *ChangePivManagementKeyRequest, opts ...grpc.CallOption) (*ChangePivManagementKeyResponse, error) {
+func (c *agentClient) ChangePivManagementKey(ctx context.Context, in *ChangePivManagementKeyRequest, opts ...grpc.CallOption) (*Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChangePivManagementKeyResponse)
+	out := new(Empty)
 	err := c.cc.Invoke(ctx, Agent_ChangePivManagementKey_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -348,7 +348,7 @@ type AgentServer interface {
 	ChangePivPin(context.Context, *ChangePivPinRequest) (*Empty, error)
 	ChangePivPuk(context.Context, *ChangePivPukRequest) (*Empty, error)
 	UnblockPivPin(context.Context, *UnblockPivPinRequest) (*Empty, error)
-	ChangePivManagementKey(context.Context, *ChangePivManagementKeyRequest) (*ChangePivManagementKeyResponse, error)
+	ChangePivManagementKey(context.Context, *ChangePivManagementKeyRequest) (*Empty, error)
 	GeneratePivKey(context.Context, *GeneratePivKeyRequest) (*GeneratePivKeyResponse, error)
 	AttestPivKey(context.Context, *AttestPivKeyRequest) (*AttestPivKeyResponse, error)
 	SignPivCsr(context.Context, *SignPivCsrRequest) (*SignPivCsrResponse, error)
@@ -411,7 +411,7 @@ func (UnimplementedAgentServer) ChangePivPuk(context.Context, *ChangePivPukReque
 func (UnimplementedAgentServer) UnblockPivPin(context.Context, *UnblockPivPinRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method UnblockPivPin not implemented")
 }
-func (UnimplementedAgentServer) ChangePivManagementKey(context.Context, *ChangePivManagementKeyRequest) (*ChangePivManagementKeyResponse, error) {
+func (UnimplementedAgentServer) ChangePivManagementKey(context.Context, *ChangePivManagementKeyRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ChangePivManagementKey not implemented")
 }
 func (UnimplementedAgentServer) GeneratePivKey(context.Context, *GeneratePivKeyRequest) (*GeneratePivKeyResponse, error) {

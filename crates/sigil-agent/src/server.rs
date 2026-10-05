@@ -143,6 +143,35 @@ impl AgentService {
         Ok(actual)
     }
 
+    async fn preflight_piv_serial(
+        &self,
+        caller: &CallerIdentity,
+        rpc: &'static str,
+        device_id: &str,
+        operation: &'static str,
+        slot: Option<u8>,
+        expected_serial: &str,
+    ) -> std::result::Result<String, Status> {
+        let id = DeviceId(device_id.to_owned());
+        match self.ensure_expected_serial(&id, expected_serial).await {
+            Ok(serial) => Ok(serial),
+            Err(status) => {
+                audit_piv::<()>(
+                    caller,
+                    rpc,
+                    device_id,
+                    operation,
+                    slot,
+                    expected_serial,
+                    None,
+                    &Err(status.clone()),
+                );
+                Err(status)
+            }
+        }
+    }
+
+    #[allow(dead_code)] // used by escrow-backed agent operations
     async fn authorize_piv_grant(
         &self,
         caller: &CallerIdentity,
@@ -181,6 +210,7 @@ impl AgentService {
     }
 }
 
+#[allow(dead_code)] // used by escrow-backed agent operations
 struct PivGrantContext {
     serial: String,
     grant_id: String,
@@ -640,26 +670,21 @@ impl v1::agent_server::Agent for AgentService {
             }
         };
         let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
+        let serial = self
+            .preflight_piv_serial(
                 &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivChangePuk,
+                "ChangePivPuk",
+                &device_id,
+                "PIV_CHANGE_PUK",
                 None,
+                &serial_hint,
             )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result =
-                    blocking(move || credentials.change_puk(&id, &serial, &old_puk, &new_puk))
-                        .await;
-                (context.serial, Some(context.grant_id), result)
-            }
-            Err(status) => (serial_hint, None, Err(status)),
-        };
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result =
+            blocking(move || credentials.change_puk(&id, &expected_serial, &old_puk, &new_puk))
+                .await;
         audit_piv(
             &caller,
             "ChangePivPuk",
@@ -667,7 +692,7 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_CHANGE_PUK",
             None,
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
         result.map(|_| Response::new(v1::Empty {}))
@@ -718,25 +743,20 @@ impl v1::agent_server::Agent for AgentService {
             }
         };
         let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
+        let serial = self
+            .preflight_piv_serial(
                 &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivUnblockPin,
+                "UnblockPivPin",
+                &device_id,
+                "PIV_UNBLOCK_PIN",
                 None,
+                &serial_hint,
             )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result =
-                    blocking(move || credentials.unblock_pin(&id, &serial, &puk, &new_pin)).await;
-                (context.serial, Some(context.grant_id), result)
-            }
-            Err(status) => (serial_hint, None, Err(status)),
-        };
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result =
+            blocking(move || credentials.unblock_pin(&id, &expected_serial, &puk, &new_pin)).await;
         audit_piv(
             &caller,
             "UnblockPivPin",
@@ -744,7 +764,7 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_UNBLOCK_PIN",
             None,
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
         result.map(|_| Response::new(v1::Empty {}))
@@ -753,7 +773,7 @@ impl v1::agent_server::Agent for AgentService {
     async fn change_piv_management_key(
         &self,
         request: Request<v1::ChangePivManagementKeyRequest>,
-    ) -> std::result::Result<Response<v1::ChangePivManagementKeyResponse>, Status> {
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
         let device_id = request.get_ref().id.clone();
         let caller = self.caller_piv(
             &request,
@@ -779,7 +799,7 @@ impl v1::agent_server::Agent for AgentService {
                 ));
             }
         };
-        let target_algorithm = match management_key_algorithm(input.target_algorithm) {
+        let new_algorithm = match management_key_algorithm(input.new_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
                 return Err(audit_piv_error(
@@ -812,35 +832,41 @@ impl v1::agent_server::Agent for AgentService {
                 ));
             }
         };
-        let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
-                &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivChangeManagementKey,
-                None,
-            )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result = blocking(move || {
-                    let mut key_bytes = Zeroizing::new(vec![0u8; target_algorithm.key_len()]);
-                    getrandom::fill(key_bytes.as_mut_slice()).map_err(|_| {
-                        CredentialError::BackendUnavailable("OS random source unavailable".into())
-                    })?;
-                    let new_key =
-                        ManagementKey::new(target_algorithm, std::mem::take(&mut *key_bytes))?;
-                    credentials.change_management_key(&id, &serial, &current, &new_key)?;
-                    Ok(Zeroizing::new(new_key.as_bytes().to_vec()))
-                })
-                .await;
-                (context.serial, Some(context.grant_id), result)
+        let new_key = match ManagementKey::new(
+            new_algorithm,
+            std::mem::take(&mut input.new_management_key),
+        ) {
+            Ok(key) => key,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
             }
-            Err(status) => (serial_hint, None, Err(status)),
         };
+        let id = DeviceId(device_id.clone());
+        let serial = self
+            .preflight_piv_serial(
+                &caller,
+                "ChangePivManagementKey",
+                &device_id,
+                "PIV_CHANGE_MANAGEMENT_KEY",
+                None,
+                &serial_hint,
+            )
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result = blocking(move || {
+            credentials.change_management_key(&id, &expected_serial, &current, &new_key)
+        })
+        .await;
         audit_piv(
             &caller,
             "ChangePivManagementKey",
@@ -848,20 +874,10 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_CHANGE_MANAGEMENT_KEY",
             None,
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
-        result.map(|key| {
-            // TODO(escrow): replace this one-time development return with escrow retrieval.
-            Response::new(v1::ChangePivManagementKeyResponse {
-                algorithm: match target_algorithm {
-                    ManagementKeyAlgorithm::Aes128 => v1::ManagementKeyAlgorithm::Aes128 as i32,
-                    ManagementKeyAlgorithm::Aes192 => v1::ManagementKeyAlgorithm::Aes192 as i32,
-                    ManagementKeyAlgorithm::Aes256 => v1::ManagementKeyAlgorithm::Aes256 as i32,
-                },
-                management_key: key.to_vec(),
-            })
-        })
+        result.map(|_| Response::new(v1::Empty {}))
     }
 
     async fn generate_piv_key(
@@ -973,37 +989,32 @@ impl v1::agent_server::Agent for AgentService {
             }
         };
         let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
+        let serial = self
+            .preflight_piv_serial(
                 &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivGenerateKey,
+                "GeneratePivKey",
+                &device_id,
+                "PIV_GENERATE_KEY",
                 Some(slot.byte()),
+                &serial_hint,
             )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result = blocking(move || {
-                    credentials.generate_key(
-                        &id,
-                        &serial,
-                        &management_key,
-                        PivKeyConfiguration {
-                            slot,
-                            algorithm: key_algorithm,
-                            pin_policy,
-                            touch_policy,
-                        },
-                    )
-                })
-                .await;
-                (context.serial, Some(context.grant_id), result)
-            }
-            Err(status) => (serial_hint, None, Err(status)),
-        };
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result = blocking(move || {
+            credentials.generate_key(
+                &id,
+                &expected_serial,
+                &management_key,
+                PivKeyConfiguration {
+                    slot,
+                    algorithm: key_algorithm,
+                    pin_policy,
+                    touch_policy,
+                },
+            )
+        })
+        .await;
         audit_piv(
             &caller,
             "GeneratePivKey",
@@ -1011,7 +1022,7 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_GENERATE_KEY",
             Some(slot.byte()),
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
         result.map(|subject_public_key_info| {
@@ -1211,33 +1222,28 @@ impl v1::agent_server::Agent for AgentService {
             };
         let certificate_der = input.certificate_der;
         let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
+        let serial = self
+            .preflight_piv_serial(
                 &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivImportCertificate,
+                "ImportPivCertificate",
+                &device_id,
+                "PIV_IMPORT_CERTIFICATE",
                 Some(slot.byte()),
+                &serial_hint,
             )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result = blocking(move || {
-                    credentials.import_certificate(
-                        &id,
-                        &serial,
-                        &management_key,
-                        slot,
-                        &certificate_der,
-                    )
-                })
-                .await;
-                (context.serial, Some(context.grant_id), result)
-            }
-            Err(status) => (serial_hint, None, Err(status)),
-        };
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result = blocking(move || {
+            credentials.import_certificate(
+                &id,
+                &expected_serial,
+                &management_key,
+                slot,
+                &certificate_der,
+            )
+        })
+        .await;
         audit_piv(
             &caller,
             "ImportPivCertificate",
@@ -1245,7 +1251,7 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_IMPORT_CERTIFICATE",
             Some(slot.byte()),
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
         result.map(|_| Response::new(v1::Empty {}))
@@ -1313,27 +1319,22 @@ impl v1::agent_server::Agent for AgentService {
                 }
             };
         let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
+        let serial = self
+            .preflight_piv_serial(
                 &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivDeleteCertificate,
+                "DeletePivCertificate",
+                &device_id,
+                "PIV_DELETE_CERTIFICATE",
                 Some(slot.byte()),
+                &serial_hint,
             )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result = blocking(move || {
-                    credentials.delete_certificate(&id, &serial, &management_key, slot)
-                })
-                .await;
-                (context.serial, Some(context.grant_id), result)
-            }
-            Err(status) => (serial_hint, None, Err(status)),
-        };
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result = blocking(move || {
+            credentials.delete_certificate(&id, &expected_serial, &management_key, slot)
+        })
+        .await;
         audit_piv(
             &caller,
             "DeletePivCertificate",
@@ -1341,7 +1342,7 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_DELETE_CERTIFICATE",
             Some(slot.byte()),
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
         result.map(|_| Response::new(v1::Empty {}))
@@ -1409,26 +1410,21 @@ impl v1::agent_server::Agent for AgentService {
                 }
             };
         let id = DeviceId(device_id.clone());
-        let authorization = self
-            .authorize_piv_grant(
+        let serial = self
+            .preflight_piv_serial(
                 &caller,
-                &id,
-                &serial_hint,
-                v1::Operation::PivDeleteKey,
+                "DeletePivKey",
+                &device_id,
+                "PIV_DELETE_KEY",
                 Some(slot.byte()),
+                &serial_hint,
             )
-            .await;
-        let (serial, grant_id, result) = match authorization {
-            Ok(context) => {
-                let credentials = self.credentials.clone();
-                let serial = context.serial.clone();
-                let result =
-                    blocking(move || credentials.delete_key(&id, &serial, &management_key, slot))
-                        .await;
-                (context.serial, Some(context.grant_id), result)
-            }
-            Err(status) => (serial_hint, None, Err(status)),
-        };
+            .await?;
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let result =
+            blocking(move || credentials.delete_key(&id, &expected_serial, &management_key, slot))
+                .await;
         audit_piv(
             &caller,
             "DeletePivKey",
@@ -1436,7 +1432,7 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_DELETE_KEY",
             Some(slot.byte()),
             &serial,
-            grant_id.as_deref(),
+            None,
             &result,
         );
         result.map(|_| Response::new(v1::Empty {}))

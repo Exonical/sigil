@@ -20,7 +20,7 @@ service Agent {
   rpc ChangePivPin(ChangePivPinRequest) returns (Empty);
   rpc ChangePivPuk(ChangePivPukRequest) returns (Empty);
   rpc UnblockPivPin(UnblockPivPinRequest) returns (Empty);
-  rpc ChangePivManagementKey(ChangePivManagementKeyRequest) returns (ChangePivManagementKeyResponse);
+  rpc ChangePivManagementKey(ChangePivManagementKeyRequest) returns (Empty);
   rpc GeneratePivKey(GeneratePivKeyRequest) returns (GeneratePivKeyResponse);
   rpc AttestPivKey(AttestPivKeyRequest) returns (AttestPivKeyResponse);
   rpc SignPivCsr(SignPivCsrRequest) returns (SignPivCsrResponse);
@@ -319,12 +319,8 @@ message ChangePivManagementKeyRequest {
   string expected_serial = 2;
   bytes current_management_key = 3;
   ManagementKeyAlgorithm current_algorithm = 4;
-  ManagementKeyAlgorithm target_algorithm = 5;
-}
-
-message ChangePivManagementKeyResponse {
-  ManagementKeyAlgorithm algorithm = 1;
-  bytes management_key = 2;
+  ManagementKeyAlgorithm new_algorithm = 5;
+  bytes new_management_key = 6;
 }
 
 message GeneratePivKeyRequest {

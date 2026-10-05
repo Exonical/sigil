@@ -1,29 +1,17 @@
-#![cfg(all(target_os = "windows", feature = "dev-grants"))]
+#![cfg(target_os = "windows")]
 
 use std::{
-    collections::HashMap,
-    path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc,
     },
     thread::JoinHandle,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
-use p256::{
-    ecdsa::{Signature, SigningKey, signature::Signer},
-    pkcs8::{EncodePrivateKey, LineEnding},
-};
-use prost::Message;
-use sigil_agent::{
-    caller::CallerPolicy,
-    grant::{DevSigner, GrantProvider, GrantRequest, GrantVerifier},
-    ipc,
-    server::AgentService,
-};
+use sigil_agent::{caller::CallerPolicy, ipc, server::AgentService};
 use sigil_app::CredentialService;
 use sigil_client::AgentClient;
 use sigil_core::{
@@ -32,7 +20,6 @@ use sigil_core::{
     PivPin, PivPuk, PivSlot, TouchPolicy,
 };
 use sigil_platform::NativeDiscovery;
-use sigil_proto::v1::{OperationGrant, SignedGrant};
 use tokio::{runtime::Builder, sync::oneshot};
 
 static NEXT_ENDPOINT: AtomicU64 = AtomicU64::new(1);
@@ -147,47 +134,6 @@ fn unique_endpoint() -> String {
     )
 }
 
-struct HardwareDevProvider {
-    signer: DevSigner,
-    key: SigningKey,
-    wrong_serial_next: AtomicBool,
-}
-
-impl GrantProvider for HardwareDevProvider {
-    fn obtain(
-        &self,
-        caller: &sigil_agent::caller::CallerIdentity,
-        request: &GrantRequest,
-    ) -> sigil_core::Result<SignedGrant> {
-        if !self.wrong_serial_next.swap(false, Ordering::SeqCst) {
-            return self.signer.obtain(caller, request);
-        }
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| CredentialError::OperationUnauthorized("system clock error".into()))?
-            .as_secs() as i64;
-        let grant = OperationGrant {
-            version: 1,
-            grant_id: format!("wrong-serial-{now}"),
-            operation: request.operation as i32,
-            subject: caller.os_user.clone(),
-            station_id: request.station_id.clone(),
-            token_serial: "wrong-serial".into(),
-            caller_os_user: request.caller_os_user.clone(),
-            not_before_unix: now,
-            expires_at_unix: now + 120,
-            piv_slot: request.piv_slot.map(u32::from).unwrap_or_default(),
-        };
-        let bytes = grant.encode_to_vec();
-        let signature: Signature = self.key.sign(&bytes);
-        Ok(SignedGrant {
-            grant: bytes,
-            signature: signature.to_der().as_bytes().to_vec(),
-            key_id: "dev-grants".into(),
-        })
-    }
-}
-
 #[test]
 fn agent_ipc_mutates_only_the_serial_confirmed_hardware_key_and_resets() -> Result<()> {
     if std::env::var("SIGIL_HARDWARE_TESTS").as_deref() != Ok("1") {
@@ -228,36 +174,13 @@ fn agent_ipc_mutates_only_the_serial_confirmed_hardware_key_and_resets() -> Resu
         "factory F9 certificate must be present"
     );
 
-    let key = SigningKey::from_bytes((&[19u8; 32]).into()).expect("test grant key");
-    let private_pem = key
-        .to_pkcs8_pem(LineEnding::LF)
-        .expect("test grant key PEM");
-    let private_path = std::env::temp_dir().join(format!(
-        "sigil-m4-hw-grant-{}-{}.pem",
-        std::process::id(),
-        NEXT_ENDPOINT.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::write(&private_path, private_pem.as_bytes())?;
-    let _key_file = TestKeyFile(private_path.clone());
-    let dev_signer = DevSigner::from_pem_path(TEST_STATION, "dev-grants", &private_path)?;
-    let verifier = Arc::new(GrantVerifier::new(HashMap::from([(
-        "dev-grants".to_owned(),
-        *key.verifying_key(),
-    )])));
-    let provider = Arc::new(HardwareDevProvider {
-        signer: dev_signer,
-        key,
-        wrong_serial_next: AtomicBool::new(false),
-    });
     let discovery_arc = Arc::new(NativeDiscovery);
     let discovery_trait: Arc<dyn DeviceDiscovery> = discovery_arc.clone();
     let management_trait: Arc<dyn PivManagement> = discovery_arc.clone();
     let credentials = CredentialService::new_with_piv_management(discovery_trait, management_trait);
-    let service = AgentService::new(credentials, TEST_STATION)
-        .with_policy(CallerPolicy {
-            require_console_session: false,
-        })
-        .with_authorization(provider.clone(), verifier);
+    let service = AgentService::new(credentials, TEST_STATION).with_policy(CallerPolicy {
+        require_console_session: false,
+    });
     let server = TestServer::spawn(service)?;
     let client = AgentClient::connect(Some(&server.endpoint))?;
     let mut guard = ResetGuard::arm(discovery, device.id.clone(), APPROVED_SERIAL.into());
@@ -265,25 +188,27 @@ fn agent_ipc_mutates_only_the_serial_confirmed_hardware_key_and_resets() -> Resu
     let initial_pin = PivPin::new(b"123456".to_vec())?;
     let pin1 = PivPin::new(random_code())?;
     println!("operation=change_pin slot=none");
-    client.change_piv_pin(&device.id, APPROVED_SERIAL, &initial_pin, &pin1)?;
+    client.change_pin(&device.id, APPROVED_SERIAL, &initial_pin, &pin1)?;
 
     let default_puk = PivPuk::new(b"12345678".to_vec())?;
     let puk1 = PivPuk::new(random_code())?;
     println!("operation=change_puk slot=none");
-    client.change_piv_puk(&device.id, APPROVED_SERIAL, &default_puk, &puk1)?;
+    client.change_puk(&device.id, APPROVED_SERIAL, &default_puk, &puk1)?;
 
     let default_management_key =
         ManagementKey::new(ManagementKeyAlgorithm::Aes192, DEFAULT_MGMT.to_vec())?;
+    let management_key =
+        CredentialService::generate_management_key(ManagementKeyAlgorithm::Aes256)?;
     println!("operation=change_management_key slot=none");
-    let management_key = client.change_piv_management_key(
+    client.change_management_key(
         &device.id,
         APPROVED_SERIAL,
         &default_management_key,
-        ManagementKeyAlgorithm::Aes256,
+        &management_key,
     )?;
 
     println!("operation=generate_key slot=9a");
-    let public_spki = client.generate_piv_key(
+    let public_spki = client.generate_key(
         &device.id,
         APPROVED_SERIAL,
         &management_key,
@@ -296,49 +221,17 @@ fn agent_ipc_mutates_only_the_serial_confirmed_hardware_key_and_resets() -> Resu
     )?;
     assert!(!public_spki.is_empty());
 
-    provider.wrong_serial_next.store(true, Ordering::SeqCst);
-    assert!(matches!(
-        client.generate_piv_key(
-            &device.id,
-            APPROVED_SERIAL,
-            &management_key,
-            PivKeyConfiguration {
-                slot: PivSlot::AUTHENTICATION,
-                algorithm: PivKeyAlgorithm::EccP256,
-                pin_policy: PinPolicy::Once,
-                touch_policy: TouchPolicy::Never,
-            },
-        ),
-        Err(CredentialError::OperationUnauthorized(_))
-    ));
-    assert!(matches!(
-        discovery_arc
-            .piv_slots(&device.id)?
-            .into_iter()
-            .find(|slot| slot.slot == PivSlot::AUTHENTICATION)
-            .map(|slot| slot.key),
-        Some(KeyStatus::Present(_))
-    ));
-
     println!("operation=delete_key slot=9a");
-    client.delete_piv_key(
+    client.delete_key(
         &device.id,
         APPROVED_SERIAL,
         &management_key,
         PivSlot::AUTHENTICATION,
     )?;
     println!("operation=reset slot=none");
-    client.reset_piv(&device.id, APPROVED_SERIAL)?;
+    client.reset(&device.id, APPROVED_SERIAL)?;
     guard.disarm_after_verifying_defaults()?;
     Ok(())
-}
-
-struct TestKeyFile(PathBuf);
-
-impl Drop for TestKeyFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
 }
 
 fn assert_factory_defaults(discovery: &NativeDiscovery, id: &sigil_core::DeviceId, serial: &str) {

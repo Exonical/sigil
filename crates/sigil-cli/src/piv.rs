@@ -8,7 +8,6 @@ use std::{
 use anyhow::{Result, bail, ensure};
 use clap::{Subcommand, ValueEnum};
 use sigil_app::CredentialService;
-use sigil_client::AgentClient;
 use sigil_core::{
     CertificateFormat, CredentialError, DeviceId, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
     PinPolicy, PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo,
@@ -241,12 +240,7 @@ impl ExportFormat {
     }
 }
 
-pub fn handle(
-    service: &CredentialService,
-    agent: &AgentClient,
-    command: PivCommand,
-    json: bool,
-) -> Result<String> {
+pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> Result<String> {
     match command {
         PivCommand::Info { device } => {
             let info = service.piv_info(&DeviceId(device))?;
@@ -340,7 +334,7 @@ pub fn handle(
                 let serial = device_serial(service, &id)?;
                 let key = management_key(service, &id, current_default)?;
                 let certificate = fs::read(&file)?;
-                agent.import_piv_certificate(&id, &serial, &key, slot, &certificate)?;
+                service.import_certificate(&id, &serial, &key, slot, &certificate)?;
                 mutation_output(
                     json,
                     serde_json::json!({ "operation": "import_certificate", "slot": slot }),
@@ -355,7 +349,7 @@ pub fn handle(
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
                 let key = management_key(service, &id, current_default)?;
-                agent.delete_piv_certificate(&id, &serial, &key, slot)?;
+                service.delete_certificate(&id, &serial, &key, slot)?;
                 mutation_output(
                     json,
                     serde_json::json!({ "operation": "delete_certificate", "slot": slot }),
@@ -369,7 +363,7 @@ pub fn handle(
                 let serial = device_serial(service, &id)?;
                 let old_pin = prompt_pin("Current PIV PIN: ")?;
                 let new_pin = prompt_new_pin()?;
-                agent.change_piv_pin(&id, &serial, &old_pin, &new_pin)?;
+                service.change_pin(&id, &serial, &old_pin, &new_pin)?;
                 mutation_output(
                     json,
                     serde_json::json!({ "operation": "change_pin" }),
@@ -381,7 +375,7 @@ pub fn handle(
                 let serial = device_serial(service, &id)?;
                 let puk = prompt_puk("PIV PUK: ")?;
                 let new_pin = prompt_new_pin()?;
-                agent.unblock_piv_pin(&id, &serial, &puk, &new_pin)?;
+                service.unblock_pin(&id, &serial, &puk, &new_pin)?;
                 mutation_output(
                     json,
                     serde_json::json!({ "operation": "unblock_pin" }),
@@ -396,7 +390,7 @@ pub fn handle(
             let serial = device_serial(service, &id)?;
             let old_puk = prompt_puk("Current PIV PUK: ")?;
             let new_puk = prompt_new_puk()?;
-            agent.change_piv_puk(&id, &serial, &old_puk, &new_puk)?;
+            service.change_puk(&id, &serial, &old_puk, &new_puk)?;
             mutation_output(
                 json,
                 serde_json::json!({ "operation": "change_puk" }),
@@ -414,10 +408,10 @@ pub fn handle(
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
             let current = management_key(service, &id, current_default)?;
-            let new = agent.change_piv_management_key(&id, &serial, &current, algorithm.into())?;
-            eprintln!(
-                "WARNING: this test-only mode displays the new management key once; store it securely."
-            );
+            let new_algorithm = algorithm.into();
+            let new = CredentialService::generate_management_key(new_algorithm)?;
+            service.change_management_key(&id, &serial, &current, &new)?;
+            eprintln!("WARNING: the new management key is shown once; store it securely.");
             Ok(encode_hex(new.as_bytes()))
         }
         PivCommand::Key { command } => match command {
@@ -432,7 +426,7 @@ pub fn handle(
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
                 let key = management_key(service, &id, current_default)?;
-                let spki = agent.generate_piv_key(
+                let spki = service.generate_key(
                     &id,
                     &serial,
                     &key,
@@ -461,7 +455,7 @@ pub fn handle(
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
                 let key = management_key(service, &id, current_default)?;
-                agent.delete_piv_key(&id, &serial, &key, slot)?;
+                service.delete_key(&id, &serial, &key, slot)?;
                 mutation_output(
                     json,
                     serde_json::json!({ "operation": "delete_key", "slot": slot }),
@@ -476,7 +470,7 @@ pub fn handle(
         } => {
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
-            let attestation = agent.attest_piv_key(&id, &serial, slot)?;
+            let attestation = service.attest(&id, &serial, slot)?;
             if let Some(directory) = output {
                 fs::create_dir_all(&directory)?;
                 write_new(
@@ -512,7 +506,7 @@ pub fn handle(
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
             let pin = prompt_pin("PIV PIN: ")?;
-            let csr = agent.sign_piv_csr(&id, &serial, &pin, slot, &subject)?;
+            let csr = service.sign_csr(&id, &serial, &pin, slot, &subject)?;
             write_new(&output, &csr)?;
             mutation_output(
                 json,
@@ -538,7 +532,7 @@ pub fn handle(
                     .eq_ignore_ascii_case("y"),
                 "PIV reset canceled"
             );
-            agent.reset_piv(&id, &serial)?;
+            service.reset(&id, &serial)?;
             mutation_output(
                 json,
                 serde_json::json!({ "operation": "reset_piv", "serial": serial }),

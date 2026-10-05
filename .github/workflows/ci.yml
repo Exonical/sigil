@@ -9,6 +9,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.401
       - name: Install Rust components
         run: rustup component add rustfmt clippy
       - name: Format
@@ -17,8 +20,25 @@ jobs:
         run: cargo test --workspace
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Exercise agent-backed CLI inventory JSON
-        run: cargo test -p sigil-cli json_list_is_parseable_and_clearly_simulated
+      - name: Exercise direct-mock CLI inventory JSON
+        shell: pwsh
+        run: |
+          $devices = cargo run -q -p sigil-cli -- --direct-mock device list --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($devices.Count -ne 1 -or -not $devices[0].simulated -or $devices[0].id -ne "mock-yubikey-12345678") {
+            throw "direct-mock CLI inventory did not return the simulated fixture"
+          }
+      - name: Restore WiX tool
+        run: dotnet tool restore
+      - name: Build Windows MSI
+        shell: pwsh
+        run: ./installer/windows/build.ps1
+      - name: Upload Windows MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sigil-Windows-x64
+          path: target/installer/Sigil-*-x64.msi
+          if-no-files-found: error
 
   linux:
     runs-on: ubuntu-latest
