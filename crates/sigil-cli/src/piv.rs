@@ -240,7 +240,28 @@ impl ExportFormat {
     }
 }
 
+trait SecretPrompter {
+    fn password(&mut self, prompt: &str) -> Result<String>;
+}
+
+struct TerminalSecretPrompter;
+
+impl SecretPrompter for TerminalSecretPrompter {
+    fn password(&mut self, prompt: &str) -> Result<String> {
+        Ok(rpassword::prompt_password(prompt)?)
+    }
+}
+
 pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> Result<String> {
+    handle_with_prompter(service, command, json, &mut TerminalSecretPrompter)
+}
+
+fn handle_with_prompter<P: SecretPrompter>(
+    service: &CredentialService,
+    command: PivCommand,
+    json: bool,
+    prompter: &mut P,
+) -> Result<String> {
     match command {
         PivCommand::Info { device } => {
             let info = service.piv_info(&DeviceId(device))?;
@@ -332,7 +353,7 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let key = management_key(service, &id, current_default)?;
+                let key = management_key(service, &id, current_default, prompter)?;
                 let certificate = fs::read(&file)?;
                 service.import_certificate(&id, &serial, &key, slot, &certificate)?;
                 mutation_output(
@@ -348,7 +369,7 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let key = management_key(service, &id, current_default)?;
+                let key = management_key(service, &id, current_default, prompter)?;
                 service.delete_certificate(&id, &serial, &key, slot)?;
                 mutation_output(
                     json,
@@ -361,8 +382,8 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
             PinCommand::Change { device } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let old_pin = prompt_pin("Current PIV PIN: ")?;
-                let new_pin = prompt_new_pin()?;
+                let old_pin = current_pin(service, &id, "Current PIV PIN: ", prompter)?;
+                let new_pin = prompt_new_pin(service, &id, prompter)?;
                 service.change_pin(&id, &serial, &old_pin, &new_pin)?;
                 mutation_output(
                     json,
@@ -373,8 +394,8 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
             PinCommand::Unblock { device } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let puk = prompt_puk("PIV PUK: ")?;
-                let new_pin = prompt_new_pin()?;
+                let puk = current_puk(service, &id, "PIV PUK: ", prompter)?;
+                let new_pin = prompt_new_pin(service, &id, prompter)?;
                 service.unblock_pin(&id, &serial, &puk, &new_pin)?;
                 mutation_output(
                     json,
@@ -388,8 +409,8 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
         } => {
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
-            let old_puk = prompt_puk("Current PIV PUK: ")?;
-            let new_puk = prompt_new_puk()?;
+            let old_puk = current_puk(service, &id, "Current PIV PUK: ", prompter)?;
+            let new_puk = prompt_new_puk(service, &id, prompter)?;
             service.change_puk(&id, &serial, &old_puk, &new_puk)?;
             mutation_output(
                 json,
@@ -407,7 +428,7 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
         } => {
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
-            let current = management_key(service, &id, current_default)?;
+            let current = management_key(service, &id, current_default, prompter)?;
             let new_algorithm = algorithm.into();
             let new = CredentialService::generate_management_key(new_algorithm)?;
             service.change_management_key(&id, &serial, &current, &new)?;
@@ -425,7 +446,7 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let key = management_key(service, &id, current_default)?;
+                let key = management_key(service, &id, current_default, prompter)?;
                 let spki = service.generate_key(
                     &id,
                     &serial,
@@ -454,7 +475,7 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let key = management_key(service, &id, current_default)?;
+                let key = management_key(service, &id, current_default, prompter)?;
                 service.delete_key(&id, &serial, &key, slot)?;
                 mutation_output(
                     json,
@@ -505,7 +526,7 @@ pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> R
         } => {
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
-            let pin = prompt_pin("PIV PIN: ")?;
+            let pin = current_pin(service, &id, "PIV PIN: ", prompter)?;
             let csr = service.sign_csr(&id, &serial, &pin, slot, &subject)?;
             write_new(&output, &csr)?;
             mutation_output(
@@ -546,6 +567,8 @@ const DEFAULT_MANAGEMENT_KEY: [u8; 24] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
 ];
+const DEFAULT_PIN: &[u8] = b"123456";
+const DEFAULT_PUK: &[u8] = b"12345678";
 
 fn device_serial(service: &CredentialService, id: &DeviceId) -> Result<String> {
     service
@@ -554,61 +577,122 @@ fn device_serial(service: &CredentialService, id: &DeviceId) -> Result<String> {
         .ok_or_else(|| CredentialError::DeviceMismatch.into())
 }
 
-fn management_key(
+fn current_pin<P: SecretPrompter>(
+    service: &CredentialService,
+    id: &DeviceId,
+    prompt: &str,
+    prompter: &mut P,
+) -> Result<PivPin> {
+    let info = service.piv_info(id)?;
+    if info.pin.as_ref().and_then(|status| status.default_value) == Some(true) {
+        eprintln!("The PIN is still the factory default; using it.");
+        return Ok(PivPin::new(DEFAULT_PIN.to_vec())?);
+    }
+    prompt_pin(prompt, false, prompter)
+}
+
+fn current_puk<P: SecretPrompter>(
+    service: &CredentialService,
+    id: &DeviceId,
+    prompt: &str,
+    prompter: &mut P,
+) -> Result<PivPuk> {
+    let info = service.piv_info(id)?;
+    if info.puk.as_ref().and_then(|status| status.default_value) == Some(true) {
+        eprintln!("The PUK is still the factory default; using it.");
+        return Ok(PivPuk::new(DEFAULT_PUK.to_vec())?);
+    }
+    prompt_puk(prompt, prompter)
+}
+
+fn management_key<P: SecretPrompter>(
     service: &CredentialService,
     id: &DeviceId,
     current_default: bool,
+    prompter: &mut P,
 ) -> Result<ManagementKey> {
-    let (algorithm, key) = if current_default {
-        (
+    if current_default {
+        return Ok(ManagementKey::new(
             ManagementKeyAlgorithm::Aes192,
             DEFAULT_MANAGEMENT_KEY.to_vec(),
-        )
-    } else {
-        let info = service.piv_info(id)?;
-        let algorithm = sigil_core::ManagementKeyAlgorithm::from_piv_algorithm(
-            info.management_key
-                .ok_or(CredentialError::PivUnavailable)?
-                .algorithm,
-        )?;
-        let mut value = Zeroizing::new(rpassword::prompt_password(
-            "Current PIV management key (hex): ",
         )?);
-        let mut key = parse_hex(&value)?;
-        value.zeroize();
-        (algorithm, std::mem::take(&mut *key))
-    };
-    Ok(ManagementKey::new(algorithm, key)?)
+    }
+
+    let info = service.piv_info(id)?;
+    let status = info.management_key.ok_or(CredentialError::PivUnavailable)?;
+    let algorithm = sigil_core::ManagementKeyAlgorithm::from_piv_algorithm(status.algorithm)?;
+    if status.default_value == Some(true) {
+        eprintln!("The management key is still the factory default; using it.");
+        return Ok(ManagementKey::new(
+            algorithm,
+            DEFAULT_MANAGEMENT_KEY.to_vec(),
+        )?);
+    }
+    let mut value = Zeroizing::new(prompter.password("Current PIV management key (hex): ")?);
+    let mut key = parse_hex(&value)?;
+    value.zeroize();
+    Ok(ManagementKey::new(algorithm, std::mem::take(&mut *key))?)
 }
 
-fn prompt_pin(prompt: &str) -> Result<PivPin> {
-    let mut value = Zeroizing::new(rpassword::prompt_password(prompt)?);
+fn prompt_pin<P: SecretPrompter>(prompt: &str, fips: bool, prompter: &mut P) -> Result<PivPin> {
+    let mut value = Zeroizing::new(prompter.password(prompt)?);
+    validate_code_length(&value, "PIN", fips)?;
     let bytes = std::mem::take(&mut *value).into_bytes();
     Ok(PivPin::new(bytes)?)
 }
 
-fn prompt_puk(prompt: &str) -> Result<PivPuk> {
-    let mut value = Zeroizing::new(rpassword::prompt_password(prompt)?);
+fn prompt_puk<P: SecretPrompter>(prompt: &str, prompter: &mut P) -> Result<PivPuk> {
+    let mut value = Zeroizing::new(prompter.password(prompt)?);
+    validate_code_length(&value, "PUK", false)?;
     let bytes = std::mem::take(&mut *value).into_bytes();
     Ok(PivPuk::new(bytes)?)
 }
 
-fn prompt_new_pin() -> Result<PivPin> {
-    let mut first = Zeroizing::new(rpassword::prompt_password("New PIV PIN: ")?);
-    let mut confirmation = Zeroizing::new(rpassword::prompt_password("Confirm new PIV PIN: ")?);
+fn prompt_new_pin<P: SecretPrompter>(
+    service: &CredentialService,
+    id: &DeviceId,
+    prompter: &mut P,
+) -> Result<PivPin> {
+    let fips = service.device(id)?.fips == Some(true);
+    let mut first = Zeroizing::new(prompter.password("New PIV PIN: ")?);
+    validate_code_length(&first, "PIN", fips)?;
+    let mut confirmation = Zeroizing::new(prompter.password("Confirm new PIV PIN: ")?);
+    validate_code_length(&confirmation, "PIN", fips)?;
     ensure!(*first == *confirmation, "PIV PINs did not match");
     let bytes = std::mem::take(&mut *first).into_bytes();
     confirmation.zeroize();
     Ok(PivPin::new(bytes)?)
 }
 
-fn prompt_new_puk() -> Result<PivPuk> {
-    let mut first = Zeroizing::new(rpassword::prompt_password("New PIV PUK: ")?);
-    let mut confirmation = Zeroizing::new(rpassword::prompt_password("Confirm new PIV PUK: ")?);
+fn prompt_new_puk<P: SecretPrompter>(
+    service: &CredentialService,
+    id: &DeviceId,
+    prompter: &mut P,
+) -> Result<PivPuk> {
+    let fips = service.device(id)?.fips == Some(true);
+    let mut first = Zeroizing::new(prompter.password("New PIV PUK: ")?);
+    validate_code_length(&first, "PUK", fips)?;
+    let mut confirmation = Zeroizing::new(prompter.password("Confirm new PIV PUK: ")?);
+    validate_code_length(&confirmation, "PUK", fips)?;
     ensure!(*first == *confirmation, "PIV PUKs did not match");
     let bytes = std::mem::take(&mut *first).into_bytes();
     confirmation.zeroize();
     Ok(PivPuk::new(bytes)?)
+}
+
+fn validate_code_length(value: &str, kind: &str, fips: bool) -> Result<()> {
+    let characters = value.chars().count();
+    if fips && characters != 8 {
+        bail!("This FIPS key requires an 8-character {kind}");
+    }
+    if !(6..=8).contains(&characters) {
+        bail!("{kind} must be 6–8 characters; you entered {characters}");
+    }
+    ensure!(
+        value.is_ascii(),
+        "{kind} must contain only ASCII characters"
+    );
+    Ok(())
 }
 
 fn parse_hex(value: &str) -> Result<Zeroizing<Vec<u8>>> {
@@ -725,4 +809,168 @@ fn render_slots(slots: &[PivSlotInfo], json: bool) -> Result<String> {
         ));
     }
     Ok(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::VecDeque, sync::Arc};
+
+    use sigil_core::{DeviceDiscovery, PivManagement};
+    use sigil_mock::MockDiscovery;
+
+    use super::*;
+
+    const DEVICE_ID: &str = "mock-yubikey-12345678";
+    const SERIAL: &str = "12345678";
+
+    #[derive(Default)]
+    struct QueuedPrompter {
+        answers: VecDeque<String>,
+        prompts: Vec<String>,
+    }
+
+    impl QueuedPrompter {
+        fn new(answers: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                answers: answers.into_iter().map(str::to_owned).collect(),
+                prompts: Vec::new(),
+            }
+        }
+    }
+
+    impl SecretPrompter for QueuedPrompter {
+        fn password(&mut self, prompt: &str) -> Result<String> {
+            self.prompts.push(prompt.to_owned());
+            self.answers
+                .pop_front()
+                .ok_or_else(|| anyhow::anyhow!("unexpected password prompt"))
+        }
+    }
+
+    fn credential_service(mock: Arc<MockDiscovery>) -> CredentialService {
+        let discovery: Arc<dyn DeviceDiscovery> = mock.clone();
+        let management: Arc<dyn PivManagement> = mock;
+        CredentialService::new_with_piv_management(discovery, management)
+    }
+
+    #[test]
+    fn factory_default_pin_is_used_without_prompting() -> Result<()> {
+        let service = credential_service(Arc::new(MockDiscovery::with_example()));
+        let id = DeviceId(DEVICE_ID.into());
+        let mut prompter = QueuedPrompter::default();
+
+        let pin = current_pin(&service, &id, "Current PIV PIN: ", &mut prompter)?;
+
+        assert_eq!(pin.as_bytes(), DEFAULT_PIN);
+        assert!(prompter.prompts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn nondefault_pin_is_prompted() -> Result<()> {
+        let mock = Arc::new(MockDiscovery::with_example());
+        let id = DeviceId(DEVICE_ID.into());
+        let factory_pin = PivPin::new(DEFAULT_PIN.to_vec())?;
+        let changed_pin = PivPin::new(b"654321".to_vec())?;
+        mock.change_pin(&id, SERIAL, &factory_pin, &changed_pin)?;
+        let service = credential_service(mock);
+        let mut prompter = QueuedPrompter::new(["654321"]);
+
+        let pin = current_pin(&service, &id, "Current PIV PIN: ", &mut prompter)?;
+
+        assert_eq!(pin.as_bytes(), b"654321");
+        assert_eq!(prompter.prompts, ["Current PIV PIN: "]);
+        Ok(())
+    }
+
+    #[test]
+    fn factory_default_puk_is_used_without_prompting() -> Result<()> {
+        let service = credential_service(Arc::new(MockDiscovery::with_example()));
+        let id = DeviceId(DEVICE_ID.into());
+        let mut prompter = QueuedPrompter::default();
+
+        let puk = current_puk(&service, &id, "Current PIV PUK: ", &mut prompter)?;
+
+        assert_eq!(puk.as_bytes(), DEFAULT_PUK);
+        assert!(prompter.prompts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn factory_default_management_key_is_used_without_prompting() -> Result<()> {
+        let service = credential_service(Arc::new(MockDiscovery::with_example()));
+        let id = DeviceId(DEVICE_ID.into());
+        let mut prompter = QueuedPrompter::default();
+
+        let key = management_key(&service, &id, false, &mut prompter)?;
+
+        assert_eq!(key.algorithm(), ManagementKeyAlgorithm::Aes192);
+        assert!(prompter.prompts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn current_default_flag_forces_factory_management_key() -> Result<()> {
+        let mock = Arc::new(MockDiscovery::with_example());
+        let id = DeviceId(DEVICE_ID.into());
+        let factory_key = ManagementKey::new(
+            ManagementKeyAlgorithm::Aes192,
+            DEFAULT_MANAGEMENT_KEY.to_vec(),
+        )?;
+        let nondefault_key = ManagementKey::new(ManagementKeyAlgorithm::Aes256, vec![0x55; 32])?;
+        mock.change_management_key(&id, SERIAL, &factory_key, &nondefault_key)?;
+        let service = credential_service(mock);
+        let mut prompter = QueuedPrompter::default();
+
+        let key = management_key(&service, &id, true, &mut prompter)?;
+
+        assert_eq!(key.algorithm(), ManagementKeyAlgorithm::Aes192);
+        assert!(prompter.prompts.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn short_pin_input_reports_character_count_without_echoing_it() {
+        let service = credential_service(Arc::new(MockDiscovery::with_example()));
+        let id = DeviceId(DEVICE_ID.into());
+        let mut prompter = QueuedPrompter::new(["123"]);
+
+        let error = prompt_new_pin(&service, &id, &mut prompter).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "PIN must be 6–8 characters; you entered 3"
+        );
+        assert_eq!(prompter.prompts, ["New PIV PIN: "]);
+    }
+
+    #[test]
+    fn fips_pin_input_requires_eight_characters() {
+        let service = credential_service(Arc::new(MockDiscovery::with_example_fips()));
+        let id = DeviceId(DEVICE_ID.into());
+        let mut prompter = QueuedPrompter::new(["1234567"]);
+
+        let error = prompt_new_pin(&service, &id, &mut prompter).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "This FIPS key requires an 8-character PIN"
+        );
+        assert_eq!(prompter.prompts, ["New PIV PIN: "]);
+    }
+
+    #[test]
+    fn fips_puk_input_requires_eight_characters() {
+        let service = credential_service(Arc::new(MockDiscovery::with_example_fips()));
+        let id = DeviceId(DEVICE_ID.into());
+        let mut prompter = QueuedPrompter::new(["1234567"]);
+
+        let error = prompt_new_puk(&service, &id, &mut prompter).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "This FIPS key requires an 8-character PUK"
+        );
+        assert_eq!(prompter.prompts, ["New PIV PUK: "]);
+    }
 }

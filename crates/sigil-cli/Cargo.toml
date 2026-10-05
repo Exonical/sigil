@@ -23,3 +23,4 @@ zeroize = "1.9.0"
 [dev-dependencies]
 sigil-agent = { path = "../sigil-agent", features = ["test-support"] }
 sigil-client = { path = "../sigil-client" }
+sigil-mock = { path = "../sigil-mock" }

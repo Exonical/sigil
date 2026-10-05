@@ -5197,7 +5197,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "sigil-agent"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -5227,7 +5227,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-app"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "getrandom 0.4.3",
  "sigil-core",
@@ -5239,7 +5239,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -5250,13 +5250,14 @@ dependencies = [
  "sigil-client",
  "sigil-connect",
  "sigil-core",
+ "sigil-mock",
  "tracing-subscriber",
  "zeroize",
 ]
 
 [[package]]
 name = "sigil-client"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "hyper-util",
  "sigil-core",
@@ -5269,7 +5270,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-connect"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "serde",
@@ -5285,7 +5286,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -5295,7 +5296,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-gui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "dioxus",
  "sigil-app",
@@ -5308,7 +5309,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-mock"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "p256",
  "p384",
@@ -5319,7 +5320,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-piv"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes 0.8.4",
  "const-oid 0.10.2",
@@ -5337,7 +5338,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-platform"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "ctap-hid-fido2",
  "getrandom 0.4.3",
@@ -5355,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-proto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "prost",
@@ -5368,7 +5369,7 @@ dependencies = [
 
 [[package]]
 name = "sigil-yubikey"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "const-oid 0.10.2",
  "getrandom 0.4.3",

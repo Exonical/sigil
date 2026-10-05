@@ -41,7 +41,7 @@ impl PivPin {
             Ok(Self(secret))
         } else {
             Err(CredentialError::SmartCardOperation(
-                "PIV PIN must be 6 to 8 ASCII bytes".into(),
+                "PIV PIN must be 6 to 8 characters".into(),
             ))
         }
     }
@@ -65,7 +65,7 @@ impl PivPuk {
             Ok(Self(secret))
         } else {
             Err(CredentialError::SmartCardOperation(
-                "PIV PUK must be 6 to 8 ASCII bytes".into(),
+                "PIV PUK must be 6 to 8 characters".into(),
             ))
         }
     }
@@ -175,8 +175,18 @@ mod tests {
         assert!(!format!("{pin:?}").contains("123456"));
         assert!(!format!("{puk:?}").contains("12345678"));
         for value in [b"12345".as_slice(), b"123456789", b"12345\xff"] {
-            assert!(PivPin::new(value.to_vec()).is_err());
-            assert!(PivPuk::new(value.to_vec()).is_err());
+            assert!(
+                PivPin::new(value.to_vec())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("PIV PIN must be 6 to 8 characters")
+            );
+            assert!(
+                PivPuk::new(value.to_vec())
+                    .unwrap_err()
+                    .to_string()
+                    .contains("PIV PUK must be 6 to 8 characters")
+            );
         }
     }
 

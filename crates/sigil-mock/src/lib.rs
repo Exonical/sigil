@@ -232,6 +232,17 @@ impl MockDiscovery {
         }])
     }
 
+    pub fn with_example_fips() -> Self {
+        let mut mock = Self::with_example();
+        mock.devices
+            .get_mut()
+            .expect("mock device list lock")
+            .first_mut()
+            .expect("mock example device")
+            .fips = Some(true);
+        mock
+    }
+
     pub fn with_devices(devices: Vec<DeviceInfo>) -> Self {
         let piv_states = devices
             .iter()
