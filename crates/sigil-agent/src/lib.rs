@@ -10,7 +10,7 @@ pub mod server;
 use std::sync::Arc;
 
 use sigil_app::CredentialService;
-use sigil_core::DeviceDiscovery;
+use sigil_core::{DeviceDiscovery, PivManagement};
 use tokio::sync::oneshot;
 
 use crate::{caller::CallerPolicy, config::AgentConfig, server::AgentService};
@@ -30,14 +30,18 @@ pub async fn run(
     ready: Option<oneshot::Sender<()>>,
     shutdown: oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let discovery: Arc<dyn DeviceDiscovery> = if mock {
-        Arc::new(sigil_mock::MockDiscovery::with_example())
+    let (discovery, piv_management): (Arc<dyn DeviceDiscovery>, Arc<dyn PivManagement>) = if mock {
+        let mock = Arc::new(sigil_mock::MockDiscovery::with_example());
+        (mock.clone(), mock)
     } else {
-        Arc::new(sigil_platform::NativeDiscovery)
+        let native = Arc::new(sigil_platform::NativeDiscovery);
+        (native.clone(), native)
     };
-    let credentials = CredentialService::new(discovery);
+    let credentials = CredentialService::new_with_piv_management(discovery, piv_management);
     let station_id = config.station_id();
-    let service = AgentService::new(credentials, station_id);
+    let (grant_provider, grant_verifier) = config.authorization()?;
+    let service = AgentService::new(credentials, station_id)
+        .with_authorization(grant_provider, grant_verifier);
     ipc::serve(service, endpoint, policy, ready, shutdown).await?;
     Ok(())
 }
@@ -55,7 +59,7 @@ pub mod test_support {
 
     use anyhow::{Context, Result};
     use sigil_app::CredentialService;
-    use sigil_core::DeviceDiscovery;
+    use sigil_core::{DeviceDiscovery, PivManagement};
     use sigil_mock::MockDiscovery;
     use tokio::{runtime::Builder, sync::oneshot};
 
@@ -74,7 +78,8 @@ pub mod test_support {
         pub fn spawn_mock() -> Result<Self> {
             let mock = Arc::new(MockDiscovery::with_example());
             let discovery: Arc<dyn DeviceDiscovery> = mock.clone();
-            let service = CredentialService::new(discovery);
+            let piv_management: Arc<dyn PivManagement> = mock.clone();
+            let service = CredentialService::new_with_piv_management(discovery, piv_management);
             let agent_service = AgentService::new(service, "sigil-test-station");
             Self::spawn_service_inner(agent_service, Some(mock))
         }

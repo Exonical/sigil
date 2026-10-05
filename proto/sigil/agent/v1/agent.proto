@@ -17,6 +17,17 @@ service Agent {
   rpc GetPivInfo(DeviceRequest) returns (PivInfo);
   rpc ListPivSlots(DeviceRequest) returns (PivSlotInfoList);
   rpc GetPivCertificate(GetPivCertificateRequest) returns (GetPivCertificateResponse);
+  rpc ChangePivPin(ChangePivPinRequest) returns (Empty);
+  rpc ChangePivPuk(ChangePivPukRequest) returns (Empty);
+  rpc UnblockPivPin(UnblockPivPinRequest) returns (Empty);
+  rpc ChangePivManagementKey(ChangePivManagementKeyRequest) returns (ChangePivManagementKeyResponse);
+  rpc GeneratePivKey(GeneratePivKeyRequest) returns (GeneratePivKeyResponse);
+  rpc AttestPivKey(AttestPivKeyRequest) returns (AttestPivKeyResponse);
+  rpc SignPivCsr(SignPivCsrRequest) returns (SignPivCsrResponse);
+  rpc ImportPivCertificate(ImportPivCertificateRequest) returns (Empty);
+  rpc DeletePivCertificate(DeletePivCertificateRequest) returns (Empty);
+  rpc DeletePivKey(DeletePivKeyRequest) returns (Empty);
+  rpc ResetPiv(ResetPivRequest) returns (Empty);
 }
 
 message Empty {}
@@ -78,6 +89,7 @@ message DeviceInfo {
   repeated Application supported_applications = 10;
   bool simulated = 11;
   MetadataAccess metadata_access = 12;
+  optional bool fips = 13;
 }
 
 message DeviceRequest {
@@ -268,6 +280,121 @@ message GetPivCertificateResponse {
   bytes der = 3;
 }
 
+enum ManagementKeyAlgorithm {
+  MANAGEMENT_KEY_ALGORITHM_UNSPECIFIED = 0;
+  MANAGEMENT_KEY_ALGORITHM_AES_128 = 1;
+  MANAGEMENT_KEY_ALGORITHM_AES_192 = 2;
+  MANAGEMENT_KEY_ALGORITHM_AES_256 = 3;
+}
+
+enum PivKeyGenerationAlgorithm {
+  PIV_KEY_GENERATION_ALGORITHM_UNSPECIFIED = 0;
+  PIV_KEY_GENERATION_ECC_P256 = 1;
+  PIV_KEY_GENERATION_ECC_P384 = 2;
+}
+
+message ChangePivPinRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes old_pin = 3;
+  bytes new_pin = 4;
+}
+
+message ChangePivPukRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes old_puk = 3;
+  bytes new_puk = 4;
+}
+
+message UnblockPivPinRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes puk = 3;
+  bytes new_pin = 4;
+}
+
+message ChangePivManagementKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes current_management_key = 3;
+  ManagementKeyAlgorithm current_algorithm = 4;
+  ManagementKeyAlgorithm target_algorithm = 5;
+}
+
+message ChangePivManagementKeyResponse {
+  ManagementKeyAlgorithm algorithm = 1;
+  bytes management_key = 2;
+}
+
+message GeneratePivKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+  PivKeyGenerationAlgorithm algorithm = 6;
+  PinPolicy pin_policy = 7;
+  TouchPolicy touch_policy = 8;
+}
+
+message GeneratePivKeyResponse {
+  bytes subject_public_key_info = 1;
+}
+
+message AttestPivKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  uint32 slot_byte = 3;
+}
+
+message AttestPivKeyResponse {
+  bytes attestation_der = 1;
+  bytes intermediate_der = 2;
+}
+
+message SignPivCsrRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes pin = 3;
+  uint32 slot_byte = 4;
+  string subject_dn = 5;
+}
+
+message SignPivCsrResponse {
+  bytes csr_der = 1;
+}
+
+message ImportPivCertificateRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+  bytes certificate_der = 6;
+}
+
+message DeletePivCertificateRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+}
+
+message DeletePivKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+}
+
+message ResetPivRequest {
+  string id = 1;
+  string confirm_serial = 2;
+}
+
 enum ErrorKind {
   ERROR_KIND_UNSPECIFIED = 0;
   ERROR_DEVICE_NOT_FOUND = 1;
@@ -290,6 +417,13 @@ enum ErrorKind {
   PROTOCOL_MISMATCH = 18;
   AGENT_UNTRUSTED = 19;
   FIDO_PIN_NOT_SET = 20;
+  PIN_INCORRECT = 21;
+  PUK_INCORRECT = 22;
+  PIN_BLOCKED = 23;
+  PUK_BLOCKED = 24;
+  MANAGEMENT_KEY_INCORRECT = 25;
+  DEVICE_MISMATCH = 26;
+  PIV_FIPS_NOT_APPROVED = 27;
 }
 
 message AgentError {

@@ -1,8 +1,11 @@
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 
 use futures_util::Stream;
 use sigil_app::CredentialService;
-use sigil_core::{CredentialError, DeviceId, PivSlot, Result as CoreResult};
+use sigil_core::{
+    CredentialError, DeviceId, ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm,
+    PivKeyConfiguration, PivPin, PivPuk, PivSlot, Result as CoreResult, TouchPolicy,
+};
 use sigil_proto::{status_from_error, v1};
 use tokio::{sync::mpsc, task};
 use tokio_stream::wrappers::ReceiverStream;
@@ -10,6 +13,7 @@ use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
 use crate::caller::{self, CallerIdentity, CallerPolicy};
+use crate::grant::{GrantExpectation, GrantProvider, GrantRequest, GrantVerifier, Unconfigured};
 
 pub type WatchDevicesStream =
     Pin<Box<dyn Stream<Item = std::result::Result<v1::DeviceEvent, Status>> + Send + 'static>>;
@@ -24,6 +28,8 @@ pub struct AgentService {
     credentials: CredentialService,
     station_id: String,
     policy: CallerPolicy,
+    grant_provider: Arc<dyn GrantProvider>,
+    grant_verifier: Arc<GrantVerifier>,
 }
 
 impl AgentService {
@@ -32,7 +38,19 @@ impl AgentService {
             credentials,
             station_id: station_id.into(),
             policy: CallerPolicy::production(),
+            grant_provider: Arc::new(Unconfigured),
+            grant_verifier: Arc::new(GrantVerifier::new(HashMap::new())),
         }
+    }
+
+    pub fn with_authorization(
+        mut self,
+        grant_provider: Arc<dyn GrantProvider>,
+        grant_verifier: Arc<GrantVerifier>,
+    ) -> Self {
+        self.grant_provider = grant_provider;
+        self.grant_verifier = grant_verifier;
+        self
     }
 
     pub fn with_policy(mut self, policy: CallerPolicy) -> Self {
@@ -71,6 +89,101 @@ impl AgentService {
             )))
         }
     }
+
+    fn caller_piv<T>(
+        &self,
+        request: &Request<T>,
+        rpc: &'static str,
+        device_id: &str,
+        operation: &'static str,
+        slot: Option<u8>,
+    ) -> std::result::Result<CallerIdentity, Status> {
+        let identity = request
+            .extensions()
+            .get::<CallerIdentity>()
+            .cloned()
+            .unwrap_or_else(CallerIdentity::rejected);
+        if let Err(error) = caller::authorize(&identity, self.policy) {
+            let status = status_from_error(&error);
+            audit_piv::<()>(
+                &identity,
+                rpc,
+                device_id,
+                operation,
+                slot,
+                "",
+                None,
+                &Err(status.clone()),
+            );
+            return Err(status);
+        }
+        Ok(identity)
+    }
+
+    async fn device_serial(&self, id: &DeviceId) -> std::result::Result<String, Status> {
+        let credentials = self.credentials.clone();
+        let device_id = id.clone();
+        let device = blocking(move || credentials.device(&device_id)).await?;
+        device.serial.ok_or_else(|| {
+            status_from_error(&CredentialError::OperationUnauthorized(
+                "the device serial number is unavailable".into(),
+            ))
+        })
+    }
+
+    async fn ensure_expected_serial(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+    ) -> std::result::Result<String, Status> {
+        let actual = self.device_serial(id).await?;
+        if expected_serial.is_empty() || expected_serial != actual {
+            return Err(status_from_error(&CredentialError::DeviceMismatch));
+        }
+        Ok(actual)
+    }
+
+    async fn authorize_piv_grant(
+        &self,
+        caller: &CallerIdentity,
+        id: &DeviceId,
+        expected_serial: &str,
+        operation: v1::Operation,
+        slot: Option<u8>,
+    ) -> std::result::Result<PivGrantContext, Status> {
+        let serial = self.ensure_expected_serial(id, expected_serial).await?;
+        let request = GrantRequest {
+            operation,
+            station_id: self.station_id.clone(),
+            token_serial: serial.clone(),
+            caller_os_user: caller.os_user.clone(),
+            piv_slot: slot,
+        };
+        let signed = self
+            .grant_provider
+            .obtain(caller, &request)
+            .map_err(|error| status_from_error(&error))?;
+        let expectation = GrantExpectation {
+            operation,
+            station_id: self.station_id.clone(),
+            token_serial: serial.clone(),
+            caller_os_user: Some(caller.os_user.clone()),
+            piv_slot: slot,
+        };
+        let grant = self
+            .grant_verifier
+            .verify(&signed, &expectation, crate::grant::now_unix())
+            .map_err(|error| status_from_error(&error))?;
+        Ok(PivGrantContext {
+            serial,
+            grant_id: grant.grant_id,
+        })
+    }
+}
+
+struct PivGrantContext {
+    serial: String,
+    grant_id: String,
 }
 
 async fn blocking<T, F>(operation: F) -> std::result::Result<T, Status>
@@ -424,6 +537,941 @@ impl v1::agent_server::Agent for AgentService {
             }),
         })
     }
+
+    async fn change_piv_pin(
+        &self,
+        request: Request<v1::ChangePivPinRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller =
+            self.caller_piv(&request, "ChangePivPin", &device_id, "PIV_CHANGE_PIN", None)?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let old_pin = match PivPin::new(std::mem::take(&mut input.old_pin)) {
+            Ok(pin) => pin,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivPin",
+                    &device_id,
+                    "PIV_CHANGE_PIN",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let new_pin = match PivPin::new(std::mem::take(&mut input.new_pin)) {
+            Ok(pin) => pin,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivPin",
+                    &device_id,
+                    "PIV_CHANGE_PIN",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let id = DeviceId(device_id.clone());
+        let mut audit_serial = serial_hint.clone();
+        let result = match self.ensure_expected_serial(&id, &serial_hint).await {
+            Ok(serial) => {
+                audit_serial = serial.clone();
+                let credentials = self.credentials.clone();
+                blocking(move || credentials.change_pin(&id, &serial, &old_pin, &new_pin)).await
+            }
+            Err(status) => Err(status),
+        };
+        audit_piv(
+            &caller,
+            "ChangePivPin",
+            &device_id,
+            "PIV_CHANGE_PIN",
+            None,
+            &audit_serial,
+            None,
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn change_piv_puk(
+        &self,
+        request: Request<v1::ChangePivPukRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller =
+            self.caller_piv(&request, "ChangePivPuk", &device_id, "PIV_CHANGE_PUK", None)?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let old_puk = match PivPuk::new(std::mem::take(&mut input.old_puk)) {
+            Ok(puk) => puk,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivPuk",
+                    &device_id,
+                    "PIV_CHANGE_PUK",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let new_puk = match PivPuk::new(std::mem::take(&mut input.new_puk)) {
+            Ok(puk) => puk,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivPuk",
+                    &device_id,
+                    "PIV_CHANGE_PUK",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivChangePuk,
+                None,
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result =
+                    blocking(move || credentials.change_puk(&id, &serial, &old_puk, &new_puk))
+                        .await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "ChangePivPuk",
+            &device_id,
+            "PIV_CHANGE_PUK",
+            None,
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn unblock_piv_pin(
+        &self,
+        request: Request<v1::UnblockPivPinRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller_piv(
+            &request,
+            "UnblockPivPin",
+            &device_id,
+            "PIV_UNBLOCK_PIN",
+            None,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let puk = match PivPuk::new(std::mem::take(&mut input.puk)) {
+            Ok(puk) => puk,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "UnblockPivPin",
+                    &device_id,
+                    "PIV_UNBLOCK_PIN",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let new_pin = match PivPin::new(std::mem::take(&mut input.new_pin)) {
+            Ok(pin) => pin,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "UnblockPivPin",
+                    &device_id,
+                    "PIV_UNBLOCK_PIN",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivUnblockPin,
+                None,
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result =
+                    blocking(move || credentials.unblock_pin(&id, &serial, &puk, &new_pin)).await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "UnblockPivPin",
+            &device_id,
+            "PIV_UNBLOCK_PIN",
+            None,
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn change_piv_management_key(
+        &self,
+        request: Request<v1::ChangePivManagementKeyRequest>,
+    ) -> std::result::Result<Response<v1::ChangePivManagementKeyResponse>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller_piv(
+            &request,
+            "ChangePivManagementKey",
+            &device_id,
+            "PIV_CHANGE_MANAGEMENT_KEY",
+            None,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let current_algorithm = match management_key_algorithm(input.current_algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let target_algorithm = match management_key_algorithm(input.target_algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let current = match ManagementKey::new(
+            current_algorithm,
+            std::mem::take(&mut input.current_management_key),
+        ) {
+            Ok(key) => key,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivChangeManagementKey,
+                None,
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result = blocking(move || {
+                    let mut key_bytes = Zeroizing::new(vec![0u8; target_algorithm.key_len()]);
+                    getrandom::fill(key_bytes.as_mut_slice()).map_err(|_| {
+                        CredentialError::BackendUnavailable("OS random source unavailable".into())
+                    })?;
+                    let new_key =
+                        ManagementKey::new(target_algorithm, std::mem::take(&mut *key_bytes))?;
+                    credentials.change_management_key(&id, &serial, &current, &new_key)?;
+                    Ok(Zeroizing::new(new_key.as_bytes().to_vec()))
+                })
+                .await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "ChangePivManagementKey",
+            &device_id,
+            "PIV_CHANGE_MANAGEMENT_KEY",
+            None,
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|key| {
+            // TODO(escrow): replace this one-time development return with escrow retrieval.
+            Response::new(v1::ChangePivManagementKeyResponse {
+                algorithm: match target_algorithm {
+                    ManagementKeyAlgorithm::Aes128 => v1::ManagementKeyAlgorithm::Aes128 as i32,
+                    ManagementKeyAlgorithm::Aes192 => v1::ManagementKeyAlgorithm::Aes192 as i32,
+                    ManagementKeyAlgorithm::Aes256 => v1::ManagementKeyAlgorithm::Aes256 as i32,
+                },
+                management_key: key.to_vec(),
+            })
+        })
+    }
+
+    async fn generate_piv_key(
+        &self,
+        request: Request<v1::GeneratePivKeyRequest>,
+    ) -> std::result::Result<Response<v1::GeneratePivKeyResponse>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let slot_hint = u8::try_from(request.get_ref().slot_byte).ok();
+        let caller = self.caller_piv(
+            &request,
+            "GeneratePivKey",
+            &device_id,
+            "PIV_GENERATE_KEY",
+            slot_hint,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let slot = match piv_slot(input.slot_byte) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let key_algorithm = match piv_key_algorithm(input.algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let pin_policy = match pin_policy(input.pin_policy) {
+            Ok(policy) => policy,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let touch_policy = match touch_policy(input.touch_policy) {
+            Ok(policy) => policy,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let management_algorithm = match management_key_algorithm(input.management_key_algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let management_key = match ManagementKey::new(
+            management_algorithm,
+            std::mem::take(&mut input.management_key),
+        ) {
+            Ok(key) => key,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivGenerateKey,
+                Some(slot.byte()),
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result = blocking(move || {
+                    credentials.generate_key(
+                        &id,
+                        &serial,
+                        &management_key,
+                        PivKeyConfiguration {
+                            slot,
+                            algorithm: key_algorithm,
+                            pin_policy,
+                            touch_policy,
+                        },
+                    )
+                })
+                .await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "GeneratePivKey",
+            &device_id,
+            "PIV_GENERATE_KEY",
+            Some(slot.byte()),
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|subject_public_key_info| {
+            Response::new(v1::GeneratePivKeyResponse {
+                subject_public_key_info,
+            })
+        })
+    }
+
+    async fn attest_piv_key(
+        &self,
+        request: Request<v1::AttestPivKeyRequest>,
+    ) -> std::result::Result<Response<v1::AttestPivKeyResponse>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let slot_hint = u8::try_from(request.get_ref().slot_byte).ok();
+        let caller = self.caller_piv(
+            &request,
+            "AttestPivKey",
+            &device_id,
+            "PIV_ATTEST",
+            slot_hint,
+        )?;
+        let input = request.into_inner();
+        let serial_hint = input.expected_serial;
+        let slot = match piv_slot(input.slot_byte) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "AttestPivKey",
+                    &device_id,
+                    "PIV_ATTEST",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let id = DeviceId(device_id.clone());
+        let mut audit_serial = serial_hint.clone();
+        let result = match self.ensure_expected_serial(&id, &serial_hint).await {
+            Ok(serial) => {
+                audit_serial = serial.clone();
+                let credentials = self.credentials.clone();
+                blocking(move || credentials.attest(&id, &serial, slot)).await
+            }
+            Err(status) => Err(status),
+        };
+        audit_piv(
+            &caller,
+            "AttestPivKey",
+            &device_id,
+            "PIV_ATTEST",
+            Some(slot.byte()),
+            &audit_serial,
+            None,
+            &result,
+        );
+        result.map(|attestation| {
+            Response::new(v1::AttestPivKeyResponse {
+                attestation_der: attestation.attestation_der,
+                intermediate_der: attestation.intermediate_der,
+            })
+        })
+    }
+
+    async fn sign_piv_csr(
+        &self,
+        request: Request<v1::SignPivCsrRequest>,
+    ) -> std::result::Result<Response<v1::SignPivCsrResponse>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let slot_hint = u8::try_from(request.get_ref().slot_byte).ok();
+        let caller = self.caller_piv(
+            &request,
+            "SignPivCsr",
+            &device_id,
+            "PIV_SIGN_CSR",
+            slot_hint,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let pin = match PivPin::new(std::mem::take(&mut input.pin)) {
+            Ok(pin) => pin,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "SignPivCsr",
+                    &device_id,
+                    "PIV_SIGN_CSR",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let slot = match piv_slot(input.slot_byte) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "SignPivCsr",
+                    &device_id,
+                    "PIV_SIGN_CSR",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let subject_dn = input.subject_dn;
+        let id = DeviceId(device_id.clone());
+        let mut audit_serial = serial_hint.clone();
+        let result = match self.ensure_expected_serial(&id, &serial_hint).await {
+            Ok(serial) => {
+                audit_serial = serial.clone();
+                let credentials = self.credentials.clone();
+                blocking(move || credentials.sign_csr(&id, &serial, &pin, slot, &subject_dn)).await
+            }
+            Err(status) => Err(status),
+        };
+        audit_piv(
+            &caller,
+            "SignPivCsr",
+            &device_id,
+            "PIV_SIGN_CSR",
+            Some(slot.byte()),
+            &audit_serial,
+            None,
+            &result,
+        );
+        result.map(|csr_der| Response::new(v1::SignPivCsrResponse { csr_der }))
+    }
+
+    async fn import_piv_certificate(
+        &self,
+        request: Request<v1::ImportPivCertificateRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let slot_hint = u8::try_from(request.get_ref().slot_byte).ok();
+        let caller = self.caller_piv(
+            &request,
+            "ImportPivCertificate",
+            &device_id,
+            "PIV_IMPORT_CERTIFICATE",
+            slot_hint,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let slot = match piv_slot(input.slot_byte) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ImportPivCertificate",
+                    &device_id,
+                    "PIV_IMPORT_CERTIFICATE",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let algorithm = match management_key_algorithm(input.management_key_algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "ImportPivCertificate",
+                    &device_id,
+                    "PIV_IMPORT_CERTIFICATE",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let management_key =
+            match ManagementKey::new(algorithm, std::mem::take(&mut input.management_key)) {
+                Ok(key) => key,
+                Err(error) => {
+                    return Err(audit_piv_error(
+                        &caller,
+                        "ImportPivCertificate",
+                        &device_id,
+                        "PIV_IMPORT_CERTIFICATE",
+                        Some(slot.byte()),
+                        &serial_hint,
+                        None,
+                        error,
+                    ));
+                }
+            };
+        let certificate_der = input.certificate_der;
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivImportCertificate,
+                Some(slot.byte()),
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result = blocking(move || {
+                    credentials.import_certificate(
+                        &id,
+                        &serial,
+                        &management_key,
+                        slot,
+                        &certificate_der,
+                    )
+                })
+                .await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "ImportPivCertificate",
+            &device_id,
+            "PIV_IMPORT_CERTIFICATE",
+            Some(slot.byte()),
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn delete_piv_certificate(
+        &self,
+        request: Request<v1::DeletePivCertificateRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let slot_hint = u8::try_from(request.get_ref().slot_byte).ok();
+        let caller = self.caller_piv(
+            &request,
+            "DeletePivCertificate",
+            &device_id,
+            "PIV_DELETE_CERTIFICATE",
+            slot_hint,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let slot = match piv_slot(input.slot_byte) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "DeletePivCertificate",
+                    &device_id,
+                    "PIV_DELETE_CERTIFICATE",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let algorithm = match management_key_algorithm(input.management_key_algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "DeletePivCertificate",
+                    &device_id,
+                    "PIV_DELETE_CERTIFICATE",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let management_key =
+            match ManagementKey::new(algorithm, std::mem::take(&mut input.management_key)) {
+                Ok(key) => key,
+                Err(error) => {
+                    return Err(audit_piv_error(
+                        &caller,
+                        "DeletePivCertificate",
+                        &device_id,
+                        "PIV_DELETE_CERTIFICATE",
+                        Some(slot.byte()),
+                        &serial_hint,
+                        None,
+                        error,
+                    ));
+                }
+            };
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivDeleteCertificate,
+                Some(slot.byte()),
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result = blocking(move || {
+                    credentials.delete_certificate(&id, &serial, &management_key, slot)
+                })
+                .await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "DeletePivCertificate",
+            &device_id,
+            "PIV_DELETE_CERTIFICATE",
+            Some(slot.byte()),
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn delete_piv_key(
+        &self,
+        request: Request<v1::DeletePivKeyRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let slot_hint = u8::try_from(request.get_ref().slot_byte).ok();
+        let caller = self.caller_piv(
+            &request,
+            "DeletePivKey",
+            &device_id,
+            "PIV_DELETE_KEY",
+            slot_hint,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let slot = match piv_slot(input.slot_byte) {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "DeletePivKey",
+                    &device_id,
+                    "PIV_DELETE_KEY",
+                    slot_hint,
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let algorithm = match management_key_algorithm(input.management_key_algorithm) {
+            Ok(algorithm) => algorithm,
+            Err(error) => {
+                return Err(audit_piv_error(
+                    &caller,
+                    "DeletePivKey",
+                    &device_id,
+                    "PIV_DELETE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    error,
+                ));
+            }
+        };
+        let management_key =
+            match ManagementKey::new(algorithm, std::mem::take(&mut input.management_key)) {
+                Ok(key) => key,
+                Err(error) => {
+                    return Err(audit_piv_error(
+                        &caller,
+                        "DeletePivKey",
+                        &device_id,
+                        "PIV_DELETE_KEY",
+                        Some(slot.byte()),
+                        &serial_hint,
+                        None,
+                        error,
+                    ));
+                }
+            };
+        let id = DeviceId(device_id.clone());
+        let authorization = self
+            .authorize_piv_grant(
+                &caller,
+                &id,
+                &serial_hint,
+                v1::Operation::PivDeleteKey,
+                Some(slot.byte()),
+            )
+            .await;
+        let (serial, grant_id, result) = match authorization {
+            Ok(context) => {
+                let credentials = self.credentials.clone();
+                let serial = context.serial.clone();
+                let result =
+                    blocking(move || credentials.delete_key(&id, &serial, &management_key, slot))
+                        .await;
+                (context.serial, Some(context.grant_id), result)
+            }
+            Err(status) => (serial_hint, None, Err(status)),
+        };
+        audit_piv(
+            &caller,
+            "DeletePivKey",
+            &device_id,
+            "PIV_DELETE_KEY",
+            Some(slot.byte()),
+            &serial,
+            grant_id.as_deref(),
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn reset_piv(
+        &self,
+        request: Request<v1::ResetPivRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller_piv(&request, "ResetPiv", &device_id, "PIV_RESET", None)?;
+        let input = request.into_inner();
+        let serial_hint = input.confirm_serial;
+        let id = DeviceId(device_id.clone());
+        let mut audit_serial = serial_hint.clone();
+        let result = match self.ensure_expected_serial(&id, &serial_hint).await {
+            Ok(serial) => {
+                audit_serial = serial.clone();
+                let credentials = self.credentials.clone();
+                blocking(move || credentials.reset(&id, &serial)).await
+            }
+            Err(status) => Err(status),
+        };
+        audit_piv(
+            &caller,
+            "ResetPiv",
+            &device_id,
+            "PIV_RESET",
+            None,
+            &audit_serial,
+            None,
+            &result,
+        );
+        result.map(|_| Response::new(v1::Empty {}))
+    }
 }
 
 fn audit_static(
@@ -443,4 +1491,125 @@ fn audit_static(
         result = if success { "ok" } else { "error" },
         code = ?code
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn audit_piv<T>(
+    caller: &CallerIdentity,
+    rpc: &'static str,
+    device_id: &str,
+    operation: &'static str,
+    slot: Option<u8>,
+    serial: &str,
+    grant_id: Option<&str>,
+    result: &std::result::Result<T, Status>,
+) {
+    let (outcome, code) = match result {
+        Ok(_) => ("success", None),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => {
+            ("denied", Some(status.code()))
+        }
+        Err(status) => ("error", Some(status.code())),
+    };
+    tracing::info!(
+        target: "sigil::audit",
+        caller_os_user = %caller.os_user,
+        session_id = ?caller.session_id,
+        pid = caller.pid,
+        rpc,
+        device_id,
+        operation,
+        piv_slot = slot.unwrap_or_default(),
+        serial,
+        grant_id = grant_id.unwrap_or_default(),
+        outcome,
+        code = ?code
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn audit_piv_error(
+    caller: &CallerIdentity,
+    rpc: &'static str,
+    device_id: &str,
+    operation: &'static str,
+    slot: Option<u8>,
+    serial: &str,
+    grant_id: Option<&str>,
+    error: CredentialError,
+) -> Status {
+    let status = status_from_error(&error);
+    audit_piv::<()>(
+        caller,
+        rpc,
+        device_id,
+        operation,
+        slot,
+        serial,
+        grant_id,
+        &Err(status.clone()),
+    );
+    status
+}
+
+fn piv_slot(slot_byte: u32) -> CoreResult<PivSlot> {
+    let slot_byte =
+        u8::try_from(slot_byte).map_err(|_| CredentialError::InvalidSlot(slot_byte.to_string()))?;
+    PivSlot::from_byte(slot_byte)
+        .ok_or_else(|| CredentialError::InvalidSlot(format!("{slot_byte:02x}")))
+}
+
+fn management_key_algorithm(value: i32) -> CoreResult<ManagementKeyAlgorithm> {
+    match v1::ManagementKeyAlgorithm::try_from(value)
+        .map_err(|_| CredentialError::InvalidSlot(value.to_string()))?
+    {
+        v1::ManagementKeyAlgorithm::Aes128 => Ok(ManagementKeyAlgorithm::Aes128),
+        v1::ManagementKeyAlgorithm::Aes192 => Ok(ManagementKeyAlgorithm::Aes192),
+        v1::ManagementKeyAlgorithm::Aes256 => Ok(ManagementKeyAlgorithm::Aes256),
+        v1::ManagementKeyAlgorithm::Unspecified => Err(CredentialError::UnsupportedOperation(
+            "management key algorithm is required".into(),
+        )),
+    }
+}
+
+fn piv_key_algorithm(value: i32) -> CoreResult<PivKeyAlgorithm> {
+    match v1::PivKeyGenerationAlgorithm::try_from(value)
+        .map_err(|_| CredentialError::UnsupportedOperation("unknown PIV key algorithm".into()))?
+    {
+        v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP256 => Ok(PivKeyAlgorithm::EccP256),
+        v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP384 => Ok(PivKeyAlgorithm::EccP384),
+        v1::PivKeyGenerationAlgorithm::Unspecified => Err(CredentialError::UnsupportedOperation(
+            "PIV key algorithm is required".into(),
+        )),
+    }
+}
+
+fn pin_policy(value: i32) -> CoreResult<PinPolicy> {
+    match v1::PinPolicy::try_from(value)
+        .map_err(|_| CredentialError::UnsupportedOperation("unknown PIV PIN policy".into()))?
+    {
+        v1::PinPolicy::Default => Ok(PinPolicy::Default),
+        v1::PinPolicy::Never => Ok(PinPolicy::Never),
+        v1::PinPolicy::Once => Ok(PinPolicy::Once),
+        v1::PinPolicy::Always => Ok(PinPolicy::Always),
+        v1::PinPolicy::MatchOnce => Ok(PinPolicy::MatchOnce),
+        v1::PinPolicy::MatchAlways => Ok(PinPolicy::MatchAlways),
+        v1::PinPolicy::Unspecified => Err(CredentialError::UnsupportedOperation(
+            "PIV PIN policy is required".into(),
+        )),
+    }
+}
+
+fn touch_policy(value: i32) -> CoreResult<TouchPolicy> {
+    match v1::TouchPolicy::try_from(value)
+        .map_err(|_| CredentialError::UnsupportedOperation("unknown PIV touch policy".into()))?
+    {
+        v1::TouchPolicy::Default => Ok(TouchPolicy::Default),
+        v1::TouchPolicy::Never => Ok(TouchPolicy::Never),
+        v1::TouchPolicy::Always => Ok(TouchPolicy::Always),
+        v1::TouchPolicy::Cached => Ok(TouchPolicy::Cached),
+        v1::TouchPolicy::Unspecified => Err(CredentialError::UnsupportedOperation(
+            "PIV touch policy is required".into(),
+        )),
+    }
 }

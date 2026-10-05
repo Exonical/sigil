@@ -70,7 +70,8 @@ func isPIVOperation(operation agentv1.Operation) bool {
 		agentv1.Operation_PIV_UNBLOCK_PIN,
 		agentv1.Operation_PIV_CHANGE_PUK,
 		agentv1.Operation_PIV_CHANGE_MANAGEMENT_KEY,
-		agentv1.Operation_PIV_SET_RETRIES:
+		agentv1.Operation_PIV_SET_RETRIES,
+		agentv1.Operation_PIV_DELETE_KEY:
 		return true
 	default:
 		return false

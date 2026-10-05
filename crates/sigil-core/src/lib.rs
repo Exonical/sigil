@@ -6,11 +6,13 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub mod piv;
+pub mod secrets;
 pub use piv::{
     CertificateFormat, CertificateSummary, KeyOrigin, KeyStatus, ManagementKeyStatus, PinPolicy,
-    PivAlgorithm, PivCertificate, PivInfo, PivKeyMetadata, PivSlot, PivSlotInfo, RetryStatus,
-    TouchPolicy,
+    PivAlgorithm, PivAttestation, PivCertificate, PivInfo, PivKeyAlgorithm, PivKeyConfiguration,
+    PivKeyMetadata, PivSlot, PivSlotInfo, RetryStatus, TouchPolicy,
 };
+pub use secrets::{ManagementKey, ManagementKeyAlgorithm, PivPin, PivPuk, Secret};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -53,6 +55,9 @@ pub struct DeviceInfo {
     pub firmware: Option<FirmwareVersion>,
     /// Device form factor, when reported by the provider.
     pub form_factor: Option<String>,
+    /// Whether the device reports FIPS-capable PIV firmware.
+    #[serde(default)]
+    pub fips: Option<bool>,
     /// How this discovery entry is currently reached (USB CCID, USB HID, or NFC). `transports` lists interfaces the device supports/enables.
     #[serde(default)]
     pub connection: Option<Transport>,
@@ -148,6 +153,22 @@ pub enum CredentialError {
     SmartCardOperation(String),
     #[error("card returned status {0:04X}")]
     CardStatus(u16),
+    #[error("incorrect PIV PIN; {remaining} retries remain")]
+    PinIncorrect { remaining: u8 },
+    #[error("incorrect PIV PUK; {remaining} retries remain")]
+    PukIncorrect { remaining: u8 },
+    #[error("PIV PIN is blocked")]
+    PinBlocked,
+    #[error("PIV PUK is blocked")]
+    PukBlocked,
+    #[error("PIV management key is incorrect")]
+    ManagementKeyIncorrect,
+    #[error("device identity does not match")]
+    DeviceMismatch,
+    #[error(
+        "This FIPS YubiKey must be initialized first: change the PIN and PUK to 8-character values and the management key to a new AES key."
+    )]
+    PivFipsNotApproved,
     #[error("certificate could not be parsed: {0}")]
     CertificateParse(String),
     #[error("slot {0} has no certificate")]
@@ -208,4 +229,85 @@ pub trait PivInspection: Send + Sync {
     fn piv_info(&self, id: &DeviceId) -> Result<PivInfo>;
     fn piv_slots(&self, id: &DeviceId) -> Result<Vec<PivSlotInfo>>;
     fn piv_certificate(&self, id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>>;
+}
+
+pub trait PivManagement: Send + Sync {
+    fn change_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_pin: &PivPin,
+        new_pin: &PivPin,
+    ) -> Result<()>;
+
+    fn change_puk(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_puk: &PivPuk,
+        new_puk: &PivPuk,
+    ) -> Result<()>;
+
+    fn unblock_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        puk: &PivPuk,
+        new_pin: &PivPin,
+    ) -> Result<()>;
+
+    fn change_management_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        current: &ManagementKey,
+        new: &ManagementKey,
+    ) -> Result<()>;
+
+    fn generate_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        configuration: PivKeyConfiguration,
+    ) -> Result<Vec<u8>>;
+
+    fn attest(&self, id: &DeviceId, expected_serial: &str, slot: PivSlot)
+    -> Result<PivAttestation>;
+
+    fn sign_csr(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        pin: &PivPin,
+        slot: PivSlot,
+        subject_dn: &str,
+    ) -> Result<Vec<u8>>;
+
+    fn import_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+        certificate_der: &[u8],
+    ) -> Result<()>;
+
+    fn delete_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()>;
+
+    fn delete_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()>;
+
+    fn reset(&self, id: &DeviceId, expected_serial: &str) -> Result<()>;
 }

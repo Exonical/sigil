@@ -31,6 +31,17 @@ const (
 	Agent_GetPivInfo_FullMethodName                  = "/sigil.agent.v1.Agent/GetPivInfo"
 	Agent_ListPivSlots_FullMethodName                = "/sigil.agent.v1.Agent/ListPivSlots"
 	Agent_GetPivCertificate_FullMethodName           = "/sigil.agent.v1.Agent/GetPivCertificate"
+	Agent_ChangePivPin_FullMethodName                = "/sigil.agent.v1.Agent/ChangePivPin"
+	Agent_ChangePivPuk_FullMethodName                = "/sigil.agent.v1.Agent/ChangePivPuk"
+	Agent_UnblockPivPin_FullMethodName               = "/sigil.agent.v1.Agent/UnblockPivPin"
+	Agent_ChangePivManagementKey_FullMethodName      = "/sigil.agent.v1.Agent/ChangePivManagementKey"
+	Agent_GeneratePivKey_FullMethodName              = "/sigil.agent.v1.Agent/GeneratePivKey"
+	Agent_AttestPivKey_FullMethodName                = "/sigil.agent.v1.Agent/AttestPivKey"
+	Agent_SignPivCsr_FullMethodName                  = "/sigil.agent.v1.Agent/SignPivCsr"
+	Agent_ImportPivCertificate_FullMethodName        = "/sigil.agent.v1.Agent/ImportPivCertificate"
+	Agent_DeletePivCertificate_FullMethodName        = "/sigil.agent.v1.Agent/DeletePivCertificate"
+	Agent_DeletePivKey_FullMethodName                = "/sigil.agent.v1.Agent/DeletePivKey"
+	Agent_ResetPiv_FullMethodName                    = "/sigil.agent.v1.Agent/ResetPiv"
 )
 
 // AgentClient is the client API for Agent service.
@@ -49,6 +60,17 @@ type AgentClient interface {
 	GetPivInfo(ctx context.Context, in *DeviceRequest, opts ...grpc.CallOption) (*PivInfo, error)
 	ListPivSlots(ctx context.Context, in *DeviceRequest, opts ...grpc.CallOption) (*PivSlotInfoList, error)
 	GetPivCertificate(ctx context.Context, in *GetPivCertificateRequest, opts ...grpc.CallOption) (*GetPivCertificateResponse, error)
+	ChangePivPin(ctx context.Context, in *ChangePivPinRequest, opts ...grpc.CallOption) (*Empty, error)
+	ChangePivPuk(ctx context.Context, in *ChangePivPukRequest, opts ...grpc.CallOption) (*Empty, error)
+	UnblockPivPin(ctx context.Context, in *UnblockPivPinRequest, opts ...grpc.CallOption) (*Empty, error)
+	ChangePivManagementKey(ctx context.Context, in *ChangePivManagementKeyRequest, opts ...grpc.CallOption) (*ChangePivManagementKeyResponse, error)
+	GeneratePivKey(ctx context.Context, in *GeneratePivKeyRequest, opts ...grpc.CallOption) (*GeneratePivKeyResponse, error)
+	AttestPivKey(ctx context.Context, in *AttestPivKeyRequest, opts ...grpc.CallOption) (*AttestPivKeyResponse, error)
+	SignPivCsr(ctx context.Context, in *SignPivCsrRequest, opts ...grpc.CallOption) (*SignPivCsrResponse, error)
+	ImportPivCertificate(ctx context.Context, in *ImportPivCertificateRequest, opts ...grpc.CallOption) (*Empty, error)
+	DeletePivCertificate(ctx context.Context, in *DeletePivCertificateRequest, opts ...grpc.CallOption) (*Empty, error)
+	DeletePivKey(ctx context.Context, in *DeletePivKeyRequest, opts ...grpc.CallOption) (*Empty, error)
+	ResetPiv(ctx context.Context, in *ResetPivRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type agentClient struct {
@@ -197,6 +219,116 @@ func (c *agentClient) GetPivCertificate(ctx context.Context, in *GetPivCertifica
 	return out, nil
 }
 
+func (c *agentClient) ChangePivPin(ctx context.Context, in *ChangePivPinRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_ChangePivPin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) ChangePivPuk(ctx context.Context, in *ChangePivPukRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_ChangePivPuk_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) UnblockPivPin(ctx context.Context, in *UnblockPivPinRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_UnblockPivPin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) ChangePivManagementKey(ctx context.Context, in *ChangePivManagementKeyRequest, opts ...grpc.CallOption) (*ChangePivManagementKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ChangePivManagementKeyResponse)
+	err := c.cc.Invoke(ctx, Agent_ChangePivManagementKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) GeneratePivKey(ctx context.Context, in *GeneratePivKeyRequest, opts ...grpc.CallOption) (*GeneratePivKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GeneratePivKeyResponse)
+	err := c.cc.Invoke(ctx, Agent_GeneratePivKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) AttestPivKey(ctx context.Context, in *AttestPivKeyRequest, opts ...grpc.CallOption) (*AttestPivKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttestPivKeyResponse)
+	err := c.cc.Invoke(ctx, Agent_AttestPivKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) SignPivCsr(ctx context.Context, in *SignPivCsrRequest, opts ...grpc.CallOption) (*SignPivCsrResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SignPivCsrResponse)
+	err := c.cc.Invoke(ctx, Agent_SignPivCsr_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) ImportPivCertificate(ctx context.Context, in *ImportPivCertificateRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_ImportPivCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) DeletePivCertificate(ctx context.Context, in *DeletePivCertificateRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_DeletePivCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) DeletePivKey(ctx context.Context, in *DeletePivKeyRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_DeletePivKey_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) ResetPiv(ctx context.Context, in *ResetPivRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_ResetPiv_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServer is the server API for Agent service.
 // All implementations must embed UnimplementedAgentServer
 // for forward compatibility.
@@ -213,6 +345,17 @@ type AgentServer interface {
 	GetPivInfo(context.Context, *DeviceRequest) (*PivInfo, error)
 	ListPivSlots(context.Context, *DeviceRequest) (*PivSlotInfoList, error)
 	GetPivCertificate(context.Context, *GetPivCertificateRequest) (*GetPivCertificateResponse, error)
+	ChangePivPin(context.Context, *ChangePivPinRequest) (*Empty, error)
+	ChangePivPuk(context.Context, *ChangePivPukRequest) (*Empty, error)
+	UnblockPivPin(context.Context, *UnblockPivPinRequest) (*Empty, error)
+	ChangePivManagementKey(context.Context, *ChangePivManagementKeyRequest) (*ChangePivManagementKeyResponse, error)
+	GeneratePivKey(context.Context, *GeneratePivKeyRequest) (*GeneratePivKeyResponse, error)
+	AttestPivKey(context.Context, *AttestPivKeyRequest) (*AttestPivKeyResponse, error)
+	SignPivCsr(context.Context, *SignPivCsrRequest) (*SignPivCsrResponse, error)
+	ImportPivCertificate(context.Context, *ImportPivCertificateRequest) (*Empty, error)
+	DeletePivCertificate(context.Context, *DeletePivCertificateRequest) (*Empty, error)
+	DeletePivKey(context.Context, *DeletePivKeyRequest) (*Empty, error)
+	ResetPiv(context.Context, *ResetPivRequest) (*Empty, error)
 	mustEmbedUnimplementedAgentServer()
 }
 
@@ -258,6 +401,39 @@ func (UnimplementedAgentServer) ListPivSlots(context.Context, *DeviceRequest) (*
 }
 func (UnimplementedAgentServer) GetPivCertificate(context.Context, *GetPivCertificateRequest) (*GetPivCertificateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPivCertificate not implemented")
+}
+func (UnimplementedAgentServer) ChangePivPin(context.Context, *ChangePivPinRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChangePivPin not implemented")
+}
+func (UnimplementedAgentServer) ChangePivPuk(context.Context, *ChangePivPukRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChangePivPuk not implemented")
+}
+func (UnimplementedAgentServer) UnblockPivPin(context.Context, *UnblockPivPinRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method UnblockPivPin not implemented")
+}
+func (UnimplementedAgentServer) ChangePivManagementKey(context.Context, *ChangePivManagementKeyRequest) (*ChangePivManagementKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChangePivManagementKey not implemented")
+}
+func (UnimplementedAgentServer) GeneratePivKey(context.Context, *GeneratePivKeyRequest) (*GeneratePivKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GeneratePivKey not implemented")
+}
+func (UnimplementedAgentServer) AttestPivKey(context.Context, *AttestPivKeyRequest) (*AttestPivKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AttestPivKey not implemented")
+}
+func (UnimplementedAgentServer) SignPivCsr(context.Context, *SignPivCsrRequest) (*SignPivCsrResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SignPivCsr not implemented")
+}
+func (UnimplementedAgentServer) ImportPivCertificate(context.Context, *ImportPivCertificateRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ImportPivCertificate not implemented")
+}
+func (UnimplementedAgentServer) DeletePivCertificate(context.Context, *DeletePivCertificateRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeletePivCertificate not implemented")
+}
+func (UnimplementedAgentServer) DeletePivKey(context.Context, *DeletePivKeyRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeletePivKey not implemented")
+}
+func (UnimplementedAgentServer) ResetPiv(context.Context, *ResetPivRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetPiv not implemented")
 }
 func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
 func (UnimplementedAgentServer) testEmbeddedByValue()               {}
@@ -482,6 +658,204 @@ func _Agent_GetPivCertificate_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Agent_ChangePivPin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangePivPinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ChangePivPin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ChangePivPin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ChangePivPin(ctx, req.(*ChangePivPinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_ChangePivPuk_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangePivPukRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ChangePivPuk(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ChangePivPuk_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ChangePivPuk(ctx, req.(*ChangePivPukRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_UnblockPivPin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UnblockPivPinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).UnblockPivPin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_UnblockPivPin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).UnblockPivPin(ctx, req.(*UnblockPivPinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_ChangePivManagementKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangePivManagementKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ChangePivManagementKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ChangePivManagementKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ChangePivManagementKey(ctx, req.(*ChangePivManagementKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_GeneratePivKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GeneratePivKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).GeneratePivKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_GeneratePivKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).GeneratePivKey(ctx, req.(*GeneratePivKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_AttestPivKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttestPivKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).AttestPivKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_AttestPivKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).AttestPivKey(ctx, req.(*AttestPivKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_SignPivCsr_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SignPivCsrRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).SignPivCsr(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_SignPivCsr_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).SignPivCsr(ctx, req.(*SignPivCsrRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_ImportPivCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ImportPivCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ImportPivCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ImportPivCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ImportPivCertificate(ctx, req.(*ImportPivCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_DeletePivCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePivCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).DeletePivCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_DeletePivCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).DeletePivCertificate(ctx, req.(*DeletePivCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_DeletePivKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePivKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).DeletePivKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_DeletePivKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).DeletePivKey(ctx, req.(*DeletePivKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_ResetPiv_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResetPivRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ResetPiv(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ResetPiv_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ResetPiv(ctx, req.(*ResetPivRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Agent_ServiceDesc is the grpc.ServiceDesc for Agent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -528,6 +902,50 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPivCertificate",
 			Handler:    _Agent_GetPivCertificate_Handler,
+		},
+		{
+			MethodName: "ChangePivPin",
+			Handler:    _Agent_ChangePivPin_Handler,
+		},
+		{
+			MethodName: "ChangePivPuk",
+			Handler:    _Agent_ChangePivPuk_Handler,
+		},
+		{
+			MethodName: "UnblockPivPin",
+			Handler:    _Agent_UnblockPivPin_Handler,
+		},
+		{
+			MethodName: "ChangePivManagementKey",
+			Handler:    _Agent_ChangePivManagementKey_Handler,
+		},
+		{
+			MethodName: "GeneratePivKey",
+			Handler:    _Agent_GeneratePivKey_Handler,
+		},
+		{
+			MethodName: "AttestPivKey",
+			Handler:    _Agent_AttestPivKey_Handler,
+		},
+		{
+			MethodName: "SignPivCsr",
+			Handler:    _Agent_SignPivCsr_Handler,
+		},
+		{
+			MethodName: "ImportPivCertificate",
+			Handler:    _Agent_ImportPivCertificate_Handler,
+		},
+		{
+			MethodName: "DeletePivCertificate",
+			Handler:    _Agent_DeletePivCertificate_Handler,
+		},
+		{
+			MethodName: "DeletePivKey",
+			Handler:    _Agent_DeletePivKey_Handler,
+		},
+		{
+			MethodName: "ResetPiv",
+			Handler:    _Agent_ResetPiv_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

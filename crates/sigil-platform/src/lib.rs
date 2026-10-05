@@ -4,7 +4,8 @@
 use sigil_core::CredentialError;
 use sigil_core::{
     DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoInspection,
-    FidoStatus, Fingerprint, FingerprintProgress, PivCertificate, PivInfo, PivInspection, PivSlot,
+    FidoStatus, Fingerprint, FingerprintProgress, ManagementKey, PivAttestation, PivCertificate,
+    PivInfo, PivInspection, PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot,
     PivSlotInfo, Result,
 };
 use std::sync::mpsc::Receiver;
@@ -32,6 +33,11 @@ impl NativeDiscovery {
     #[doc(hidden)]
     pub fn resolve_fido_hid_for_device(&self, id: &DeviceId) -> Result<Option<FidoHidResolution>> {
         windows::resolve_fido_hid_for_device(id)
+    }
+
+    #[doc(hidden)]
+    pub fn piv_serial(&self, id: &DeviceId, expected_serial: &str) -> Result<String> {
+        windows::piv::piv_serial(id, expected_serial)
     }
 }
 
@@ -201,6 +207,207 @@ impl PivInspection for NativeDiscovery {
     }
 }
 
+impl PivManagement for NativeDiscovery {
+    fn change_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_pin: &PivPin,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::change_pin(id, expected_serial, old_pin, new_pin);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, old_pin, new_pin);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn change_puk(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_puk: &PivPuk,
+        new_puk: &PivPuk,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::change_puk(id, expected_serial, old_puk, new_puk);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, old_puk, new_puk);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn unblock_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        puk: &PivPuk,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::unblock_pin(id, expected_serial, puk, new_pin);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, puk, new_pin);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn change_management_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        current: &ManagementKey,
+        new: &ManagementKey,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::change_management_key(id, expected_serial, current, new);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, current, new);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn generate_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        configuration: PivKeyConfiguration,
+    ) -> Result<Vec<u8>> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::generate_key(id, expected_serial, management_key, configuration);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, management_key, configuration);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn attest(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+    ) -> Result<PivAttestation> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::attest(id, expected_serial, slot);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, slot);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV attestation is not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn sign_csr(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        pin: &PivPin,
+        slot: PivSlot,
+        subject_dn: &str,
+    ) -> Result<Vec<u8>> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::sign_csr(id, expected_serial, pin, slot, subject_dn);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, pin, slot, subject_dn);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV CSR signing is not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn import_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+        certificate_der: &[u8],
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::import_certificate(
+            id,
+            expected_serial,
+            management_key,
+            slot,
+            certificate_der,
+        );
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, management_key, slot, certificate_der);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn delete_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::delete_certificate(id, expected_serial, management_key, slot);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, management_key, slot);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn delete_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::delete_key(id, expected_serial, management_key, slot);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, management_key, slot);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn reset(&self, id: &DeviceId, expected_serial: &str) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::reset(id, expected_serial);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV reset is not implemented on this platform".into(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +425,7 @@ mod tests {
                 patch: 1,
             }),
             form_factor: None,
+            fips: None,
             connection: Some(Transport::UsbSmartCard),
             transports: vec![Transport::UsbSmartCard],
             applications: vec![Application::Piv],

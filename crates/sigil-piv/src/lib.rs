@@ -1,4 +1,4 @@
-//! Standards-based, read-only PIV application operations.
+//! Standards-based PIV application operations.
 
 use std::io::Read;
 
@@ -12,6 +12,7 @@ use sigil_core::{
 };
 use x509_cert::Certificate;
 
+pub mod management;
 pub mod tlv;
 
 const MAX_RESPONSE_SIZE: usize = 16 * 1024;

@@ -15,6 +15,7 @@ enum Operation {
   PIV_CHANGE_PUK = 7;
   PIV_CHANGE_MANAGEMENT_KEY = 8;
   PIV_SET_RETRIES = 9;
+  PIV_DELETE_KEY = 10;
 }
 
 message OperationGrant {

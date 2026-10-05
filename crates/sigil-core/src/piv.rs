@@ -168,6 +168,44 @@ pub enum TouchPolicy {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum PivKeyAlgorithm {
+    EccP256,
+    EccP384,
+}
+
+impl PivKeyAlgorithm {
+    pub const fn yubikey_id(self) -> u8 {
+        match self {
+            Self::EccP256 => 0x11,
+            Self::EccP384 => 0x14,
+        }
+    }
+
+    pub const fn piv_algorithm(self) -> PivAlgorithm {
+        match self {
+            Self::EccP256 => PivAlgorithm::EccP256,
+            Self::EccP384 => PivAlgorithm::EccP384,
+        }
+    }
+
+    pub const fn digest_len(self) -> usize {
+        match self {
+            Self::EccP256 => 32,
+            Self::EccP384 => 48,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PivKeyConfiguration {
+    pub slot: PivSlot,
+    pub algorithm: PivKeyAlgorithm,
+    pub pin_policy: PinPolicy,
+    pub touch_policy: TouchPolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum KeyOrigin {
     Generated,
     Imported,
@@ -234,6 +272,12 @@ pub struct PivCertificate {
     pub slot: PivSlot,
     pub summary: CertificateSummary,
     pub der: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PivAttestation {
+    pub attestation_der: Vec<u8>,
+    pub intermediate_der: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

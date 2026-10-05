@@ -28,11 +28,11 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - Keep `sigil-core` vendor-neutral and expose typed domain APIs through `sigil-app`.
 - Do not expose raw APDU transport beyond provider crates. Never add an arbitrary APDU endpoint to the app, CLI, GUI, or a remote protocol.
 - Never pass PINs or PUKs as CLI arguments. Prompt securely when authorization is introduced, and never persist or log secrets.
-- Keep PIV inspection read-only. Gate hardware-specific tests with `SIGIL_HARDWARE_TESTS=1` and never make tests mutate a physical token.
+- Keep PIV inspection read-only. Tests that change a physical token require `SIGIL_HARDWARE_TESTS=1` and `SIGIL_HARDWARE_MUTATION_SERIAL=<serial>`, must restore factory defaults with a PIV reset, and must never use touch-required policies.
 - Prefer focused changes, follow the existing Rust style, and add hardware-free tests for protocol parsing and service behavior.
 - Only `sigil-agent` may access hardware; CLI and GUI are untrusted local-IPC clients.
 - Every read-only RPC is audit-logged. Never log PINs, PUKs, signed grants, or raw APDUs.
-- Mutations require a grant verified by `sigil-agent`; the `dev-grants` feature must never be enabled in release builds.
+- PIV mutations that use a system-held management key or PUK require a grant verified by `sigil-agent`; PIN change, CSR signing, attestation reads, and PIV reset use caller policy and audit only. The `dev-grants` feature must never be enabled in release builds.
 - M4 PIV mutations must verify the grant against the token serial read inside the same card transaction that performs the mutation.
 
 ## Product decisions
@@ -46,6 +46,7 @@ The Windows PC/SC hardware test is read-only and returns without hardware access
 - Management key storage is per profile: `pin_protected` (on the card behind the user's PIN) or `escrowed` (secrets provider).
 - The agent runs in two modes: station mode (help-desk provisioning workstation, station mTLS identity, full operations) and user mode (end-user machine, IdP login, limited to the user's own token: PIN change and recovery as the profile allows).
 - Windows blocks raw CTAP access for non-admin processes over both USB-HID and NFC/PC/SC (the FIDO applet SELECT is denied). Station mode may run elevated; user-mode FIDO on Windows must use the Windows WebAuthn API. PIV over PC/SC (USB or NFC) does not need admin; neither do OATH (CCID) or YubiKey OTP slot configuration (keyboard HID), matching Yubico Authenticator, where only WebAuthn/passkey changes require elevation.
+- YubiKey 5 FIPS firmware 5.7 requires an 8-character PIN and PUK, a non-default AES management key, and PIN complexity before key generation is approved; PIN policy `never`, RSA-1024, 3DES, and X25519 are unavailable. PIV reset returns the applet to unapproved mode. FIPS PIV over NFC requires SCP03/SCP11, which is not implemented.
 - Because a local user can reach PIV, OATH, and OTP directly without the agent, the agent cannot be the only control for those applets on user machines. PIV enforcement relies on secrets the user never holds (randomized PUK and management key) plus backend checks (attestation, CA binding, inventory/serial reconciliation). A user can always change their own PIN or reset PIV after blocking PIN and PUK; the backend must detect that (missing or unattested certificates) rather than assume it is impossible.
 - FIDO2 enrollment IdPs, in priority order: Authentik, Keycloak. Whether each supports API import of credentials or needs browser registration is still unverified.
 - Policy (backend grants) applies only where a system-held secret makes it enforceable: PIV operations that need the management key or PUK (key generation, certificate import/delete, PIN unblock, management-key or PUK change, retry-count changes). Everything the user can already do with their own credentials or with stock tools is user-configurable and only audit-logged: PIV PIN change, OATH accounts and the OATH password, YubiKey OTP slots 1/2, and FIDO PIN change. Windows Settings also lets non-admin users change the FIDO PIN and reset a security key.

@@ -1,5 +1,27 @@
 use sigil_core::{CredentialError, Result};
 
+pub fn encode(tag: u16, value: &[u8]) -> Result<Vec<u8>> {
+    let mut encoded = if tag <= 0xff {
+        vec![tag as u8]
+    } else {
+        tag.to_be_bytes().to_vec()
+    };
+    match value.len() {
+        0..=0x7f => encoded.push(value.len() as u8),
+        0x80..=0xff => encoded.extend_from_slice(&[0x81, value.len() as u8]),
+        0x100..=0xffff => {
+            encoded.extend_from_slice(&[0x82, (value.len() >> 8) as u8, value.len() as u8]);
+        }
+        _ => {
+            return Err(CredentialError::SmartCardOperation(
+                "BER-TLV value exceeds 65535 bytes".into(),
+            ));
+        }
+    }
+    encoded.extend_from_slice(value);
+    Ok(encoded)
+}
+
 /// Parse ordered BER-TLV elements with one- or two-byte tags and short, 0x81,
 /// or 0x82 lengths.
 pub fn parse(input: &[u8]) -> Result<Vec<(u16, Vec<u8>)>> {
@@ -79,5 +101,18 @@ mod tests {
         assert_eq!(parsed[2], (0x7f01, vec![0xaa]));
         assert!(parse(&[0x53, 0x82, 0x01]).is_err());
         assert!(parse(&[0x53, 0x02, 0x00]).is_err());
+    }
+
+    #[test]
+    fn encodes_and_parses_short_and_extended_tlv_lengths() {
+        for (tag, value) in [
+            (0x80, vec![1, 2, 3]),
+            (0x7f49, vec![4; 128]),
+            (0x53, vec![5; 256]),
+        ] {
+            let encoded = encode(tag, &value).unwrap();
+            assert_eq!(parse(&encoded).unwrap(), vec![(tag, value)]);
+        }
+        assert!(encode(0x53, &vec![0; 65_536]).is_err());
     }
 }

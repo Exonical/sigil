@@ -25,6 +25,16 @@ func TestAuthorize(t *testing.T) {
 			allowed: true,
 		},
 		{
+			name: "admin at station may delete a PIV key",
+			request: Request{
+				Roles:     []string{"admin"},
+				Station:   db.Station{Mode: "station", Status: "active"},
+				Token:     &db.Token{Status: "unassigned"},
+				Operation: agentv1.Operation_PIV_DELETE_KEY,
+			},
+			allowed: true,
+		},
+		{
 			name: "helpdesk at station may use active token",
 			request: Request{
 				Roles:     []string{"helpdesk"},

@@ -18,6 +18,7 @@ anyhow.workspace = true
 serde_json.workspace = true
 tracing-subscriber.workspace = true
 rpassword = "7"
+zeroize = "1.9.0"
 
 [dev-dependencies]
 sigil-agent = { path = "../sigil-agent", features = ["test-support"] }

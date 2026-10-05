@@ -133,7 +133,8 @@ func ValidatePIVSlot(operation agentv1.Operation, slot uint32) error {
 	}
 	slotSpecific := operation == agentv1.Operation_PIV_GENERATE_KEY ||
 		operation == agentv1.Operation_PIV_IMPORT_CERTIFICATE ||
-		operation == agentv1.Operation_PIV_DELETE_CERTIFICATE
+		operation == agentv1.Operation_PIV_DELETE_CERTIFICATE ||
+		operation == agentv1.Operation_PIV_DELETE_KEY
 	if slotSpecific && slot == 0 {
 		return errors.New("PIV operation requires a slot")
 	}

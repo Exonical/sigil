@@ -112,6 +112,7 @@ impl From<&core::DeviceInfo> for v1::DeviceInfo {
                 core::MetadataAccess::Available => v1::MetadataAccess::Available as i32,
                 core::MetadataAccess::Restricted => v1::MetadataAccess::Restricted as i32,
             },
+            fips: value.fips,
         }
     }
 }
@@ -151,6 +152,7 @@ impl TryFrom<v1::DeviceInfo> for core::DeviceInfo {
                 v1::MetadataAccess::Available => core::MetadataAccess::Available,
                 v1::MetadataAccess::Restricted => core::MetadataAccess::Restricted,
             },
+            fips: value.fips,
         })
     }
 }
@@ -611,6 +613,13 @@ fn agent_error(value: &core::CredentialError) -> v1::AgentError {
             (18, format!("{agent}:{client}"))
         }
         core::CredentialError::AgentUntrusted(detail) => (19, detail.clone()),
+        core::CredentialError::PinIncorrect { remaining } => (21, remaining.to_string()),
+        core::CredentialError::PukIncorrect { remaining } => (22, remaining.to_string()),
+        core::CredentialError::PinBlocked => (23, String::new()),
+        core::CredentialError::PukBlocked => (24, String::new()),
+        core::CredentialError::ManagementKeyIncorrect => (25, String::new()),
+        core::CredentialError::DeviceMismatch => (26, String::new()),
+        core::CredentialError::PivFipsNotApproved => (27, String::new()),
     };
     v1::AgentError { kind, detail }
 }
@@ -645,6 +654,17 @@ fn credential_error(value: v1::AgentError) -> core::CredentialError {
             }
         }
         19 => core::CredentialError::AgentUntrusted(value.detail),
+        21 => core::CredentialError::PinIncorrect {
+            remaining: value.detail.parse().unwrap_or_default(),
+        },
+        22 => core::CredentialError::PukIncorrect {
+            remaining: value.detail.parse().unwrap_or_default(),
+        },
+        23 => core::CredentialError::PinBlocked,
+        24 => core::CredentialError::PukBlocked,
+        25 => core::CredentialError::ManagementKeyIncorrect,
+        26 => core::CredentialError::DeviceMismatch,
+        27 => core::CredentialError::PivFipsNotApproved,
         _ => core::CredentialError::AgentUnavailable("agent returned an unknown error".into()),
     }
 }
@@ -667,7 +687,14 @@ fn status_code(value: &core::CredentialError) -> Code {
         core::CredentialError::FidoOperation(_)
         | core::CredentialError::FidoPinNotSet
         | core::CredentialError::PivUnavailable
-        | core::CredentialError::CardStatus(_) => Code::FailedPrecondition,
+        | core::CredentialError::CardStatus(_)
+        | core::CredentialError::PinIncorrect { .. }
+        | core::CredentialError::PukIncorrect { .. }
+        | core::CredentialError::PinBlocked
+        | core::CredentialError::PukBlocked
+        | core::CredentialError::ManagementKeyIncorrect
+        | core::CredentialError::DeviceMismatch
+        | core::CredentialError::PivFipsNotApproved => Code::FailedPrecondition,
         core::CredentialError::InvalidSlot(_) => Code::InvalidArgument,
         core::CredentialError::CertificateParse(_) => Code::DataLoss,
         core::CredentialError::ProtocolMismatch { .. } => Code::FailedPrecondition,
@@ -711,6 +738,7 @@ mod tests {
                 patch: 1,
             }),
             form_factor: Some("USB-C".into()),
+            fips: Some(true),
             connection: Some(Transport::UsbSmartCard),
             transports: vec![Transport::UsbSmartCard, Transport::Nfc],
             applications: vec![Application::Piv, Application::Fido2],
@@ -811,6 +839,11 @@ mod tests {
             core::CredentialError::InventoryUnavailable,
             core::CredentialError::FidoAccessRestricted,
             core::CredentialError::FidoPinNotSet,
+            core::CredentialError::PinIncorrect { remaining: 2 },
+            core::CredentialError::PukIncorrect { remaining: 4 },
+            core::CredentialError::PinBlocked,
+            core::CredentialError::PukBlocked,
+            core::CredentialError::ManagementKeyIncorrect,
             core::CredentialError::FidoOperation("fido".into()),
             core::CredentialError::InvalidSlot("bad".into()),
             core::CredentialError::PivUnavailable,
@@ -826,6 +859,13 @@ mod tests {
                 agent: 2,
                 client: 1,
             },
+            core::CredentialError::PinIncorrect { remaining: 2 },
+            core::CredentialError::PukIncorrect { remaining: 4 },
+            core::CredentialError::PinBlocked,
+            core::CredentialError::PukBlocked,
+            core::CredentialError::ManagementKeyIncorrect,
+            core::CredentialError::DeviceMismatch,
+            core::CredentialError::PivFipsNotApproved,
         ];
         for error in errors {
             let status = status_from_error(&error);
@@ -833,6 +873,18 @@ mod tests {
             if error == core::CredentialError::FidoPinNotSet {
                 assert_eq!(status.code(), Code::FailedPrecondition);
                 assert_eq!(status.message(), error.to_string());
+            }
+            if matches!(
+                error,
+                core::CredentialError::PinIncorrect { .. }
+                    | core::CredentialError::PukIncorrect { .. }
+                    | core::CredentialError::PinBlocked
+                    | core::CredentialError::PukBlocked
+                    | core::CredentialError::ManagementKeyIncorrect
+                    | core::CredentialError::DeviceMismatch
+                    | core::CredentialError::PivFipsNotApproved
+            ) {
+                assert_eq!(status.code(), Code::FailedPrecondition);
             }
         }
     }

@@ -35,6 +35,9 @@ audience = "sigil"
 [grants]
 key_id = "test"
 signing_key_file = "grant-key.pem"
+
+[policy]
+self_service_operations = ["PIV_DELETE_KEY"]
 `
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -45,6 +48,10 @@ signing_key_file = "grant-key.pem"
 	}
 	if loaded.OIDC.GroupsClaim != "groups" || loaded.Grants.LifetimeSeconds != 120 {
 		t.Fatalf("defaults not applied: groups_claim=%q lifetime=%d", loaded.OIDC.GroupsClaim, loaded.Grants.LifetimeSeconds)
+	}
+	if len(loaded.Policy.SelfServiceOperations) != 1 ||
+		loaded.Policy.SelfServiceOperations[0] != "PIV_DELETE_KEY" {
+		t.Fatalf("PIV_DELETE_KEY self-service operation was not accepted: %+v", loaded.Policy.SelfServiceOperations)
 	}
 }
 

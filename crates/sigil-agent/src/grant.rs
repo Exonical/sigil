@@ -290,6 +290,7 @@ mod tests {
                 Operation::PivGenerateKey
                     | Operation::PivImportCertificate
                     | Operation::PivDeleteCertificate
+                    | Operation::PivDeleteKey
             )
             .then_some(0x9a),
         }

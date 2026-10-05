@@ -126,7 +126,8 @@ func (c *Config) Validate() error {
 	for _, operation := range c.Policy.SelfServiceOperations {
 		switch operation {
 		case "PIV_GENERATE_KEY", "PIV_IMPORT_CERTIFICATE", "PIV_DELETE_CERTIFICATE",
-			"PIV_UNBLOCK_PIN", "PIV_CHANGE_PUK", "PIV_CHANGE_MANAGEMENT_KEY", "PIV_SET_RETRIES":
+			"PIV_UNBLOCK_PIN", "PIV_CHANGE_PUK", "PIV_CHANGE_MANAGEMENT_KEY", "PIV_SET_RETRIES",
+			"PIV_DELETE_KEY":
 		default:
 			return fmt.Errorf("unknown self_service_operations entry %q", operation)
 		}

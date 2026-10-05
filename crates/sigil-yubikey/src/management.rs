@@ -13,6 +13,7 @@ const TAG_VERSION: u8 = 0x05;
 pub const TAG_MORE_DATA: u8 = 0x10;
 const TAG_NFC_SUPPORTED: u8 = 0x0d;
 const TAG_NFC_ENABLED: u8 = 0x0e;
+pub const TAG_FIPS_CAPABLE: u8 = 0x14;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
@@ -45,6 +46,7 @@ pub struct ManagementInfo {
     pub serial: Option<String>,
     pub firmware: Option<FirmwareVersion>,
     pub form_factor: Option<String>,
+    pub fips: Option<bool>,
     pub transports: Vec<Transport>,
     pub enabled_applications: Vec<Application>,
     pub supported_applications: Vec<Application>,
@@ -66,6 +68,9 @@ impl ManagementInfo {
             .get(&TAG_NFC_SUPPORTED)
             .map(|bytes| parse_number(bytes));
         let nfc_enabled_bits = tags.get(&TAG_NFC_ENABLED).map(|bytes| parse_number(bytes));
+        let fips = tags
+            .get(&TAG_FIPS_CAPABLE)
+            .map(|bytes| parse_number(bytes) & 0x02 != 0);
         let serial = tags
             .get(&TAG_SERIAL)
             .map(|value| parse_number(value))
@@ -112,6 +117,7 @@ impl ManagementInfo {
             serial,
             firmware,
             form_factor,
+            fips,
             transports,
             enabled_applications: enabled_bits.map(applications).unwrap_or_default(),
             supported_applications: applications(supported_bits),
@@ -151,9 +157,9 @@ mod tests {
     #[test]
     fn parses_serial_version_and_distinct_enabled_capabilities() {
         let page = [
-            0x1c, 0x01, 0x02, 0x03, 0x3b, 0x02, 0x04, 0x00, 0xbc, 0x61, 0x4e, 0x03, 0x02, 0x02,
+            0x1f, 0x01, 0x02, 0x03, 0x3b, 0x02, 0x04, 0x00, 0xbc, 0x61, 0x4e, 0x03, 0x02, 0x02,
             0x11, 0x04, 0x01, 0x03, 0x05, 0x03, 0x05, 0x07, 0x01, 0x0d, 0x01, 0x3b, 0x0e, 0x01,
-            0x10,
+            0x10, 0x14, 0x01, 0x02,
         ];
         let tags = parse_page(&page).expect("valid TLV");
         let info = ManagementInfo::from_tags(&tags, None).expect("management info");
@@ -166,6 +172,25 @@ mod tests {
         assert_eq!(info.nfc_enabled_applications, vec![Application::Piv]);
         assert!(!info.nfc_enabled_applications.contains(&Application::Fido2));
         assert!(info.transports.contains(&Transport::Nfc));
+        assert_eq!(info.fips, Some(true));
+    }
+
+    #[test]
+    fn fips_capability_tracks_piv_flag_and_missing_metadata() {
+        let base = [(TAG_USB_SUPPORTED, vec![0x10])].into_iter().collect();
+        assert_eq!(ManagementInfo::from_tags(&base, None).unwrap().fips, None);
+        for (flag, expected) in [(0x00, false), (0x01, false), (0x02, true), (0x12, true)] {
+            let tags = [
+                (TAG_USB_SUPPORTED, vec![0x10]),
+                (TAG_FIPS_CAPABLE, vec![flag]),
+            ]
+            .into_iter()
+            .collect();
+            assert_eq!(
+                ManagementInfo::from_tags(&tags, None).unwrap().fips,
+                Some(expected)
+            );
+        }
     }
 
     #[test]

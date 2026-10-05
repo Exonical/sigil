@@ -4,18 +4,33 @@ use std::sync::{Arc, mpsc::Receiver};
 
 use sigil_core::{
     CertificateFormat, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    DiscoverableCredential, FidoStatus, Fingerprint, FingerprintProgress, PivCertificate, PivInfo,
+    DiscoverableCredential, FidoStatus, Fingerprint, FingerprintProgress, ManagementKey,
+    PivAttestation, PivCertificate, PivInfo, PivKeyConfiguration, PivManagement, PivPin, PivPuk,
     PivSlot, PivSlotInfo, Result,
 };
 
 #[derive(Clone)]
 pub struct CredentialService {
     discovery: Arc<dyn DeviceDiscovery>,
+    piv_management: Option<Arc<dyn PivManagement>>,
 }
 
 impl CredentialService {
     pub fn new(discovery: Arc<dyn DeviceDiscovery>) -> Self {
-        Self { discovery }
+        Self {
+            discovery,
+            piv_management: None,
+        }
+    }
+
+    pub fn new_with_piv_management(
+        discovery: Arc<dyn DeviceDiscovery>,
+        piv_management: Arc<dyn PivManagement>,
+    ) -> Self {
+        Self {
+            discovery,
+            piv_management: Some(piv_management),
+        }
     }
 
     pub fn devices(&self) -> Result<Vec<DeviceInfo>> {
@@ -87,5 +102,187 @@ impl CredentialService {
             .piv_certificate(id, slot)?
             .ok_or_else(|| CredentialError::CertificateNotFound(slot.to_string()))?;
         Ok(sigil_piv::encode_certificate(&certificate.der, format))
+    }
+
+    pub fn change_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_pin: &PivPin,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .change_pin(id, expected_serial, old_pin, new_pin)
+    }
+
+    pub fn change_puk(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_puk: &PivPuk,
+        new_puk: &PivPuk,
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .change_puk(id, expected_serial, old_puk, new_puk)
+    }
+
+    pub fn unblock_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        puk: &PivPuk,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .unblock_pin(id, expected_serial, puk, new_pin)
+    }
+
+    pub fn change_management_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        current: &ManagementKey,
+        new: &ManagementKey,
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .change_management_key(id, expected_serial, current, new)
+    }
+
+    pub fn generate_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        configuration: PivKeyConfiguration,
+    ) -> Result<Vec<u8>> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .generate_key(id, expected_serial, management_key, configuration)
+    }
+
+    pub fn attest(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+    ) -> Result<PivAttestation> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .attest(id, expected_serial, slot)
+    }
+
+    pub fn sign_csr(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        pin: &PivPin,
+        slot: PivSlot,
+        subject_dn: &str,
+    ) -> Result<Vec<u8>> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .sign_csr(id, expected_serial, pin, slot, subject_dn)
+    }
+
+    pub fn import_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+        certificate_der: &[u8],
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .import_certificate(id, expected_serial, management_key, slot, certificate_der)
+    }
+
+    pub fn delete_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .delete_certificate(id, expected_serial, management_key, slot)
+    }
+
+    pub fn delete_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .delete_key(id, expected_serial, management_key, slot)
+    }
+
+    pub fn reset(&self, id: &DeviceId, expected_serial: &str) -> Result<()> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .reset(id, expected_serial)
     }
 }

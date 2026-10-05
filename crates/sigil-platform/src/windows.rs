@@ -200,6 +200,7 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     serial: None,
                     firmware: None,
                     form_factor: None,
+                    fips: None,
                     connection: Some(Transport::UsbHid),
                     transports: vec![Transport::UsbHid],
                     applications: Vec::new(),
@@ -774,6 +775,7 @@ fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceIn
             .map(str::to_owned),
         firmware: None,
         form_factor: None,
+        fips: None,
         connection: Some(Transport::UsbHid),
         transports: vec![Transport::UsbHid],
         applications: Vec::new(),
@@ -807,6 +809,7 @@ fn device_for_reader(
     let serial = details.as_ref().and_then(|info| info.serial.clone());
     let firmware = details.as_ref().and_then(|info| info.firmware.clone());
     let form_factor = details.as_ref().and_then(|info| info.form_factor.clone());
+    let fips = details.as_ref().and_then(|info| info.fips);
     let mut transports = details
         .as_ref()
         .map(|info| info.transports.clone())
@@ -850,6 +853,7 @@ fn device_for_reader(
         serial,
         firmware,
         form_factor,
+        fips,
         connection: Some(connection),
         transports,
         applications,
@@ -972,6 +976,7 @@ mod tests {
                 patch: 1,
             }),
             form_factor: Some("Keychain (USB-A)".into()),
+            fips: Some(false),
             transports: vec![
                 Transport::UsbSmartCard,
                 Transport::UsbHid,
@@ -1061,6 +1066,7 @@ mod tests {
         );
         assert_eq!(nfc.model, "YubiKey (NFC)");
         assert_eq!(nfc.connection, Some(Transport::Nfc));
+        assert_eq!(nfc.fips, Some(false));
         assert_eq!(nfc.applications, vec![Application::Piv]);
         assert_eq!(
             nfc.supported_applications,
@@ -1076,6 +1082,7 @@ mod tests {
         );
         assert_eq!(usb.model, "YubiKey (CCID)");
         assert_eq!(usb.connection, Some(Transport::UsbSmartCard));
+        assert_eq!(usb.fips, Some(false));
         assert_eq!(usb.applications, vec![Application::Fido2]);
         assert_eq!(
             usb.supported_applications,
@@ -1121,6 +1128,7 @@ mod tests {
         let device = device_for_reader("Yubico YubiKey 0", None, Transport::UsbSmartCard);
         assert!(!device.simulated);
         assert!(device.serial.is_none());
+        assert!(device.fips.is_none());
         assert!(device.applications.is_empty());
         assert_eq!(device.connection, Some(Transport::UsbSmartCard));
         assert_eq!(device.transports, vec![Transport::UsbSmartCard]);

@@ -9,11 +9,16 @@ rust-version.workspace = true
 sigil-core = { path = "../sigil-core" }
 sigil-piv = { path = "../sigil-piv" }
 sigil-yubikey = { path = "../sigil-yubikey" }
+sha2 = "0.11.0"
 tracing.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 pcsc = "2.9"
 hidapi = { version = "2.6.7", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.61", features = ["Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_HumanInterfaceDevice", "Win32_Devices_Properties", "Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Shell"] }
-getrandom = "0.3"
+getrandom = "0.4"
 ctap-hid-fido2 = "=3.5.13"
+
+[dev-dependencies]
+p256 = { version = "0.14.0", features = ["ecdsa", "pkcs8"] }
+x509-cert = { version = "0.3.0", features = ["builder"] }

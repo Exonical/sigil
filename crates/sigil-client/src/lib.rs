@@ -11,8 +11,9 @@ use std::{
 
 use sigil_core::{
     CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
-    FidoInspection, FidoStatus, Fingerprint, FingerprintProgress, PivCertificate, PivInfo,
-    PivInspection, PivSlot, PivSlotInfo, Result,
+    FidoInspection, FidoStatus, Fingerprint, FingerprintProgress, ManagementKey,
+    ManagementKeyAlgorithm, PinPolicy, PivAttestation, PivCertificate, PivInfo, PivInspection,
+    PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, TouchPolicy,
 };
 use sigil_proto::v1;
 use tonic::transport::{Channel, Endpoint};
@@ -124,6 +125,244 @@ impl AgentClient {
 
     pub fn agent_info(&self) -> &v1::GetAgentInfoResponse {
         &self.agent_info
+    }
+
+    pub fn change_piv_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_pin: &PivPin,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().change_piv_pin(v1::ChangePivPinRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                old_pin: old_pin.as_bytes().to_vec(),
+                new_pin: new_pin.as_bytes().to_vec(),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn change_piv_puk(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        old_puk: &PivPuk,
+        new_puk: &PivPuk,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().change_piv_puk(v1::ChangePivPukRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                old_puk: old_puk.as_bytes().to_vec(),
+                new_puk: new_puk.as_bytes().to_vec(),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn unblock_piv_pin(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        puk: &PivPuk,
+        new_pin: &PivPin,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().unblock_piv_pin(v1::UnblockPivPinRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                puk: puk.as_bytes().to_vec(),
+                new_pin: new_pin.as_bytes().to_vec(),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn change_piv_management_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        current: &ManagementKey,
+        target_algorithm: ManagementKeyAlgorithm,
+    ) -> Result<ManagementKey> {
+        let mut response = self
+            .runtime
+            .block_on(self.rpc.clone().change_piv_management_key(
+                v1::ChangePivManagementKeyRequest {
+                    id: id.0.clone(),
+                    expected_serial: expected_serial.to_owned(),
+                    current_management_key: current.as_bytes().to_vec(),
+                    current_algorithm: management_key_algorithm_to_proto(current.algorithm()),
+                    target_algorithm: management_key_algorithm_to_proto(target_algorithm),
+                },
+            ))
+            .map_err(Self::map_status)?
+            .into_inner();
+        let algorithm = management_key_algorithm_from_proto(response.algorithm)?;
+        ManagementKey::new(algorithm, std::mem::take(&mut response.management_key))
+    }
+
+    pub fn generate_piv_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        configuration: PivKeyConfiguration,
+    ) -> Result<Vec<u8>> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .generate_piv_key(v1::GeneratePivKeyRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        management_key: management_key.as_bytes().to_vec(),
+                        management_key_algorithm: management_key_algorithm_to_proto(
+                            management_key.algorithm(),
+                        ),
+                        slot_byte: u32::from(configuration.slot.byte()),
+                        algorithm: match configuration.algorithm {
+                            sigil_core::PivKeyAlgorithm::EccP256 => {
+                                v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP256 as i32
+                            }
+                            sigil_core::PivKeyAlgorithm::EccP384 => {
+                                v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP384 as i32
+                            }
+                        },
+                        pin_policy: pin_policy_to_proto(configuration.pin_policy),
+                        touch_policy: touch_policy_to_proto(configuration.touch_policy),
+                    }),
+            )
+            .map(|response| response.into_inner().subject_public_key_info)
+            .map_err(Self::map_status)
+    }
+
+    pub fn attest_piv_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+    ) -> Result<PivAttestation> {
+        self.runtime
+            .block_on(self.rpc.clone().attest_piv_key(v1::AttestPivKeyRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                slot_byte: u32::from(slot.byte()),
+            }))
+            .map(|response| {
+                let response = response.into_inner();
+                PivAttestation {
+                    attestation_der: response.attestation_der,
+                    intermediate_der: response.intermediate_der,
+                }
+            })
+            .map_err(Self::map_status)
+    }
+
+    pub fn sign_piv_csr(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        pin: &PivPin,
+        slot: PivSlot,
+        subject_dn: &str,
+    ) -> Result<Vec<u8>> {
+        self.runtime
+            .block_on(self.rpc.clone().sign_piv_csr(v1::SignPivCsrRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                pin: pin.as_bytes().to_vec(),
+                slot_byte: u32::from(slot.byte()),
+                subject_dn: subject_dn.to_owned(),
+            }))
+            .map(|response| response.into_inner().csr_der)
+            .map_err(Self::map_status)
+    }
+
+    pub fn import_piv_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+        certificate_der: &[u8],
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .import_piv_certificate(v1::ImportPivCertificateRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        management_key: management_key.as_bytes().to_vec(),
+                        management_key_algorithm: management_key_algorithm_to_proto(
+                            management_key.algorithm(),
+                        ),
+                        slot_byte: u32::from(slot.byte()),
+                        certificate_der: certificate_der.to_vec(),
+                    }),
+            )
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn delete_piv_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .delete_piv_certificate(v1::DeletePivCertificateRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        management_key: management_key.as_bytes().to_vec(),
+                        management_key_algorithm: management_key_algorithm_to_proto(
+                            management_key.algorithm(),
+                        ),
+                        slot_byte: u32::from(slot.byte()),
+                    }),
+            )
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn delete_piv_key(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        management_key: &ManagementKey,
+        slot: PivSlot,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().delete_piv_key(v1::DeletePivKeyRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                management_key: management_key.as_bytes().to_vec(),
+                management_key_algorithm: management_key_algorithm_to_proto(
+                    management_key.algorithm(),
+                ),
+                slot_byte: u32::from(slot.byte()),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn reset_piv(&self, id: &DeviceId, confirm_serial: &str) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().reset_piv(v1::ResetPivRequest {
+                id: id.0.clone(),
+                confirm_serial: confirm_serial.to_owned(),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
     }
 
     fn map_status(status: tonic::Status) -> CredentialError {
@@ -401,6 +640,49 @@ impl PivInspection for AgentClient {
             summary,
             der: response.der,
         }))
+    }
+}
+
+fn management_key_algorithm_to_proto(algorithm: ManagementKeyAlgorithm) -> i32 {
+    match algorithm {
+        ManagementKeyAlgorithm::Aes128 => v1::ManagementKeyAlgorithm::Aes128 as i32,
+        ManagementKeyAlgorithm::Aes192 => v1::ManagementKeyAlgorithm::Aes192 as i32,
+        ManagementKeyAlgorithm::Aes256 => v1::ManagementKeyAlgorithm::Aes256 as i32,
+    }
+}
+
+fn management_key_algorithm_from_proto(value: i32) -> Result<ManagementKeyAlgorithm> {
+    match v1::ManagementKeyAlgorithm::try_from(value).map_err(|_| {
+        CredentialError::SmartCardOperation(
+            "agent returned unknown management-key algorithm".into(),
+        )
+    })? {
+        v1::ManagementKeyAlgorithm::Aes128 => Ok(ManagementKeyAlgorithm::Aes128),
+        v1::ManagementKeyAlgorithm::Aes192 => Ok(ManagementKeyAlgorithm::Aes192),
+        v1::ManagementKeyAlgorithm::Aes256 => Ok(ManagementKeyAlgorithm::Aes256),
+        v1::ManagementKeyAlgorithm::Unspecified => Err(CredentialError::SmartCardOperation(
+            "agent omitted management-key algorithm".into(),
+        )),
+    }
+}
+
+fn pin_policy_to_proto(policy: PinPolicy) -> i32 {
+    match policy {
+        PinPolicy::Default => v1::PinPolicy::Default as i32,
+        PinPolicy::Never => v1::PinPolicy::Never as i32,
+        PinPolicy::Once => v1::PinPolicy::Once as i32,
+        PinPolicy::Always => v1::PinPolicy::Always as i32,
+        PinPolicy::MatchOnce => v1::PinPolicy::MatchOnce as i32,
+        PinPolicy::MatchAlways => v1::PinPolicy::MatchAlways as i32,
+    }
+}
+
+fn touch_policy_to_proto(policy: TouchPolicy) -> i32 {
+    match policy {
+        TouchPolicy::Default => v1::TouchPolicy::Default as i32,
+        TouchPolicy::Never => v1::TouchPolicy::Never as i32,
+        TouchPolicy::Always => v1::TouchPolicy::Always as i32,
+        TouchPolicy::Cached => v1::TouchPolicy::Cached as i32,
     }
 }
 

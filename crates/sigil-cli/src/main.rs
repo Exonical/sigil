@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{ops::Deref, sync::Arc};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -77,10 +77,26 @@ enum DeviceCommand {
     Info { device: String },
 }
 
-fn service(endpoint: Option<&str>) -> Result<CredentialService> {
-    Ok(CredentialService::new(Arc::new(AgentClient::connect(
-        endpoint,
-    )?)))
+struct Services {
+    credentials: CredentialService,
+    agent: Arc<AgentClient>,
+}
+
+impl Deref for Services {
+    type Target = CredentialService;
+
+    fn deref(&self) -> &Self::Target {
+        &self.credentials
+    }
+}
+
+fn service(endpoint: Option<&str>) -> Result<Services> {
+    let agent = Arc::new(AgentClient::connect(endpoint)?);
+    let discovery: Arc<dyn sigil_core::DeviceDiscovery> = agent.clone();
+    Ok(Services {
+        credentials: CredentialService::new(discovery),
+        agent,
+    })
 }
 
 fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
@@ -144,7 +160,9 @@ fn run(args: Args) -> Result<String> {
                 ))
             }
         }
-        Command::Piv { command } => piv::handle(&service, command, args.json),
+        Command::Piv { command } => {
+            piv::handle(&service.credentials, &service.agent, command, args.json)
+        }
         Command::Fido {
             command: FidoCommand::Info { device },
         } => {

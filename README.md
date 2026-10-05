@@ -36,7 +36,7 @@ cargo run -p sigil-cli -- fido fingerprints enroll '<device-id>' --json
 cargo run -p sigil-cli -- fido fingerprints remove '<device-id>' '<fingerprint-id>' --yes
 ```
 
-PIV inspection is read-only. It displays PIN/PUK retry metadata, key policy and algorithm metadata when available, and certificate summaries. Certificates can be shown or exported as PEM/DER; export paths are created exclusively and are never overwritten.
+PIV inspection displays PIN/PUK retry metadata, key policy and algorithm metadata when available, and certificate summaries. Certificates can be shown or exported as PEM/DER; export paths are created exclusively and are never overwritten. PIN change, CSR signing, attestation reads, and a confirmed PIV reset do not require a grant. PUK change/unblock, management-key changes, key generation/deletion, and certificate import/deletion require a backend grant.
 
 ```powershell
 cargo run -p sigil-cli -- piv info mock-yubikey-12345678 --json
@@ -48,9 +48,36 @@ cargo run -p sigil-cli -- piv slots '<smart-card-device-id>'
 cargo run -p sigil-cli -- piv certificate export '<smart-card-device-id>' 9a --format der --output .\authentication.der
 ```
 
-Mock certificates are self-signed public test fixtures and do not contain private keys. Native PIV commands require a discovered smart-card reader and an enabled PIV application; PIV inspection works over both USB CCID and NFC. A FIDO-only key is not a smart-card device. No physical PIV key or NFC reader was available for hardware validation; regular tests are hardware-free and the read-only PC/SC test is skipped unless `SIGIL_HARDWARE_TESTS=1` is set.
+PIV mutation commands prompt securely for PINs, PUKs, and management keys; secrets are never accepted as arguments. New PINs and PUKs must be confirmed twice. Use `--current-default` only when the current management key is the published factory key. Reset requires typing the printed serial and a second `y` confirmation.
 
-Run the gated hardware tests with `$env:SIGIL_HARDWARE_TESTS='1'; cargo test -p sigil-platform --test hardware_piv` and `cargo test -p sigil-platform --test hardware_fido_resolution`; without the variable they return without touching hardware. Read-only RPCs are allowed for the active console user without backend sign-in and are audit-logged locally. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires confirmation. Enroll/list/remove uses the user's FIDO PIN, remains user-configurable, and is audit-logged without a backend grant. PINs are not saved or logged. Bio operations require validation with a physical Bio key before operational use.
+```powershell
+cargo run -p sigil-cli -- piv pin change '<device-id>'
+cargo run -p sigil-cli -- piv pin unblock '<device-id>'
+cargo run -p sigil-cli -- piv puk change '<device-id>'
+cargo run -p sigil-cli -- piv management-key change '<device-id>' --current-default --algorithm aes256
+cargo run -p sigil-cli -- piv key generate '<device-id>' --slot 9a --algorithm p256 --pin-policy once --touch-policy never --current-default
+cargo run -p sigil-cli -- piv key delete '<device-id>' --slot 9a --current-default
+cargo run -p sigil-cli -- piv attest '<device-id>' --slot 9a --output .\attestation
+cargo run -p sigil-cli -- piv csr '<device-id>' --slot 9a --subject 'CN=Example' --output .\request.csr
+cargo run -p sigil-cli -- piv certificate import '<device-id>' --slot 9a --file .\certificate.der --current-default
+cargo run -p sigil-cli -- piv certificate delete '<device-id>' --slot 9a --current-default
+cargo run -p sigil-cli -- piv reset '<device-id>'
+```
+
+The management-key-change RPC generates a new key with the agent OS random source and returns it once in hex as a test-only escrow placeholder. The CLI prints a warning to stderr; store the displayed value securely. A later escrow milestone will remove the one-time return.
+
+Mock certificates are self-signed public test fixtures and do not contain private keys. Native PIV commands require a discovered smart-card reader and an enabled PIV application; PIV inspection works over both USB CCID and NFC. A FIDO-only key is not a smart-card device.
+
+Read-only hardware discovery/inspection tests are gated by `SIGIL_HARDWARE_TESTS=1`. Physical-token mutation tests additionally require `SIGIL_HARDWARE_MUTATION_SERIAL=<serial>`, validate factory defaults before the first change, and reset PIV to factory defaults before finishing. Run the two mutation test binaries sequentially, not in parallel:
+
+```powershell
+$env:SIGIL_HARDWARE_TESTS='1'
+$env:SIGIL_HARDWARE_MUTATION_SERIAL='39192733'
+cargo test -p sigil-platform --test hardware_piv_mutation -- --nocapture
+cargo test -p sigil-agent --features dev-grants --test hardware_piv_agent -- --nocapture
+```
+
+These mutation tests never require touch; key generation uses touch policy `never`. Read-only RPCs are allowed for the active console user without backend sign-in and are audit-logged locally. Only discoverable credentials can be listed. Fingerprint enrollment shows capture progress and needs repeated touches of the same finger; deleting a fingerprint requires confirmation. Enroll/list/remove uses the user's FIDO PIN, remains user-configurable, and is audit-logged without a backend grant. PINs are not saved or logged. Bio operations require validation with a physical Bio key before operational use.
 
 The CLI and GUI always connect to `sigil-agent`; they have no in-process mock or native hardware backend. The client authenticates the local process serving the pipe/socket before sending RPCs. Select a returned opaque ID with `cms device info <id>`; `--json` is available for device commands. For real Windows hardware, run the foreground agent elevated or install the LocalSystem service with `sigil-agent install`; the install command refuses binaries in user-writable directories unless the debug-only development override is explicitly supplied. On Linux, the agent currently supports mock hardware only; native discovery is not implemented. The CLI binary is named `cms`.
 
@@ -70,13 +97,13 @@ NFC discovery and PIV-over-NFC have not been validated on hardware because no NF
 | `sigil-agent` | The only hardware process; caller identity, audit logging, local IPC, and grant verification |
 | `sigil-client` | Synchronous discovery/FIDO/PIV traits implemented over the local agent IPC channel |
 | `sigil-platform` | Windows PC/SC and HID hardware access, used only by `sigil-agent`; Linux native backend remains unimplemented |
-| `sigil-yubikey` | Read-only YubiKey management and PIV metadata provider, used only by the agent |
-| `sigil-piv` | Vendor-neutral read-only PIV APDU flow, BER-TLV, certificate parsing and encoding |
+| `sigil-yubikey` | YubiKey management, PIV metadata, and vendor-specific PIV mutation provider, used only by the agent |
+| `sigil-piv` | Vendor-neutral PIV APDUs, management-key authentication, CSR helpers, BER-TLV, certificate parsing and encoding |
 | `sigil-mock` | Hardware-free backend hosted inside `sigil-agent run --mock` |
 | `sigil-cli` | `cms` commands and JSON rendering over `sigil-client` |
 | `sigil-gui` | Dioxus desktop client over `sigil-client` |
 
-Only `sigil-agent` links the hardware providers. The CLI and GUI are unprivileged local-IPC clients; `DeviceId` remains opaque and serial numbers are never treated as unique selection keys. Read-only calls are available to the active console user without backend sign-in and every call is audit-logged. FIDO fingerprint enroll/remove is controlled by the user's FIDO PIN and does not require a grant. PIV operations requiring a system-held management key or PUK will require a single-use backend-signed protobuf grant (ECDSA P-256 over the exact transmitted grant bytes) when M4 mutation RPCs are introduced. The optional `dev-grants` signer is for debug development only and is rejected in release builds. M4 PIV mutations must verify the grant against the token serial read inside the same card transaction that performs the mutation.
+Only `sigil-agent` links the hardware providers. The CLI and GUI are unprivileged local-IPC clients; `DeviceId` remains opaque and serial numbers are never treated as unique selection keys. Read-only calls are available to the active console user without backend sign-in and every call is audit-logged. FIDO fingerprint enroll/remove is controlled by the user's FIDO PIN and does not require a grant. PIV operations requiring a system-held management key or PUK use a single-use backend-signed protobuf grant (ECDSA P-256 over the exact transmitted grant bytes). The optional `dev-grants` signer is for debug development only and is rejected in release builds. M4 PIV mutations verify the grant against the token serial read inside the same card transaction that performs the mutation.
 
 PIV mutation, PIN/PUK changes, key generation, and CSR creation remain future milestones. No raw APDU interface is exposed to the client applications or remote protocols.
 
@@ -108,9 +135,9 @@ go run ./cmd/sigil-server serve --config ../deploy/dev/sigil-server.example.toml
 
 Keep the signing key and server TLS private key readable only by the backend service account. `keygen` writes private keys with mode 0600 on Unix and prints only the public-key path.
 
-## Next: Milestone 4 — PIV mutation
+## Next milestones
 
-The next milestone adds carefully authorized PIV mutation workflows, including PIN/PUK management, key generation, and CSR creation. These operations must keep PINs out of command-line arguments and logs, and must remain separate from the provider-internal APDU transport. Validate all mutating hardware behavior on dedicated test devices before operational use. Linux later adds pcsc-lite and HID behind the same discovery interface. The PC/SC event watcher uses its own context so blocking notifications do not block scans.
+M4a adds local PIV mutations and grant verification at the agent boundary. Linux native PIV remains unsupported; Linux later adds pcsc-lite behind the same discovery interface. The PC/SC event watcher uses its own context so blocking notifications do not block scans.
 
 ## Quality gates
 
@@ -120,4 +147,4 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-No automated test requires a physical YubiKey. Linux without WebKitGTK development libraries can use `cargo test --workspace --exclude sigil-gui` and the equivalent `cargo clippy` command. Windows CI compiles both entry points but cannot prove behavior with real hardware.
+The default automated test suite is hardware-free; opt-in hardware tests require the gates documented above. Linux without WebKitGTK development libraries can use `cargo test --workspace --exclude sigil-gui` and the equivalent `cargo clippy` command. Windows CI compiles both entry points but cannot prove behavior with real hardware.
