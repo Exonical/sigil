@@ -12,9 +12,10 @@ fn trust_server(
     own_pid: u32,
     is_local_system: bool,
     is_elevated: bool,
+    is_trusted_service: bool,
     debug_bypass: bool,
 ) -> bool {
-    debug_bypass || server_pid == own_pid || is_local_system || is_elevated
+    debug_bypass || server_pid == own_pid || is_trusted_service || is_local_system || is_elevated
 }
 
 fn debug_bypass() -> bool {
@@ -49,11 +50,12 @@ mod tests {
     use super::trust_server;
 
     #[test]
-    fn trusts_only_local_system_elevated_self_or_debug_bypass_servers() {
-        assert!(trust_server(7, 8, true, false, false));
-        assert!(trust_server(7, 8, false, true, false));
-        assert!(trust_server(8, 8, false, false, false));
-        assert!(trust_server(7, 8, false, false, true));
-        assert!(!trust_server(7, 8, false, false, false));
+    fn trusts_only_service_local_system_elevated_self_or_debug_bypass_servers() {
+        assert!(trust_server(7, 8, false, false, true, false));
+        assert!(trust_server(7, 8, true, false, false, false));
+        assert!(trust_server(7, 8, false, true, false, false));
+        assert!(trust_server(8, 8, false, false, false, false));
+        assert!(trust_server(7, 8, false, false, false, true));
+        assert!(!trust_server(7, 8, false, false, false, false));
     }
 }

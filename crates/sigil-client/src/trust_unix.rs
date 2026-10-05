@@ -5,7 +5,7 @@ use super::{debug_bypass, trust_server};
 pub(crate) fn unix_server_is_trusted(stream: &UnixStream) -> bool {
     let bypass = debug_bypass();
     let Ok(credentials) = stream.peer_cred() else {
-        return trust_server(0, std::process::id(), false, false, bypass);
+        return trust_server(0, std::process::id(), false, false, false, bypass);
     };
     let server_pid = credentials
         .pid()
@@ -15,6 +15,7 @@ pub(crate) fn unix_server_is_trusted(stream: &UnixStream) -> bool {
         server_pid,
         std::process::id(),
         credentials.uid() == 0,
+        false,
         false,
         bypass,
     )

@@ -786,7 +786,7 @@ impl FromStr for AgentClient {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use sigil_core::CredentialError;
+    use sigil_core::{CredentialError, DeviceDiscovery};
 
     use super::AgentClient;
 
@@ -808,5 +808,24 @@ mod tests {
             Err(error) => error,
         };
         assert!(matches!(error, CredentialError::AgentUnavailable(_)));
+    }
+
+    #[test]
+    fn installed_local_system_service_is_trusted_when_opted_in() {
+        if std::env::var("SIGIL_INSTALLED_SERVICE_TESTS").as_deref() != Ok("1") {
+            return;
+        }
+        assert!(
+            std::env::var_os("SIGIL_AGENT_TRUST_UNPRIVILEGED").is_none(),
+            "installed-service trust test must not use the debug bypass"
+        );
+        assert!(
+            std::env::var_os("SIGIL_AGENT_ENDPOINT").is_none(),
+            "installed-service trust test requires the default agent endpoint"
+        );
+
+        let client = AgentClient::connect(None).expect("connect to installed SigilAgent");
+        let devices = client.list().expect("read installed agent device list");
+        eprintln!("installed_service_device_count={}", devices.len());
     }
 }
