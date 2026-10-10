@@ -24,6 +24,7 @@ type Config struct {
 	Escrow      Escrow        `toml:"escrow"`
 	CA          map[string]CA `toml:"ca"`
 	Profiles    []Profile     `toml:"profiles"`
+	Lifecycle   Lifecycle     `toml:"lifecycle"`
 }
 
 type TLS struct {
@@ -77,6 +78,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.OIDC.GroupsClaim == "" {
 		cfg.OIDC.GroupsClaim = "groups"
+	}
+	if cfg.Lifecycle.LostRevocationGraceHours == 0 {
+		cfg.Lifecycle.LostRevocationGraceHours = 24
 	}
 	if cfg.Grants.LifetimeSeconds == 0 {
 		cfg.Grants.LifetimeSeconds = 120
@@ -154,6 +158,9 @@ func (c *Config) Validate() error {
 	if c.Grants.KeyID == "" || c.Grants.SigningKeyFile == "" {
 		return fmt.Errorf("grants key_id and signing_key_file are required")
 	}
+	if c.Lifecycle.LostRevocationGraceHours < 1 || c.Lifecycle.LostRevocationGraceHours > 720 {
+		return fmt.Errorf("lifecycle lost_revocation_grace_hours must be between 1 and 720")
+	}
 	if c.Grants.LifetimeSeconds < 30 || c.Grants.LifetimeSeconds > 300 {
 		return fmt.Errorf("grants lifetime_seconds must be between 30 and 300")
 	}
@@ -221,4 +228,10 @@ func CheckPrivateFile(path string) error {
 		return fmt.Errorf("%q must not be group- or world-readable", path)
 	}
 	return nil
+}
+
+// Lifecycle configures background certificate lifecycle jobs.
+type Lifecycle struct {
+	// LostRevocationGraceHours is how long a lost token keeps its certificates before they are revoked.
+	LostRevocationGraceHours int `toml:"lost_revocation_grace_hours"`
 }

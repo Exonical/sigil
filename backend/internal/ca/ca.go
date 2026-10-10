@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,6 +38,8 @@ type SignRequest struct {
 // CA signs a certificate request and returns the DER chain, leaf first.
 type CA interface {
 	Sign(ctx context.Context, csrDER []byte, request SignRequest) ([][]byte, error)
+	// Revoke passively revokes the certificate with the given hexadecimal serial number.
+	Revoke(ctx context.Context, serialHex string, reasonCode int, reason string) error
 }
 
 // StepConfig configures a Smallstep step-ca client.
@@ -110,23 +113,11 @@ func (s *Step) Sign(ctx context.Context, csrDER []byte, request SignRequest) ([]
 	if request.Subject == "" {
 		return nil, errors.New("subject is required")
 	}
-	now := s.cfg.Now()
 	audience := strings.TrimSuffix(s.cfg.URL, "/") + "/1.0/sign"
 	sans := append(append([]string(nil), request.DNSNames...), request.EmailAddresses...)
-	token, err := jwt.Signed(s.signer).Claims(signClaims{
-		Claims: jwt.Claims{
-			Issuer:    s.cfg.Provisioner,
-			Subject:   request.Subject,
-			Audience:  jwt.Audience{audience},
-			IssuedAt:  jwt.NewNumericDate(now),
-			NotBefore: jwt.NewNumericDate(now.Add(-time.Minute)),
-			Expiry:    jwt.NewNumericDate(now.Add(5 * time.Minute)),
-			ID:        randomID(),
-		},
-		SANs: sans,
-	}).Serialize()
+	token, err := s.token(audience, request.Subject, sans)
 	if err != nil {
-		return nil, fmt.Errorf("create provisioner token: %w", err)
+		return nil, err
 	}
 	body, err := json.Marshal(map[string]any{
 		"csr":       string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})),
@@ -212,3 +203,78 @@ func randomID() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(bytes)
 }
+
+// token issues a one-time provisioner token for one endpoint and subject, signed with the provisioner key.
+func (s *Step) token(audience, subject string, sans []string) (string, error) {
+	now := s.cfg.Now()
+	token, err := jwt.Signed(s.signer).Claims(signClaims{
+		Claims: jwt.Claims{
+			Issuer:    s.cfg.Provisioner,
+			Subject:   subject,
+			Audience:  jwt.Audience{audience},
+			IssuedAt:  jwt.NewNumericDate(now),
+			NotBefore: jwt.NewNumericDate(now.Add(-time.Minute)),
+			Expiry:    jwt.NewNumericDate(now.Add(5 * time.Minute)),
+			ID:        randomID(),
+		},
+		SANs: sans,
+	}).Serialize()
+	if err != nil {
+		return "", fmt.Errorf("create provisioner token: %w", err)
+	}
+	return token, nil
+}
+
+// Revoke passively revokes a certificate by serial number: step-ca refuses to renew it, and it stays
+// valid until its expiry. The request is authorized by a one-time token whose subject is the serial.
+// reasonCode uses RFC 5280 values (1 keyCompromise, 5 cessationOfOperation).
+func (s *Step) Revoke(ctx context.Context, serialHex string, reasonCode int, reason string) error {
+	serial, ok := new(big.Int).SetString(serialHex, 16)
+	if !ok {
+		return errors.New("certificate serial must be hexadecimal")
+	}
+	audience := strings.TrimSuffix(s.cfg.URL, "/") + "/1.0/revoke"
+	token, err := s.token(audience, serial.String(), nil)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(map[string]any{
+		"serial":     serial.String(),
+		"ott":        token,
+		"reasonCode": reasonCode,
+		"reason":     reason,
+		"passive":    true,
+	})
+	if err != nil {
+		return fmt.Errorf("encode revoke request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, audience, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("create revoke request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := s.client.Do(req)
+	if err != nil {
+		return errors.New("step-ca is unavailable")
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return errors.New("could not read step-ca response")
+	}
+	if response.StatusCode != http.StatusOK {
+		var failure struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(data, &failure)
+		if response.StatusCode == http.StatusBadRequest && strings.Contains(failure.Message, "is already revoked") {
+			return ErrAlreadyRevoked
+		}
+		return fmt.Errorf("step-ca rejected the revocation with HTTP %d: %s", response.StatusCode, failure.Message)
+	}
+	return nil
+}
+
+// ErrAlreadyRevoked reports that the CA already has the certificate revoked. step-ca answers a repeat revoke
+// with HTTP 400 and the message "certificate with serial number '<decimal>' is already revoked."
+var ErrAlreadyRevoked = errors.New("certificate is already revoked at the certificate authority")

@@ -53,9 +53,14 @@ type fakeStepCA struct {
 	provider    string
 	lastSANs    []string
 	lastSubject string
+	revoked     []revocation
 }
 
 func (f *fakeStepCA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/1.0/revoke" {
+		f.handleRevoke(w, r)
+		return
+	}
 	var body struct {
 		CSR string `json:"csr"`
 		OTT string `json:"ott"`
@@ -119,6 +124,46 @@ func (f *fakeStepCA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleRevoke verifies the revocation token's audience, subject and provisioner, and records the request.
+func (f *fakeStepCA) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Serial     string `json:"serial"`
+		OTT        string `json:"ott"`
+		ReasonCode int    `json:"reasonCode"`
+		Passive    bool   `json:"passive"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	token, err := jwt.ParseSigned(body.OTT, []jose.SignatureAlgorithm{jose.ES256})
+	if err != nil {
+		http.Error(w, "bad token", http.StatusUnauthorized)
+		return
+	}
+	var claims jwt.Claims
+	if err := token.Claims(f.provisioner, &claims); err != nil {
+		http.Error(w, "token signature rejected", http.StatusUnauthorized)
+		return
+	}
+	expected := jwt.Expected{Issuer: f.provider, AnyAudience: jwt.Audience{f.audience[:len(f.audience)-len("/1.0/sign")] + "/1.0/revoke"}, Time: time.Now()}
+	if err := claims.ValidateWithLeeway(expected, time.Minute); err != nil {
+		http.Error(w, "token claims rejected", http.StatusUnauthorized)
+		return
+	}
+	if claims.Subject != body.Serial || !body.Passive {
+		http.Error(w, "token subject does not match the serial", http.StatusUnauthorized)
+		return
+	}
+	f.revoked = append(f.revoked, revocation{serial: body.Serial, reasonCode: body.ReasonCode})
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+type revocation struct {
+	serial     string
+	reasonCode int
+}
 type fixture struct {
 	server      *httptest.Server
 	fake        *fakeStepCA
@@ -284,5 +329,21 @@ func TestLoadProvisionerKeyDecryptsWithThePasswordOnly(t *testing.T) {
 	}
 	if _, err := LoadProvisionerKey([]byte(encoded), []byte("wrong")); err == nil {
 		t.Fatal("a wrong password must not decrypt the key")
+	}
+}
+
+func TestStepRevokeSendsTheSerialTokenAndReasonCode(t *testing.T) {
+	f := newFixture(t)
+	client := f.client(t, f.provisioner)
+	const serialHex = "2673cc6c8f961ccd0a7c96a99357ec73"
+	if err := client.Revoke(context.Background(), serialHex, 1, "key compromised"); err != nil {
+		t.Fatal(err)
+	}
+	serial, _ := new(big.Int).SetString(serialHex, 16)
+	if len(f.fake.revoked) != 1 || f.fake.revoked[0].serial != serial.String() || f.fake.revoked[0].reasonCode != 1 {
+		t.Fatalf("revocations = %+v", f.fake.revoked)
+	}
+	if err := client.Revoke(context.Background(), "not-hex", 1, ""); err == nil {
+		t.Fatal("a non-hexadecimal serial must be rejected")
 	}
 }

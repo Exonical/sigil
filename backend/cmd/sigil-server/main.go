@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/authn"
@@ -20,6 +21,7 @@ import (
 	"github.com/Exonical/sigil/backend/internal/db"
 	"github.com/Exonical/sigil/backend/internal/escrow"
 	"github.com/Exonical/sigil/backend/internal/gateway"
+	"github.com/Exonical/sigil/backend/internal/lifecycle"
 	"github.com/Exonical/sigil/backend/internal/signing"
 )
 
@@ -106,6 +108,7 @@ func serve(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	go startLostKeys(ctx, store, cfg, cas)
 	slog.Info("starting backend gRPC gateway", "listen_grpc", cfg.ListenGRPC)
 	return gateway.ListenAndServe(ctx, cfg.ListenGRPC, server)
 }
@@ -342,4 +345,14 @@ func buildCertificateAuthorities(configs map[string]config.CA) (map[string]ca.CA
 		cas[name] = client
 	}
 	return cas, nil
+}
+
+// startLostKeys revokes certificates of lost tokens after the grace period, once a minute.
+func startLostKeys(ctx context.Context, store *db.Store, cfg *config.Config, cas map[string]ca.CA) {
+	profileCA := make(map[string]string, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profileCA[profile.Name] = profile.CA
+	}
+	grace := time.Duration(cfg.Lifecycle.LostRevocationGraceHours) * time.Hour
+	lifecycle.NewLostKeys(store, cas, profileCA, grace, slog.Default()).Run(ctx, time.Minute)
 }

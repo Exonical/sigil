@@ -76,6 +76,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $stepDir 'provisioner.jwk'))) {
 
 Copy-Item -LiteralPath (Join-Path $stepDir 'certs\root_ca.crt') -Destination (Join-Path $stepDir 'root_ca.crt') -Force
 
+# Revocation needs an authority database. The badger DB lives on the persistent volume, and the root and intermediate are unchanged.
+$caPath = Join-Path $stepDir 'config\ca.json'
+$caConfig = Get-Content -LiteralPath $caPath -Raw | ConvertFrom-Json
+if (-not $caConfig.db) {
+    $caConfig | Add-Member -NotePropertyName db -NotePropertyValue ([pscustomobject]@{ type = 'badgerv2'; dataSource = '/home/step/db' }) -Force
+    $caConfig | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $caPath -Encoding utf8
+}
+
 $running = & podman --connection $connection ps --filter "name=^$container$" --format '{{.Names}}'
 if ($running -ne $container) {
     & podman --connection $connection rm -f $container *> $null

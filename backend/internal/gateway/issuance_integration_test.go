@@ -55,6 +55,10 @@ func newFakeCA(t *testing.T) *fakeCA {
 	return &fakeCA{key: key, cert: cert}
 }
 
+func (f *fakeCA) Revoke(_ context.Context, _ string, _ int, _ string) error {
+	return nil
+}
+
 func (f *fakeCA) Sign(_ context.Context, csrDER []byte, request ca.SignRequest) ([][]byte, error) {
 	f.calls++
 	f.request = request
