@@ -104,6 +104,8 @@ entries:
         - matching_mode: strict
           url: "https://localhost:8443/callback"
         - matching_mode: strict
+          url: "https://localhost:8444/callback"
+        - matching_mode: strict
           url: "http://localhost:5173/callback"
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]

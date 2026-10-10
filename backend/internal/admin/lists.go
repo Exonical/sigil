@@ -11,6 +11,7 @@ import (
 
 // ListCertificates lists certificates with optional status, expiry, profile, and token filters.
 func (s *Service) ListCertificates(ctx context.Context, req *connect.Request[adminv1.ListCertificatesRequest]) (*connect.Response[adminv1.ListCertificatesResponse], error) {
+	logRead(ctx, "ListCertificates", map[string]any{"status": req.Msg.Status, "profile": req.Msg.Profile, "token_serial": req.Msg.TokenSerial, "expiring_before_unix": req.Msg.ExpiringBeforeUnix})
 	limit, offset, err := pageBounds(req.Msg.PageSize, req.Msg.Page)
 	if err != nil {
 		return nil, err
@@ -54,6 +55,7 @@ func (s *Service) ListCertificates(ctx context.Context, req *connect.Request[adm
 
 // ListStations lists registered stations.
 func (s *Service) ListStations(ctx context.Context, _ *connect.Request[adminv1.Empty]) (*connect.Response[adminv1.ListStationsResponse], error) {
+	logRead(ctx, "ListStations", nil)
 	rows, err := s.store.Pool.Query(ctx, `SELECT id, dns_name, display_name, mode, status FROM stations ORDER BY dns_name`)
 	if err != nil {
 		return nil, internal("could not list stations", err)
@@ -75,6 +77,7 @@ func (s *Service) ListStations(ctx context.Context, _ *connect.Request[adminv1.E
 
 // ListUsers lists authenticated users with the number of tokens assigned to each.
 func (s *Service) ListUsers(ctx context.Context, req *connect.Request[adminv1.ListUsersRequest]) (*connect.Response[adminv1.ListUsersResponse], error) {
+	logRead(ctx, "ListUsers", map[string]any{"search_set": req.Msg.Search != ""})
 	limit, offset, err := pageBounds(req.Msg.PageSize, req.Msg.Page)
 	if err != nil {
 		return nil, err
@@ -154,6 +157,9 @@ func (s *Service) ListAudit(ctx context.Context, req *connect.Request[adminv1.Li
 	if len(response.Events) == limit {
 		response.NextBeforeSeq = response.Events[len(response.Events)-1].Seq
 	}
+	if err := s.auditRead(ctx, "Admin.ListAudit", "none", "", map[string]any{"actor_type": req.Msg.ActorType, "actor_id": req.Msg.ActorId, "action": req.Msg.Action, "target": req.Msg.Target, "from_unix": req.Msg.FromUnix, "to_unix": req.Msg.ToUnix, "before_seq": req.Msg.BeforeSeq, "page_size": limit}); err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(response), nil
 }
 
@@ -170,6 +176,9 @@ func (s *Service) VerifyAudit(ctx context.Context, _ *connect.Request[adminv1.Em
 	if err := audit.Verify(ctx, s.store.Pool); err != nil {
 		response.Ok = false
 		response.Failure = err.Error()
+	}
+	if err := s.auditRead(ctx, "Admin.VerifyAudit", "none", "", map[string]any{"ok": response.Ok, "events_checked": count}); err != nil {
+		return nil, err
 	}
 	return connect.NewResponse(response), nil
 }

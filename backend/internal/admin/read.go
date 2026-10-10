@@ -37,6 +37,7 @@ func escapeLike(value string) string {
 
 // GetDashboard returns counts for the portal home page.
 func (s *Service) GetDashboard(ctx context.Context, _ *connect.Request[adminv1.Empty]) (*connect.Response[adminv1.DashboardResponse], error) {
+	logRead(ctx, "GetDashboard", nil)
 	response := &adminv1.DashboardResponse{
 		TokensByStatus:   map[string]int64{},
 		StationsByStatus: map[string]int64{},
@@ -88,6 +89,7 @@ func (s *Service) countByStatus(ctx context.Context, into map[string]int64, quer
 
 // ListTokens lists inventory tokens with a text search over serial, nickname, and assigned user, and a status filter.
 func (s *Service) ListTokens(ctx context.Context, req *connect.Request[adminv1.ListTokensRequest]) (*connect.Response[adminv1.ListTokensResponse], error) {
+	logRead(ctx, "ListTokens", map[string]any{"status": req.Msg.Status, "search_set": req.Msg.Search != ""})
 	limit, offset, err := pageBounds(req.Msg.PageSize, req.Msg.Page)
 	if err != nil {
 		return nil, err
@@ -197,6 +199,9 @@ func (s *Service) GetToken(ctx context.Context, req *connect.Request[adminv1.Tok
 		return nil, err
 	}
 	if response.Audit, err = s.auditFor(ctx, token.Serial, token.Id); err != nil {
+		return nil, err
+	}
+	if err := s.auditRead(ctx, "Admin.GetToken", "token", token.Serial, map[string]any{"vendor": vendor}); err != nil {
 		return nil, err
 	}
 	return connect.NewResponse(response), nil

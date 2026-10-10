@@ -470,3 +470,8 @@ func (s *Service) SetStationStatus(ctx context.Context, req *connect.Request[adm
 	}
 	return connect.NewResponse(&adminv1.Empty{}), nil
 }
+
+// auditStandalone appends a successful read audit record on its own connection, after the read has succeeded.
+func auditStandalone(ctx context.Context, s *Service, action, targetType, targetID string, detail map[string]any) error {
+	return audit.AppendStandalone(ctx, s.store.Pool, userEvent(ctx, action, targetType, targetID, "success", detail))
+}
