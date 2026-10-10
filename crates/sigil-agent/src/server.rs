@@ -741,6 +741,15 @@ fn audit<T>(
     }
 }
 
+/// Holds a managed authorization and zeroizes its access token when dropped, on every return path.
+struct AuthorizationGuard(v1::ManagedAuthorization);
+
+impl Drop for AuthorizationGuard {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0.access_token);
+    }
+}
+
 fn with_caller<T>(message: T, caller: &CallerIdentity) -> Request<T> {
     let mut request = Request::new(message);
     request.extensions_mut().insert(caller.clone());
@@ -794,12 +803,12 @@ impl AgentService {
         device_id: &str,
         mut input: v1::EnrollPivCertificateRequest,
     ) -> std::result::Result<v1::EnrollPivCertificateResponse, Status> {
-        let managed = input.managed.take().ok_or_else(|| {
+        let managed = AuthorizationGuard(input.managed.take().ok_or_else(|| {
             Status::invalid_argument("managed authorization is required for enrollment")
-        })?;
+        })?);
         let pin = Zeroizing::new(std::mem::take(&mut input.pin));
         let serial = input.expected_serial.clone();
-        let (vendor, token_serial, profiles) = self.backend_profiles(device_id, &managed).await?;
+        let (vendor, token_serial, profiles) = self.backend_profiles(device_id, &managed.0).await?;
         let profile = profiles
             .profiles
             .into_iter()
@@ -820,7 +829,7 @@ impl AgentService {
             algorithm: enrollment::key_algorithm_name(&profile.algorithm)? as i32,
             pin_policy: enrollment::pin_policy_name(&profile.pin_policy)? as i32,
             touch_policy: enrollment::touch_policy_name(&profile.touch_policy)? as i32,
-            managed: Some(managed.clone()),
+            managed: Some(managed.0.clone()),
         };
         let spki = v1::agent_server::Agent::generate_piv_key(self, with_caller(generate, caller))
             .await?
@@ -847,7 +856,10 @@ impl AgentService {
                     expected_serial: serial.clone(),
                     pin: pin.to_vec(),
                     slot_byte,
-                    subject_dn: format!("CN={}", profile.expected_subject),
+                    subject_dn: format!(
+                        "CN={}",
+                        enrollment::escape_rdn_value(&profile.expected_subject)
+                    ),
                 },
                 caller,
             ),
@@ -863,7 +875,7 @@ impl AgentService {
         })?;
         let issued = backend
             .issue_certificate(sigil_proto::backend::v1::IssueCertificateRequest {
-                access_token: managed.access_token.clone(),
+                access_token: managed.0.access_token.clone(),
                 token_vendor: vendor,
                 token_serial,
                 caller_os_user: caller.os_user.clone(),
@@ -891,7 +903,7 @@ impl AgentService {
                     management_key_algorithm: 0,
                     slot_byte,
                     certificate_der: certificate_der.clone(),
-                    managed: Some(managed),
+                    managed: Some(managed.0.clone()),
                 },
                 caller,
             ),

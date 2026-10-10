@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -55,6 +55,10 @@ struct FakeAuthority {
     grant_override: Mutex<GrantOverride>,
     complete_failures: AtomicUsize,
     completions: Mutex<Vec<(String, bool)>>,
+    profiles: Mutex<Vec<sigil_proto::backend::v1::CertificateProfile>>,
+    issuer: Mutex<Option<(rcgen::Certificate, rcgen::KeyPair)>>,
+    substitute_key: AtomicBool,
+    last_csr_common_name: Mutex<Option<String>>,
 }
 
 impl FakeAuthority {
@@ -68,6 +72,10 @@ impl FakeAuthority {
             grant_override: Mutex::new(GrantOverride::default()),
             complete_failures: AtomicUsize::new(0),
             completions: Mutex::new(Vec::new()),
+            profiles: Mutex::new(Vec::new()),
+            issuer: Mutex::new(None),
+            substitute_key: AtomicBool::new(false),
+            last_csr_common_name: Mutex::new(None),
         }
     }
 
@@ -239,17 +247,90 @@ impl ManagedAuthority for FakeAuthority {
         &self,
         _request: sigil_proto::backend::v1::ListProfilesRequest,
     ) -> Result<sigil_proto::backend::v1::ListProfilesResponse, Status> {
-        Err(Status::unimplemented("fake authority has no profiles"))
+        Ok(sigil_proto::backend::v1::ListProfilesResponse {
+            profiles: self.profiles.lock().expect("profiles mutex").clone(),
+        })
     }
 
     async fn issue_certificate(
         &self,
-        _request: sigil_proto::backend::v1::IssueCertificateRequest,
+        request: sigil_proto::backend::v1::IssueCertificateRequest,
     ) -> Result<sigil_proto::backend::v1::IssueCertificateResponse, Status> {
-        Err(Status::unimplemented("fake authority does not issue"))
+        issue_test_certificate(self, request)
     }
 }
 
+impl FakeAuthority {
+    fn enable_enrollment(
+        &self,
+        profile: sigil_proto::backend::v1::CertificateProfile,
+        ca: (rcgen::Certificate, rcgen::KeyPair),
+    ) {
+        self.profiles.lock().expect("profiles mutex").push(profile);
+        *self.issuer.lock().expect("issuer mutex") = Some(ca);
+    }
+
+    fn substitute_key_on_issue(&self) {
+        self.substitute_key.store(true, Ordering::SeqCst);
+    }
+
+    fn last_csr_common_name(&self) -> Option<String> {
+        self.last_csr_common_name.lock().expect("csr mutex").clone()
+    }
+}
+
+fn test_root_authority(common_name: &str) -> (rcgen::Certificate, rcgen::KeyPair) {
+    let key = rcgen::KeyPair::generate().expect("test CA key");
+    let mut params = rcgen::CertificateParams::default();
+    params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, common_name);
+    let cert = params.self_signed(&key).expect("test CA certificate");
+    (cert, key)
+}
+
+fn issue_test_certificate(
+    authority: &FakeAuthority,
+    request: sigil_proto::backend::v1::IssueCertificateRequest,
+) -> Result<sigil_proto::backend::v1::IssueCertificateResponse, Status> {
+    let issuer = authority.issuer.lock().expect("issuer mutex");
+    let (ca_cert, ca_key) = issuer
+        .as_ref()
+        .ok_or_else(|| Status::failed_precondition("fake CA is not configured"))?;
+    let csr_der = rustls::pki_types::CertificateSigningRequestDer::from(request.csr_der.as_slice());
+    let (_, csr) = <x509_parser::certification_request::X509CertificationRequest as x509_parser::prelude::FromDer<'_, x509_parser::error::X509Error>>::from_der(request.csr_der.as_slice())
+        .map_err(|_| Status::invalid_argument("fake CA received an invalid CSR"))?;
+    let common_name = csr
+        .certification_request_info
+        .subject
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    *authority.last_csr_common_name.lock().expect("csr mutex") = Some(common_name.clone());
+    let leaf = if authority.substitute_key.load(Ordering::SeqCst) {
+        let other = rcgen::KeyPair::generate().expect("substitute key");
+        let mut params = rcgen::CertificateParams::default();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, common_name.as_str());
+        params
+            .signed_by(&other, ca_cert, ca_key)
+            .map_err(|_| Status::internal("fake CA signing failed"))?
+    } else {
+        rcgen::CertificateSigningRequestParams::from_der(&csr_der)
+            .and_then(|params| params.signed_by(ca_cert, ca_key))
+            .map_err(|_| Status::internal("fake CA signing failed"))?
+    };
+    Ok(sigil_proto::backend::v1::IssueCertificateResponse {
+        chain_der: vec![leaf.der().to_vec(), ca_cert.der().to_vec()],
+        serial_number: "1".into(),
+        subject: format!("CN={common_name}"),
+        not_after_unix: 4_000_000_000,
+    })
+}
 fn secret(value: Vec<u8>, algorithm: &str) -> ManagedSecret {
     ManagedSecret {
         value: Zeroizing::new(value),
@@ -858,4 +939,125 @@ async fn rotation_completion_is_persisted_and_can_resume_after_reopen() {
     let new_pin = PivPin::new(b"654321".to_vec()).unwrap();
     mock.unblock_pin(&id, TOKEN_SERIAL, &new_puk, &new_pin)
         .expect("mock PIV operation applied before the completion retry");
+}
+
+const ENROLLED_NAME: &str = "Doe, John+OU=Admins";
+
+fn enrollment_profile() -> sigil_proto::backend::v1::CertificateProfile {
+    sigil_proto::backend::v1::CertificateProfile {
+        name: "piv-authentication".into(),
+        display_name: "PIV Authentication".into(),
+        piv_slot: u32::from(PivSlot::AUTHENTICATION.byte()),
+        algorithm: "p256".into(),
+        pin_policy: "once".into(),
+        touch_policy: "never".into(),
+        expected_subject: ENROLLED_NAME.into(),
+    }
+}
+
+fn enroll_request(managed: Option<ManagedAuthorization>) -> v1::EnrollPivCertificateRequest {
+    v1::EnrollPivCertificateRequest {
+        id: "mock-yubikey-12345678".into(),
+        expected_serial: TOKEN_SERIAL.into(),
+        profile: "piv-authentication".into(),
+        pin: b"123456".to_vec(),
+        managed,
+    }
+}
+
+#[tokio::test]
+async fn managed_enrollment_generates_signs_and_installs_a_chain_checked_certificate() {
+    let (mock, credentials) = mock_service();
+    let backend = Arc::new(FakeAuthority::new());
+    let (root, root_key) = test_root_authority("Sigil Test Issuing Root");
+    let root_der = root.der().to_vec();
+    backend.enable_enrollment(enrollment_profile(), (root, root_key));
+    let service =
+        agent_service(credentials, Some(backend.clone()), None).with_issuing_cas(vec![root_der]);
+    let id = DeviceId("mock-yubikey-12345678".into());
+
+    let response = Agent::enroll_piv_certificate(
+        &service,
+        with_caller(Request::new(enroll_request(managed_token()))),
+    )
+    .await
+    .expect("managed enrollment")
+    .into_inner();
+
+    assert_eq!(response.subject, format!("CN={ENROLLED_NAME}"));
+    assert_eq!(
+        backend.last_csr_common_name().as_deref(),
+        Some(ENROLLED_NAME)
+    );
+    let installed = mock
+        .piv_certificate(&id, PivSlot::AUTHENTICATION)
+        .unwrap()
+        .expect("installed certificate");
+    assert_eq!(installed.der, response.certificate_der);
+}
+
+#[tokio::test]
+async fn enrollment_rejects_a_chain_that_does_not_reach_a_configured_root_and_installs_nothing() {
+    let (mock, credentials) = mock_service();
+    let backend = Arc::new(FakeAuthority::new());
+    backend.enable_enrollment(
+        enrollment_profile(),
+        test_root_authority("Sigil Test Issuing Root"),
+    );
+    let unrelated_root = test_root_authority("Unrelated Root").0.der().to_vec();
+    let service =
+        agent_service(credentials, Some(backend), None).with_issuing_cas(vec![unrelated_root]);
+    let id = DeviceId("mock-yubikey-12345678".into());
+
+    let error = Agent::enroll_piv_certificate(
+        &service,
+        with_caller(Request::new(enroll_request(managed_token()))),
+    )
+    .await
+    .expect_err("a chain to an unconfigured root must be rejected");
+
+    assert!(
+        error
+            .message()
+            .contains("does not chain to a configured issuing CA"),
+        "unexpected rejection: {}",
+        error.message()
+    );
+    assert!(
+        mock.piv_certificate(&id, PivSlot::AUTHENTICATION)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn enrollment_rejects_a_certificate_issued_for_a_different_key_and_installs_nothing() {
+    let (mock, credentials) = mock_service();
+    let backend = Arc::new(FakeAuthority::new());
+    let (root, root_key) = test_root_authority("Sigil Test Issuing Root");
+    let root_der = root.der().to_vec();
+    backend.enable_enrollment(enrollment_profile(), (root, root_key));
+    backend.substitute_key_on_issue();
+    let service = agent_service(credentials, Some(backend), None).with_issuing_cas(vec![root_der]);
+    let id = DeviceId("mock-yubikey-12345678".into());
+
+    let error = Agent::enroll_piv_certificate(
+        &service,
+        with_caller(Request::new(enroll_request(managed_token()))),
+    )
+    .await
+    .expect_err("a certificate for another key must be rejected");
+
+    assert!(
+        error
+            .message()
+            .contains("does not certify the key on the token"),
+        "unexpected rejection: {}",
+        error.message()
+    );
+    assert!(
+        mock.piv_certificate(&id, PivSlot::AUTHENTICATION)
+            .unwrap()
+            .is_none()
+    );
 }

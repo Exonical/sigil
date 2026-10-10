@@ -23,6 +23,27 @@ pub fn profile_message(
     })
 }
 
+/// Escapes a value for use inside an RFC 4514 distinguished name, so user-supplied text cannot add RDNs.
+pub fn escape_rdn_value(value: &str) -> String {
+    let last = value.chars().count().saturating_sub(1);
+    let mut escaped = String::with_capacity(value.len());
+    for (index, character) in value.chars().enumerate() {
+        match character {
+            '\0' => escaped.push_str("\\00"),
+            ' ' if index == 0 || index == last => {
+                escaped.push('\\');
+                escaped.push(' ');
+            }
+            '#' if index == 0 => escaped.push_str("\\#"),
+            '"' | '+' | ',' | ';' | '<' | '>' | '\\' | '=' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped
+}
 /// Maps a backend algorithm name (`p256` or `p384`) to the PIV key generation enum.
 pub fn key_algorithm_name(name: &str) -> Result<v1::PivKeyGenerationAlgorithm, Status> {
     match name {
@@ -75,6 +96,7 @@ pub fn verify_issued_chain(
     }
 
     let mut current = leaf;
+    let mut current_der: &[u8] = leaf_der;
     for _ in 0..MAX_CHAIN_DEPTH {
         check_validity(&current, now_unix)?;
         let issuer_name = current.issuer().as_raw().to_vec();
@@ -87,16 +109,15 @@ pub fn verify_issued_chain(
             check_validity(&root, now_unix)?;
             return Ok(());
         }
-        let Some(intermediate_der) = chain
-            .iter()
-            .skip(1)
-            .find(|der| matches_issuer(der, &issuer_name, &current))
-        else {
+        let Some(intermediate_der) = chain.iter().skip(1).find(|der| {
+            der.as_slice() != current_der && matches_issuer(der, &issuer_name, &current)
+        }) else {
             return Err("the issued certificate does not chain to a configured issuing CA");
         };
         let (_, intermediate) = X509Certificate::from_der(intermediate_der)
             .map_err(|_| "the CA chain contains an invalid certificate")?;
         current = intermediate;
+        current_der = intermediate_der;
     }
     Err("the issued certificate chain is too deep")
 }
@@ -275,5 +296,18 @@ mod tests {
             v1::TouchPolicy::Cached
         );
         assert!(touch_policy_name("sometimes").is_err());
+    }
+
+    #[test]
+    fn escapes_user_text_so_it_cannot_add_relative_distinguished_names() {
+        assert_eq!(
+            escape_rdn_value("Doe, John+OU=Admins"),
+            r"Doe\, John\+OU\=Admins"
+        );
+        assert_eq!(escape_rdn_value(" lead"), r"\ lead");
+        assert_eq!(escape_rdn_value("trail "), r"trail\ ");
+        assert_eq!(escape_rdn_value("#hash"), r"\#hash");
+        assert_eq!(escape_rdn_value("a\"b;c<d>e\\f"), r#"a\"b\;c\<d\>e\\f"#);
+        assert_eq!(escape_rdn_value("plain name"), "plain name");
     }
 }
