@@ -36,6 +36,7 @@ Copy-Item -LiteralPath (Join-Path $backendDirectory 'grant-signing-public.pem') 
 
 $config = @'
 grant_keys = { "sigil-dev-v1" = "grant-signing-public.pem" }
+data_dir = "data"
 
 [backend]
 url = "https://localhost:50443"

@@ -12,9 +12,7 @@ mod platform;
 #[derive(Debug, Clone)]
 pub struct AgentPaths {
     pub config_file: PathBuf,
-    pub audit_dir: PathBuf,
-    #[cfg(windows)]
-    pub log_file: PathBuf,
+    pub default_data_dir: PathBuf,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -55,17 +53,10 @@ fn prepare_agent_paths_inner(
     config_override: Option<&Path>,
     allow_insecure: bool,
 ) -> Result<AgentPaths> {
-    #[cfg(windows)]
-    let data_dir = std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
-        .join("Sigil");
-    #[cfg(unix)]
-    let data_dir = PathBuf::from("/etc/sigil");
-
+    let system_dir = system_data_dir();
     let config_file = config_override
         .map(Path::to_owned)
-        .unwrap_or_else(|| data_dir.join("agent.toml"));
+        .unwrap_or_else(|| system_dir.join("agent.toml"));
     let config_dir = config_file
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -75,42 +66,61 @@ fn prepare_agent_paths_inner(
         eprintln!(
             "WARNING: --dev-insecure-config skips Sigil path ownership and permission checks. Never use this with real hardware or service mode."
         );
-    } else {
-        if config_override.is_some() {
-            ensure_protected_dir(config_dir)?;
-        }
-        ensure_protected_dir(&data_dir)?;
+        return Ok(AgentPaths {
+            default_data_dir: config_dir.to_owned(),
+            config_file,
+        });
+    }
+    ensure_protected_dir(config_dir)?;
+    Ok(AgentPaths {
+        config_file,
+        default_data_dir: system_dir,
+    })
+}
+
+#[cfg(windows)]
+fn system_data_dir() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("Sigil")
+}
+
+#[cfg(unix)]
+fn system_data_dir() -> PathBuf {
+    PathBuf::from("/etc/sigil")
+}
+
+/// Creates or validates the agent's protected data directory and the subdirectories it owns.
+pub fn prepare_data_dir(data_dir: &Path) -> Result<()> {
+    let result: Result<()> = (|| {
+        ensure_protected_dir(data_dir)?;
         #[cfg(windows)]
         ensure_protected_dir(&data_dir.join("logs"))?;
-        ensure_protected_dir(&data_dir.join("audit"))?;
-        ensure_protected_dir(config_dir)?;
-    }
+        ensure_protected_dir(&data_dir.join("audit"))
+    })();
+    result.map_err(|error| map_data_dir_error(data_dir, error))
+}
 
-    let audit_dir = if allow_insecure {
-        let directory = config_dir.join("audit");
-        std::fs::create_dir_all(&directory).with_context(|| {
-            format!(
-                "could not create development audit directory {}",
-                directory.display()
-            )
-        })?;
-        directory
+/// Turns an access-denied failure on the data directory into an actionable startup error.
+/// Every other failure keeps its cause and is only given context.
+pub fn map_data_dir_error(data_dir: &Path, error: anyhow::Error) -> anyhow::Error {
+    let access_denied = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+    });
+    if access_denied {
+        anyhow::anyhow!(
+            "the agent data directory {} is not writable by this process; run the agent elevated or as the SigilAgent service",
+            data_dir.display()
+        )
     } else {
-        data_dir.join("audit")
-    };
-
-    #[cfg(windows)]
-    let paths = AgentPaths {
-        config_file,
-        audit_dir,
-        log_file: data_dir.join("logs").join("agent.log"),
-    };
-    #[cfg(unix)]
-    let paths = AgentPaths {
-        config_file,
-        audit_dir,
-    };
-    Ok(paths)
+        error.context(format!(
+            "could not prepare the agent data directory {}",
+            data_dir.display()
+        ))
+    }
 }
 
 pub(crate) fn trusted_key_path(
@@ -183,5 +193,38 @@ mod tests {
         fs::set_permissions(&path, fs::Permissions::from_mode(0o775)).unwrap();
         assert!(ensure_protected_dir(&path).is_err());
         fs::remove_dir(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod data_dir_tests {
+    use std::path::Path;
+
+    use super::map_data_dir_error;
+
+    #[test]
+    fn access_denied_on_the_data_directory_names_the_path_and_the_fix() {
+        let error = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+            .context("could not create protected directory");
+        let mapped = map_data_dir_error(Path::new("data"), error);
+        assert_eq!(
+            mapped.to_string(),
+            "the agent data directory data is not writable by this process; run the agent elevated or as the SigilAgent service"
+        );
+    }
+
+    #[test]
+    fn other_failures_keep_their_cause_and_gain_context() {
+        let error = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::NotFound));
+        let mapped = map_data_dir_error(Path::new("data"), error);
+        assert_eq!(
+            mapped.to_string(),
+            "could not prepare the agent data directory data"
+        );
+        assert!(mapped.chain().any(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+        }));
     }
 }

@@ -17,10 +17,14 @@ pub struct AgentConfig {
     pub station_id: Option<String>,
     pub grant_keys: HashMap<String, PathBuf>,
     pub backend: Option<BackendConfig>,
+    /// Agent-owned mutable state (audit outbox, logs). Relative paths resolve against the config directory.
+    pub data_dir: Option<PathBuf>,
     #[serde(skip)]
     config_dir: PathBuf,
     #[serde(skip)]
     allow_insecure_paths: bool,
+    #[serde(skip)]
+    data_dir_resolved: PathBuf,
     #[serde(skip)]
     audit_dir: PathBuf,
     #[cfg(feature = "dev-grants")]
@@ -85,18 +89,18 @@ impl BackendConfig {
 impl AgentConfig {
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let paths = crate::secure_path::prepare_agent_paths(path.as_deref())?;
-        Self::load_from_path(paths.config_file, paths.audit_dir, false)
+        Self::load_from_path(paths.config_file, paths.default_data_dir, false)
     }
 
     #[cfg(debug_assertions)]
     pub fn load_development(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let paths = crate::secure_path::prepare_agent_paths_insecure(path.as_deref())?;
-        Self::load_from_path(paths.config_file, paths.audit_dir, true)
+        Self::load_from_path(paths.config_file, paths.default_data_dir, true)
     }
 
     fn load_from_path(
         path: PathBuf,
-        audit_dir: PathBuf,
+        default_data_dir: PathBuf,
         allow_insecure_paths: bool,
     ) -> anyhow::Result<Self> {
         let raw_parent = path
@@ -155,9 +159,27 @@ impl AgentConfig {
         } else {
             Self::default()
         };
+        let data_dir = match config.data_dir.as_deref() {
+            Some(requested) if requested.is_absolute() => requested.to_owned(),
+            Some(requested) => config_dir.join(requested),
+            None if allow_insecure_paths => config_dir.clone(),
+            None => default_data_dir,
+        };
+        if allow_insecure_paths {
+            let audit_dir = data_dir.join("audit");
+            std::fs::create_dir_all(&audit_dir).with_context(|| {
+                format!(
+                    "could not create development audit directory {}",
+                    audit_dir.display()
+                )
+            })?;
+        } else {
+            crate::secure_path::prepare_data_dir(&data_dir)?;
+        }
+        config.audit_dir = data_dir.join("audit");
+        config.data_dir_resolved = data_dir;
         config.config_dir = config_dir;
         config.allow_insecure_paths = allow_insecure_paths;
-        config.audit_dir = audit_dir;
         if let Some(backend) = &config.backend {
             if backend.url.trim().is_empty() || !backend.url.starts_with("https://") {
                 anyhow::bail!("backend.url must be an HTTPS URL");
@@ -194,8 +216,17 @@ impl AgentConfig {
         self.key_path(path)
     }
 
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir_resolved
+    }
+
     pub fn audit_dir(&self) -> &Path {
         &self.audit_dir
+    }
+
+    #[cfg(windows)]
+    pub fn log_file(&self) -> PathBuf {
+        self.data_dir_resolved.join("logs").join("agent.log")
     }
 
     pub fn station_id(&self) -> String {
@@ -258,4 +289,32 @@ fn hostname() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "sigil-station".into())
+}
+
+#[cfg(all(test, debug_assertions))]
+mod data_dir_tests {
+    use super::AgentConfig;
+
+    #[test]
+    fn relative_data_dir_resolves_against_the_config_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_file = directory.path().join("agent.toml");
+        std::fs::write(&config_file, "data_dir = \"data\"\n").unwrap();
+        let config = AgentConfig::load_development(Some(config_file)).unwrap();
+        let expected = directory.path().canonicalize().unwrap().join("data");
+        assert_eq!(config.data_dir(), expected);
+        assert_eq!(config.audit_dir(), expected.join("audit"));
+        assert!(config.audit_dir().is_dir());
+    }
+
+    #[test]
+    fn data_dir_defaults_to_the_config_directory_in_development() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_file = directory.path().join("agent.toml");
+        std::fs::write(&config_file, "station_id = \"dev-station\"\n").unwrap();
+        let config = AgentConfig::load_development(Some(config_file)).unwrap();
+        let expected = directory.path().canonicalize().unwrap();
+        assert_eq!(config.data_dir(), expected);
+        assert_eq!(config.audit_dir(), expected.join("audit"));
+    }
 }

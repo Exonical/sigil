@@ -119,7 +119,7 @@ fn run_agent_mode(
         let _ = allow_insecure_paths;
         AgentConfig::load(config_path)?
     };
-    let outbox = create_audit_outbox(&config);
+    let outbox = create_audit_outbox(&config)?;
     init_stderr_logging(outbox.clone())?;
     let endpoint = endpoint
         .or_else(|| std::env::var("SIGIL_AGENT_ENDPOINT").ok())
@@ -178,15 +178,15 @@ fn log_filter() -> tracing_subscriber::EnvFilter {
         .add_directive("sigil::audit=info".parse().expect("valid audit filter"))
 }
 
-fn create_audit_outbox(config: &AgentConfig) -> Option<Arc<AuditOutbox>> {
-    config.backend.as_ref()?;
-    match AuditOutbox::open(config.audit_dir()) {
-        Ok(outbox) => Some(Arc::new(outbox)),
-        Err(error) => {
-            eprintln!("agent audit forwarding is unavailable: {error:#}");
-            None
-        }
+/// Audit forwarding is required whenever a backend is configured, so an unusable data directory stops startup
+/// instead of silently dropping audit records.
+fn create_audit_outbox(config: &AgentConfig) -> Result<Option<Arc<AuditOutbox>>> {
+    if config.backend.is_none() {
+        return Ok(None);
     }
+    let outbox = AuditOutbox::open(config.audit_dir())
+        .map_err(|error| sigil_agent::secure_path::map_data_dir_error(config.data_dir(), error))?;
+    Ok(Some(Arc::new(outbox)))
 }
 
 fn init_stderr_logging(outbox: Option<Arc<AuditOutbox>>) -> Result<()> {
@@ -343,8 +343,8 @@ mod windows_service {
             .clone();
         let paths = sigil_agent::secure_path::prepare_agent_paths(config_path.as_deref())?;
         let config = AgentConfig::load(Some(paths.config_file))?;
-        let outbox = super::create_audit_outbox(&config);
-        init_file_logging(&paths.log_file, outbox.clone())?;
+        let outbox = super::create_audit_outbox(&config)?;
+        init_file_logging(&config.log_file(), outbox.clone())?;
         let endpoint = std::env::var("SIGIL_AGENT_ENDPOINT")
             .unwrap_or_else(|_| sigil_agent::DEFAULT_ENDPOINT.to_owned());
 

@@ -109,10 +109,13 @@ fn create_protected_directory(path: &Path) -> Result<()> {
             return Ok(());
         }
         if error == ERROR_INVALID_OWNER || error == ERROR_ACCESS_DENIED {
-            bail!(
-                "sigil-agent must run elevated (Run as administrator) or as the installed SigilAgent service to create {}; for mock development use `sigil-agent run --mock --dev-insecure-config`",
-                path.display()
-            );
+            return Err::<(), _>(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                .with_context(|| {
+                    format!(
+                        "sigil-agent must run elevated (Run as administrator) or as the installed SigilAgent service to create {}; for mock development use `sigil-agent run --mock --dev-insecure-config`",
+                        path.display()
+                    )
+                });
         }
         return Err(std::io::Error::from_raw_os_error(error as i32)).with_context(|| {
             format!(
