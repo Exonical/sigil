@@ -150,6 +150,518 @@ func (x *RequestGrantResponse) GetGrant() *v1.SignedGrant {
 	return nil
 }
 
+type AuthorizeManagedOperationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	Operation     v1.Operation           `protobuf:"varint,2,opt,name=operation,proto3,enum=sigil.agent.v1.Operation" json:"operation,omitempty"`
+	TokenVendor   string                 `protobuf:"bytes,3,opt,name=token_vendor,json=tokenVendor,proto3" json:"token_vendor,omitempty"`
+	TokenSerial   string                 `protobuf:"bytes,4,opt,name=token_serial,json=tokenSerial,proto3" json:"token_serial,omitempty"`
+	CallerOsUser  string                 `protobuf:"bytes,5,opt,name=caller_os_user,json=callerOsUser,proto3" json:"caller_os_user,omitempty"`
+	PivSlot       uint32                 `protobuf:"varint,6,opt,name=piv_slot,json=pivSlot,proto3" json:"piv_slot,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthorizeManagedOperationRequest) Reset() {
+	*x = AuthorizeManagedOperationRequest{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthorizeManagedOperationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthorizeManagedOperationRequest) ProtoMessage() {}
+
+func (x *AuthorizeManagedOperationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthorizeManagedOperationRequest.ProtoReflect.Descriptor instead.
+func (*AuthorizeManagedOperationRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *AuthorizeManagedOperationRequest) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *AuthorizeManagedOperationRequest) GetOperation() v1.Operation {
+	if x != nil {
+		return x.Operation
+	}
+	return v1.Operation(0)
+}
+
+func (x *AuthorizeManagedOperationRequest) GetTokenVendor() string {
+	if x != nil {
+		return x.TokenVendor
+	}
+	return ""
+}
+
+func (x *AuthorizeManagedOperationRequest) GetTokenSerial() string {
+	if x != nil {
+		return x.TokenSerial
+	}
+	return ""
+}
+
+func (x *AuthorizeManagedOperationRequest) GetCallerOsUser() string {
+	if x != nil {
+		return x.CallerOsUser
+	}
+	return ""
+}
+
+func (x *AuthorizeManagedOperationRequest) GetPivSlot() uint32 {
+	if x != nil {
+		return x.PivSlot
+	}
+	return 0
+}
+
+type EscrowedSecret struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         []byte                 `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+	Algorithm     string                 `protobuf:"bytes,2,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EscrowedSecret) Reset() {
+	*x = EscrowedSecret{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EscrowedSecret) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EscrowedSecret) ProtoMessage() {}
+
+func (x *EscrowedSecret) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EscrowedSecret.ProtoReflect.Descriptor instead.
+func (*EscrowedSecret) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *EscrowedSecret) GetValue() []byte {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *EscrowedSecret) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+type AuthorizeManagedOperationResponse struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Grant                *v1.SignedGrant        `protobuf:"bytes,1,opt,name=grant,proto3" json:"grant,omitempty"`
+	CurrentManagementKey *EscrowedSecret        `protobuf:"bytes,2,opt,name=current_management_key,json=currentManagementKey,proto3" json:"current_management_key,omitempty"`
+	CurrentPuk           *EscrowedSecret        `protobuf:"bytes,3,opt,name=current_puk,json=currentPuk,proto3" json:"current_puk,omitempty"`
+	RotationId           string                 `protobuf:"bytes,4,opt,name=rotation_id,json=rotationId,proto3" json:"rotation_id,omitempty"`
+	NewManagementKey     *EscrowedSecret        `protobuf:"bytes,5,opt,name=new_management_key,json=newManagementKey,proto3" json:"new_management_key,omitempty"`
+	NewPuk               *EscrowedSecret        `protobuf:"bytes,6,opt,name=new_puk,json=newPuk,proto3" json:"new_puk,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *AuthorizeManagedOperationResponse) Reset() {
+	*x = AuthorizeManagedOperationResponse{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthorizeManagedOperationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthorizeManagedOperationResponse) ProtoMessage() {}
+
+func (x *AuthorizeManagedOperationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthorizeManagedOperationResponse.ProtoReflect.Descriptor instead.
+func (*AuthorizeManagedOperationResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *AuthorizeManagedOperationResponse) GetGrant() *v1.SignedGrant {
+	if x != nil {
+		return x.Grant
+	}
+	return nil
+}
+
+func (x *AuthorizeManagedOperationResponse) GetCurrentManagementKey() *EscrowedSecret {
+	if x != nil {
+		return x.CurrentManagementKey
+	}
+	return nil
+}
+
+func (x *AuthorizeManagedOperationResponse) GetCurrentPuk() *EscrowedSecret {
+	if x != nil {
+		return x.CurrentPuk
+	}
+	return nil
+}
+
+func (x *AuthorizeManagedOperationResponse) GetRotationId() string {
+	if x != nil {
+		return x.RotationId
+	}
+	return ""
+}
+
+func (x *AuthorizeManagedOperationResponse) GetNewManagementKey() *EscrowedSecret {
+	if x != nil {
+		return x.NewManagementKey
+	}
+	return nil
+}
+
+func (x *AuthorizeManagedOperationResponse) GetNewPuk() *EscrowedSecret {
+	if x != nil {
+		return x.NewPuk
+	}
+	return nil
+}
+
+type CompleteRotationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RotationId    string                 `protobuf:"bytes,1,opt,name=rotation_id,json=rotationId,proto3" json:"rotation_id,omitempty"`
+	Applied       bool                   `protobuf:"varint,2,opt,name=applied,proto3" json:"applied,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteRotationRequest) Reset() {
+	*x = CompleteRotationRequest{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteRotationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteRotationRequest) ProtoMessage() {}
+
+func (x *CompleteRotationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteRotationRequest.ProtoReflect.Descriptor instead.
+func (*CompleteRotationRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *CompleteRotationRequest) GetRotationId() string {
+	if x != nil {
+		return x.RotationId
+	}
+	return ""
+}
+
+func (x *CompleteRotationRequest) GetApplied() bool {
+	if x != nil {
+		return x.Applied
+	}
+	return false
+}
+
+type CompleteRotationResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CompleteRotationResponse) Reset() {
+	*x = CompleteRotationResponse{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CompleteRotationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CompleteRotationResponse) ProtoMessage() {}
+
+func (x *CompleteRotationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CompleteRotationResponse.ProtoReflect.Descriptor instead.
+func (*CompleteRotationResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{6}
+}
+
+type AgentAuditEvent struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Sequence         uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	OccurredAtUnixMs int64                  `protobuf:"varint,2,opt,name=occurred_at_unix_ms,json=occurredAtUnixMs,proto3" json:"occurred_at_unix_ms,omitempty"`
+	Rpc              string                 `protobuf:"bytes,3,opt,name=rpc,proto3" json:"rpc,omitempty"`
+	Operation        string                 `protobuf:"bytes,4,opt,name=operation,proto3" json:"operation,omitempty"`
+	DeviceId         string                 `protobuf:"bytes,5,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	TokenSerial      string                 `protobuf:"bytes,6,opt,name=token_serial,json=tokenSerial,proto3" json:"token_serial,omitempty"`
+	CallerOsUser     string                 `protobuf:"bytes,7,opt,name=caller_os_user,json=callerOsUser,proto3" json:"caller_os_user,omitempty"`
+	CallerSessionId  uint32                 `protobuf:"varint,8,opt,name=caller_session_id,json=callerSessionId,proto3" json:"caller_session_id,omitempty"`
+	Outcome          string                 `protobuf:"bytes,9,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Code             string                 `protobuf:"bytes,10,opt,name=code,proto3" json:"code,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *AgentAuditEvent) Reset() {
+	*x = AgentAuditEvent{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AgentAuditEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AgentAuditEvent) ProtoMessage() {}
+
+func (x *AgentAuditEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AgentAuditEvent.ProtoReflect.Descriptor instead.
+func (*AgentAuditEvent) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *AgentAuditEvent) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *AgentAuditEvent) GetOccurredAtUnixMs() int64 {
+	if x != nil {
+		return x.OccurredAtUnixMs
+	}
+	return 0
+}
+
+func (x *AgentAuditEvent) GetRpc() string {
+	if x != nil {
+		return x.Rpc
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetOperation() string {
+	if x != nil {
+		return x.Operation
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetDeviceId() string {
+	if x != nil {
+		return x.DeviceId
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetTokenSerial() string {
+	if x != nil {
+		return x.TokenSerial
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetCallerOsUser() string {
+	if x != nil {
+		return x.CallerOsUser
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetCallerSessionId() uint32 {
+	if x != nil {
+		return x.CallerSessionId
+	}
+	return 0
+}
+
+func (x *AgentAuditEvent) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+type ReportAuditRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Events        []*AgentAuditEvent     `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportAuditRequest) Reset() {
+	*x = ReportAuditRequest{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportAuditRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportAuditRequest) ProtoMessage() {}
+
+func (x *ReportAuditRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportAuditRequest.ProtoReflect.Descriptor instead.
+func (*ReportAuditRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ReportAuditRequest) GetEvents() []*AgentAuditEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+type ReportAuditResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	AcceptedThrough uint64                 `protobuf:"varint,1,opt,name=accepted_through,json=acceptedThrough,proto3" json:"accepted_through,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ReportAuditResponse) Reset() {
+	*x = ReportAuditResponse{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportAuditResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportAuditResponse) ProtoMessage() {}
+
+func (x *ReportAuditResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportAuditResponse.ProtoReflect.Descriptor instead.
+func (*ReportAuditResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ReportAuditResponse) GetAcceptedThrough() uint64 {
+	if x != nil {
+		return x.AcceptedThrough
+	}
+	return 0
+}
+
 type ObservedToken struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Vendor        string                 `protobuf:"bytes,1,opt,name=vendor,proto3" json:"vendor,omitempty"`
@@ -164,7 +676,7 @@ type ObservedToken struct {
 
 func (x *ObservedToken) Reset() {
 	*x = ObservedToken{}
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[2]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -176,7 +688,7 @@ func (x *ObservedToken) String() string {
 func (*ObservedToken) ProtoMessage() {}
 
 func (x *ObservedToken) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[2]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -189,7 +701,7 @@ func (x *ObservedToken) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObservedToken.ProtoReflect.Descriptor instead.
 func (*ObservedToken) Descriptor() ([]byte, []int) {
-	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{2}
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ObservedToken) GetVendor() string {
@@ -243,7 +755,7 @@ type ReportTokensRequest struct {
 
 func (x *ReportTokensRequest) Reset() {
 	*x = ReportTokensRequest{}
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[3]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -255,7 +767,7 @@ func (x *ReportTokensRequest) String() string {
 func (*ReportTokensRequest) ProtoMessage() {}
 
 func (x *ReportTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[3]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -268,7 +780,7 @@ func (x *ReportTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTokensRequest.ProtoReflect.Descriptor instead.
 func (*ReportTokensRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{3}
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ReportTokensRequest) GetTokens() []*ObservedToken {
@@ -286,7 +798,7 @@ type ReportTokensResponse struct {
 
 func (x *ReportTokensResponse) Reset() {
 	*x = ReportTokensResponse{}
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[4]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -298,7 +810,7 @@ func (x *ReportTokensResponse) String() string {
 func (*ReportTokensResponse) ProtoMessage() {}
 
 func (x *ReportTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[4]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -311,7 +823,7 @@ func (x *ReportTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportTokensResponse.ProtoReflect.Descriptor instead.
 func (*ReportTokensResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{4}
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{12}
 }
 
 var File_sigil_backend_v1_gateway_proto protoreflect.FileDescriptor
@@ -327,7 +839,47 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\x0ecaller_os_user\x18\x05 \x01(\tR\fcallerOsUser\x12\x19\n" +
 	"\bpiv_slot\x18\x06 \x01(\rR\apivSlot\"I\n" +
 	"\x14RequestGrantResponse\x121\n" +
-	"\x05grant\x18\x01 \x01(\v2\x1b.sigil.agent.v1.SignedGrantR\x05grant\"\xb2\x01\n" +
+	"\x05grant\x18\x01 \x01(\v2\x1b.sigil.agent.v1.SignedGrantR\x05grant\"\x85\x02\n" +
+	" AuthorizeManagedOperationRequest\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x127\n" +
+	"\toperation\x18\x02 \x01(\x0e2\x19.sigil.agent.v1.OperationR\toperation\x12!\n" +
+	"\ftoken_vendor\x18\x03 \x01(\tR\vtokenVendor\x12!\n" +
+	"\ftoken_serial\x18\x04 \x01(\tR\vtokenSerial\x12$\n" +
+	"\x0ecaller_os_user\x18\x05 \x01(\tR\fcallerOsUser\x12\x19\n" +
+	"\bpiv_slot\x18\x06 \x01(\rR\apivSlot\"D\n" +
+	"\x0eEscrowedSecret\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\fR\x05value\x12\x1c\n" +
+	"\talgorithm\x18\x02 \x01(\tR\talgorithm\"\x9d\x03\n" +
+	"!AuthorizeManagedOperationResponse\x121\n" +
+	"\x05grant\x18\x01 \x01(\v2\x1b.sigil.agent.v1.SignedGrantR\x05grant\x12V\n" +
+	"\x16current_management_key\x18\x02 \x01(\v2 .sigil.backend.v1.EscrowedSecretR\x14currentManagementKey\x12A\n" +
+	"\vcurrent_puk\x18\x03 \x01(\v2 .sigil.backend.v1.EscrowedSecretR\n" +
+	"currentPuk\x12\x1f\n" +
+	"\vrotation_id\x18\x04 \x01(\tR\n" +
+	"rotationId\x12N\n" +
+	"\x12new_management_key\x18\x05 \x01(\v2 .sigil.backend.v1.EscrowedSecretR\x10newManagementKey\x129\n" +
+	"\anew_puk\x18\x06 \x01(\v2 .sigil.backend.v1.EscrowedSecretR\x06newPuk\"T\n" +
+	"\x17CompleteRotationRequest\x12\x1f\n" +
+	"\vrotation_id\x18\x01 \x01(\tR\n" +
+	"rotationId\x12\x18\n" +
+	"\aapplied\x18\x02 \x01(\bR\aapplied\"\x1a\n" +
+	"\x18CompleteRotationResponse\"\xcc\x02\n" +
+	"\x0fAgentAuditEvent\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12-\n" +
+	"\x13occurred_at_unix_ms\x18\x02 \x01(\x03R\x10occurredAtUnixMs\x12\x10\n" +
+	"\x03rpc\x18\x03 \x01(\tR\x03rpc\x12\x1c\n" +
+	"\toperation\x18\x04 \x01(\tR\toperation\x12\x1b\n" +
+	"\tdevice_id\x18\x05 \x01(\tR\bdeviceId\x12!\n" +
+	"\ftoken_serial\x18\x06 \x01(\tR\vtokenSerial\x12$\n" +
+	"\x0ecaller_os_user\x18\a \x01(\tR\fcallerOsUser\x12*\n" +
+	"\x11caller_session_id\x18\b \x01(\rR\x0fcallerSessionId\x12\x18\n" +
+	"\aoutcome\x18\t \x01(\tR\aoutcome\x12\x12\n" +
+	"\x04code\x18\n" +
+	" \x01(\tR\x04code\"O\n" +
+	"\x12ReportAuditRequest\x129\n" +
+	"\x06events\x18\x01 \x03(\v2!.sigil.backend.v1.AgentAuditEventR\x06events\"@\n" +
+	"\x13ReportAuditResponse\x12)\n" +
+	"\x10accepted_through\x18\x01 \x01(\x04R\x0facceptedThrough\"\xb2\x01\n" +
 	"\rObservedToken\x12\x16\n" +
 	"\x06vendor\x18\x01 \x01(\tR\x06vendor\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x16\n" +
@@ -340,9 +892,12 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"connection\"N\n" +
 	"\x13ReportTokensRequest\x127\n" +
 	"\x06tokens\x18\x01 \x03(\v2\x1f.sigil.backend.v1.ObservedTokenR\x06tokens\"\x16\n" +
-	"\x14ReportTokensResponse2\xcc\x01\n" +
+	"\x14ReportTokensResponse2\x9a\x04\n" +
 	"\fAgentGateway\x12]\n" +
-	"\fRequestGrant\x12%.sigil.backend.v1.RequestGrantRequest\x1a&.sigil.backend.v1.RequestGrantResponse\x12]\n" +
+	"\fRequestGrant\x12%.sigil.backend.v1.RequestGrantRequest\x1a&.sigil.backend.v1.RequestGrantResponse\x12\x84\x01\n" +
+	"\x19AuthorizeManagedOperation\x122.sigil.backend.v1.AuthorizeManagedOperationRequest\x1a3.sigil.backend.v1.AuthorizeManagedOperationResponse\x12i\n" +
+	"\x10CompleteRotation\x12).sigil.backend.v1.CompleteRotationRequest\x1a*.sigil.backend.v1.CompleteRotationResponse\x12Z\n" +
+	"\vReportAudit\x12$.sigil.backend.v1.ReportAuditRequest\x1a%.sigil.backend.v1.ReportAuditResponse\x12]\n" +
 	"\fReportTokens\x12%.sigil.backend.v1.ReportTokensRequest\x1a&.sigil.backend.v1.ReportTokensResponseBBZ@github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1b\x06proto3"
 
 var (
@@ -357,29 +912,50 @@ func file_sigil_backend_v1_gateway_proto_rawDescGZIP() []byte {
 	return file_sigil_backend_v1_gateway_proto_rawDescData
 }
 
-var file_sigil_backend_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_sigil_backend_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_sigil_backend_v1_gateway_proto_goTypes = []any{
-	(*RequestGrantRequest)(nil),  // 0: sigil.backend.v1.RequestGrantRequest
-	(*RequestGrantResponse)(nil), // 1: sigil.backend.v1.RequestGrantResponse
-	(*ObservedToken)(nil),        // 2: sigil.backend.v1.ObservedToken
-	(*ReportTokensRequest)(nil),  // 3: sigil.backend.v1.ReportTokensRequest
-	(*ReportTokensResponse)(nil), // 4: sigil.backend.v1.ReportTokensResponse
-	(v1.Operation)(0),            // 5: sigil.agent.v1.Operation
-	(*v1.SignedGrant)(nil),       // 6: sigil.agent.v1.SignedGrant
+	(*RequestGrantRequest)(nil),               // 0: sigil.backend.v1.RequestGrantRequest
+	(*RequestGrantResponse)(nil),              // 1: sigil.backend.v1.RequestGrantResponse
+	(*AuthorizeManagedOperationRequest)(nil),  // 2: sigil.backend.v1.AuthorizeManagedOperationRequest
+	(*EscrowedSecret)(nil),                    // 3: sigil.backend.v1.EscrowedSecret
+	(*AuthorizeManagedOperationResponse)(nil), // 4: sigil.backend.v1.AuthorizeManagedOperationResponse
+	(*CompleteRotationRequest)(nil),           // 5: sigil.backend.v1.CompleteRotationRequest
+	(*CompleteRotationResponse)(nil),          // 6: sigil.backend.v1.CompleteRotationResponse
+	(*AgentAuditEvent)(nil),                   // 7: sigil.backend.v1.AgentAuditEvent
+	(*ReportAuditRequest)(nil),                // 8: sigil.backend.v1.ReportAuditRequest
+	(*ReportAuditResponse)(nil),               // 9: sigil.backend.v1.ReportAuditResponse
+	(*ObservedToken)(nil),                     // 10: sigil.backend.v1.ObservedToken
+	(*ReportTokensRequest)(nil),               // 11: sigil.backend.v1.ReportTokensRequest
+	(*ReportTokensResponse)(nil),              // 12: sigil.backend.v1.ReportTokensResponse
+	(v1.Operation)(0),                         // 13: sigil.agent.v1.Operation
+	(*v1.SignedGrant)(nil),                    // 14: sigil.agent.v1.SignedGrant
 }
 var file_sigil_backend_v1_gateway_proto_depIdxs = []int32{
-	5, // 0: sigil.backend.v1.RequestGrantRequest.operation:type_name -> sigil.agent.v1.Operation
-	6, // 1: sigil.backend.v1.RequestGrantResponse.grant:type_name -> sigil.agent.v1.SignedGrant
-	2, // 2: sigil.backend.v1.ReportTokensRequest.tokens:type_name -> sigil.backend.v1.ObservedToken
-	0, // 3: sigil.backend.v1.AgentGateway.RequestGrant:input_type -> sigil.backend.v1.RequestGrantRequest
-	3, // 4: sigil.backend.v1.AgentGateway.ReportTokens:input_type -> sigil.backend.v1.ReportTokensRequest
-	1, // 5: sigil.backend.v1.AgentGateway.RequestGrant:output_type -> sigil.backend.v1.RequestGrantResponse
-	4, // 6: sigil.backend.v1.AgentGateway.ReportTokens:output_type -> sigil.backend.v1.ReportTokensResponse
-	5, // [5:7] is the sub-list for method output_type
-	3, // [3:5] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	13, // 0: sigil.backend.v1.RequestGrantRequest.operation:type_name -> sigil.agent.v1.Operation
+	14, // 1: sigil.backend.v1.RequestGrantResponse.grant:type_name -> sigil.agent.v1.SignedGrant
+	13, // 2: sigil.backend.v1.AuthorizeManagedOperationRequest.operation:type_name -> sigil.agent.v1.Operation
+	14, // 3: sigil.backend.v1.AuthorizeManagedOperationResponse.grant:type_name -> sigil.agent.v1.SignedGrant
+	3,  // 4: sigil.backend.v1.AuthorizeManagedOperationResponse.current_management_key:type_name -> sigil.backend.v1.EscrowedSecret
+	3,  // 5: sigil.backend.v1.AuthorizeManagedOperationResponse.current_puk:type_name -> sigil.backend.v1.EscrowedSecret
+	3,  // 6: sigil.backend.v1.AuthorizeManagedOperationResponse.new_management_key:type_name -> sigil.backend.v1.EscrowedSecret
+	3,  // 7: sigil.backend.v1.AuthorizeManagedOperationResponse.new_puk:type_name -> sigil.backend.v1.EscrowedSecret
+	7,  // 8: sigil.backend.v1.ReportAuditRequest.events:type_name -> sigil.backend.v1.AgentAuditEvent
+	10, // 9: sigil.backend.v1.ReportTokensRequest.tokens:type_name -> sigil.backend.v1.ObservedToken
+	0,  // 10: sigil.backend.v1.AgentGateway.RequestGrant:input_type -> sigil.backend.v1.RequestGrantRequest
+	2,  // 11: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:input_type -> sigil.backend.v1.AuthorizeManagedOperationRequest
+	5,  // 12: sigil.backend.v1.AgentGateway.CompleteRotation:input_type -> sigil.backend.v1.CompleteRotationRequest
+	8,  // 13: sigil.backend.v1.AgentGateway.ReportAudit:input_type -> sigil.backend.v1.ReportAuditRequest
+	11, // 14: sigil.backend.v1.AgentGateway.ReportTokens:input_type -> sigil.backend.v1.ReportTokensRequest
+	1,  // 15: sigil.backend.v1.AgentGateway.RequestGrant:output_type -> sigil.backend.v1.RequestGrantResponse
+	4,  // 16: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:output_type -> sigil.backend.v1.AuthorizeManagedOperationResponse
+	6,  // 17: sigil.backend.v1.AgentGateway.CompleteRotation:output_type -> sigil.backend.v1.CompleteRotationResponse
+	9,  // 18: sigil.backend.v1.AgentGateway.ReportAudit:output_type -> sigil.backend.v1.ReportAuditResponse
+	12, // 19: sigil.backend.v1.AgentGateway.ReportTokens:output_type -> sigil.backend.v1.ReportTokensResponse
+	15, // [15:20] is the sub-list for method output_type
+	10, // [10:15] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_sigil_backend_v1_gateway_proto_init() }
@@ -393,7 +969,7 @@ func file_sigil_backend_v1_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sigil_backend_v1_gateway_proto_rawDesc), len(file_sigil_backend_v1_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

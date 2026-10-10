@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -20,6 +21,7 @@ type Config struct {
 	OIDC        OIDC   `toml:"oidc"`
 	Grants      Grants `toml:"grants"`
 	Policy      Policy `toml:"policy"`
+	Escrow      Escrow `toml:"escrow"`
 }
 
 type TLS struct {
@@ -30,9 +32,18 @@ type TLS struct {
 
 type OIDC struct {
 	Issuer      string     `toml:"issuer"`
+	CAFile      string     `toml:"ca_file"`
 	Audience    string     `toml:"audience"`
 	GroupsClaim string     `toml:"groups_claim"`
 	RoleGroups  RoleGroups `toml:"role_groups"`
+}
+
+type Escrow struct {
+	KEKID        string            `toml:"kek_id"`
+	KEKFile      string            `toml:"kek_file"`
+	PreviousKEKs map[string]string `toml:"previous_keks"`
+	CurrentKey   []byte            `toml:"-"`
+	PreviousKeys map[string][]byte `toml:"-"`
 }
 
 type RoleGroups struct {
@@ -72,9 +83,29 @@ func Load(path string) (*Config, error) {
 	cfg.TLS.CertFile = resolvePath(base, cfg.TLS.CertFile)
 	cfg.TLS.KeyFile = resolvePath(base, cfg.TLS.KeyFile)
 	cfg.TLS.ClientCAFile = resolvePath(base, cfg.TLS.ClientCAFile)
+	cfg.OIDC.CAFile = resolvePath(base, cfg.OIDC.CAFile)
 	cfg.Grants.SigningKeyFile = resolvePath(base, cfg.Grants.SigningKeyFile)
+	cfg.Escrow.KEKFile = resolvePath(base, cfg.Escrow.KEKFile)
+	for id, path := range cfg.Escrow.PreviousKEKs {
+		cfg.Escrow.PreviousKEKs[id] = resolvePath(base, path)
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Escrow.KEKID != "" {
+		key, err := loadKEK(cfg.Escrow.KEKFile)
+		if err != nil {
+			return nil, fmt.Errorf("load current escrow KEK: %w", err)
+		}
+		cfg.Escrow.CurrentKey = key
+		cfg.Escrow.PreviousKeys = make(map[string][]byte, len(cfg.Escrow.PreviousKEKs))
+		for id, path := range cfg.Escrow.PreviousKEKs {
+			key, err := loadKEK(path)
+			if err != nil {
+				return nil, fmt.Errorf("load previous escrow KEK %q: %w", id, err)
+			}
+			cfg.Escrow.PreviousKeys[id] = key
+		}
 	}
 	return &cfg, nil
 }
@@ -99,10 +130,8 @@ func (c *Config) Validate() error {
 	if c.TLS.CertFile == "" || c.TLS.KeyFile == "" || c.TLS.ClientCAFile == "" {
 		return fmt.Errorf("tls cert_file, key_file, and client_ca_file are required")
 	}
-	for _, path := range []string{c.TLS.CertFile, c.TLS.ClientCAFile} {
-		if _, err := os.Stat(path); err != nil {
-			return fmt.Errorf("TLS file %q is unavailable", path)
-		}
+	if _, err := os.Stat(c.TLS.CertFile); err != nil {
+		return fmt.Errorf("TLS file %q is unavailable", c.TLS.CertFile)
 	}
 	if err := CheckPrivateFile(c.TLS.KeyFile); err != nil {
 		return fmt.Errorf("unsafe TLS private key: %w", err)
@@ -114,6 +143,11 @@ func (c *Config) Validate() error {
 	if err != nil || issuer.Scheme != "https" || issuer.Host == "" {
 		return fmt.Errorf("oidc issuer must be an HTTPS URL")
 	}
+	if c.OIDC.CAFile != "" {
+		if _, err := os.Stat(c.OIDC.CAFile); err != nil {
+			return fmt.Errorf("OIDC CA file %q is unavailable", c.OIDC.CAFile)
+		}
+	}
 	if c.Grants.KeyID == "" || c.Grants.SigningKeyFile == "" {
 		return fmt.Errorf("grants key_id and signing_key_file are required")
 	}
@@ -123,16 +157,44 @@ func (c *Config) Validate() error {
 	if err := CheckPrivateFile(c.Grants.SigningKeyFile); err != nil {
 		return fmt.Errorf("unsafe grant signing key: %w", err)
 	}
+	if c.Escrow.KEKID != "" || c.Escrow.KEKFile != "" || len(c.Escrow.PreviousKEKs) != 0 {
+		if strings.TrimSpace(c.Escrow.KEKID) == "" || strings.TrimSpace(c.Escrow.KEKFile) == "" {
+			return fmt.Errorf("escrow kek_id and kek_file are required")
+		}
+		if err := CheckPrivateFile(c.Escrow.KEKFile); err != nil {
+			return fmt.Errorf("unsafe current escrow KEK: %w", err)
+		}
+		for id, path := range c.Escrow.PreviousKEKs {
+			if strings.TrimSpace(id) == "" || strings.TrimSpace(path) == "" || id == c.Escrow.KEKID {
+				return fmt.Errorf("escrow previous KEKs require an ID and file path")
+			}
+			if err := CheckPrivateFile(path); err != nil {
+				return fmt.Errorf("unsafe previous escrow KEK %q: %w", id, err)
+			}
+		}
+	}
 	for _, operation := range c.Policy.SelfServiceOperations {
 		switch operation {
 		case "PIV_GENERATE_KEY", "PIV_IMPORT_CERTIFICATE", "PIV_DELETE_CERTIFICATE",
 			"PIV_UNBLOCK_PIN", "PIV_CHANGE_PUK", "PIV_CHANGE_MANAGEMENT_KEY", "PIV_SET_RETRIES",
-			"PIV_DELETE_KEY":
+			"PIV_DELETE_KEY", "PIV_MANAGED_INITIALIZE":
 		default:
 			return fmt.Errorf("unknown self_service_operations entry %q", operation)
 		}
 	}
 	return nil
+}
+
+func loadKEK(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read key file")
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil || len(key) != 32 {
+		return nil, fmt.Errorf("key file must contain a base64-encoded 32-byte key")
+	}
+	return key, nil
 }
 
 func CheckPrivateFile(path string) error {

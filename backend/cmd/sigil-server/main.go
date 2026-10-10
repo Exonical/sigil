@@ -2,21 +2,21 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/authn"
 	"github.com/Exonical/sigil/backend/internal/config"
 	"github.com/Exonical/sigil/backend/internal/db"
+	"github.com/Exonical/sigil/backend/internal/escrow"
 	"github.com/Exonical/sigil/backend/internal/gateway"
 	"github.com/Exonical/sigil/backend/internal/signing"
 )
@@ -31,7 +31,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected serve, migrate, station, audit, or keygen")
+		return errors.New("expected serve, migrate, station, audit, keygen, or escrow")
 	}
 	switch args[0] {
 	case "serve":
@@ -57,6 +57,11 @@ func run(args []string) error {
 		return auditVerify(args[2:])
 	case "keygen":
 		return keygen(args[1:])
+	case "escrow":
+		if len(args) < 2 || args[1] != "keygen" {
+			return errors.New("expected escrow keygen")
+		}
+		return escrowKeygen(args[2:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -74,7 +79,8 @@ func serve(args []string) error {
 	}
 	defer store.Close()
 	authenticator, err := authn.New(context.Background(), authn.Config{
-		Issuer: cfg.OIDC.Issuer, Audience: cfg.OIDC.Audience, GroupsClaim: cfg.OIDC.GroupsClaim,
+		Issuer: cfg.OIDC.Issuer, CAFile: cfg.OIDC.CAFile,
+		Audience: cfg.OIDC.Audience, GroupsClaim: cfg.OIDC.GroupsClaim,
 	}, store)
 	if err != nil {
 		return err
@@ -84,6 +90,7 @@ func serve(args []string) error {
 		return err
 	}
 	service := gateway.New(store, authenticator, signer, *cfg, slog.Default())
+	defer service.Close()
 	server, err := gateway.NewGRPCServer(cfg.TLS, service)
 	if err != nil {
 		return err
@@ -116,35 +123,36 @@ func stationAdd(args []string) error {
 	flags := flag.NewFlagSet("station add", flag.ContinueOnError)
 	configPath := flags.String("config", "", "backend TOML config")
 	id := flags.String("id", "", "station ID")
+	dns := flags.String("dns", "", "station DNS name")
 	name := flags.String("name", "", "station display name")
 	mode := flags.String("mode", "", "station or user")
-	certificatePath := flags.String("cert", "", "station client certificate PEM")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *id == "" || *name == "" || *certificatePath == "" || (*mode != "station" && *mode != "user") {
-		return errors.New("station add requires --id, --name, --cert, and --mode station|user")
+	dnsName, err := normalizeDNSName(*dns)
+	if err != nil {
+		return err
+	}
+	if *id == "" || (*mode != "station" && *mode != "user") {
+		return errors.New("station add requires --id, --dns, and --mode station|user")
+	}
+	displayName := *name
+	if displayName == "" {
+		displayName = *id
 	}
 	_, store, err := loadConfigAndStore(context.Background(), *configPath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	certificate, err := readCertificate(*certificatePath)
-	if err != nil {
-		return err
-	}
-	spki, err := x509.MarshalPKIXPublicKey(certificate.PublicKey)
-	if err != nil {
-		return errors.New("station certificate public key is unsupported")
-	}
-	hash := sha256.Sum256(spki)
 	ctx := context.Background()
 	tx, err := store.Pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin station registration: %w", err)
 	}
-	if err := store.AddStation(ctx, tx, db.Station{ID: *id, DisplayName: *name, Mode: *mode}, hash[:]); err != nil {
+	if err := store.AddStation(ctx, tx, db.Station{
+		ID: *id, DNSName: dnsName, DisplayName: displayName, Mode: *mode,
+	}); err != nil {
 		_ = tx.Rollback(ctx)
 		return err
 	}
@@ -156,7 +164,8 @@ func stationAdd(args []string) error {
 		TargetID:   *id,
 		Outcome:    "success",
 		Detail: map[string]any{
-			"display_name": *name,
+			"dns_name":     dnsName,
+			"display_name": displayName,
 			"mode":         *mode,
 		},
 	}); err != nil {
@@ -166,7 +175,7 @@ func stationAdd(args []string) error {
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit station registration: %w", err)
 	}
-	slog.Info("station registered", "station_id", *id)
+	slog.Info("station registered", "station_id", *id, "dns_name", dnsName)
 	return nil
 }
 
@@ -248,6 +257,22 @@ func keygen(args []string) error {
 	return nil
 }
 
+func escrowKeygen(args []string) error {
+	flags := flag.NewFlagSet("escrow keygen", flag.ContinueOnError)
+	outputPath := flags.String("out", "", "base64-encoded escrow KEK output")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *outputPath == "" {
+		return errors.New("escrow keygen requires --out")
+	}
+	if err := escrow.WriteNewKEK(*outputPath); err != nil {
+		return err
+	}
+	fmt.Println(filepath.Clean(*outputPath))
+	return nil
+}
+
 func loadConfigAndStore(ctx context.Context, path string) (*config.Config, *db.Store, error) {
 	if path == "" {
 		return nil, nil, errors.New("--config is required")
@@ -263,18 +288,21 @@ func loadConfigAndStore(ctx context.Context, path string) (*config.Config, *db.S
 	return cfg, store, nil
 }
 
-func readCertificate(path string) (*x509.Certificate, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read station certificate: %w", err)
+func normalizeDNSName(value string) (string, error) {
+	name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(value)), ".")
+	if name == "" || len(name) > 253 || net.ParseIP(name) != nil {
+		return "", errors.New("station add requires a valid DNS name in --dns")
 	}
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, errors.New("station certificate must be PEM encoded")
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return "", errors.New("station add requires a valid DNS name in --dns")
+		}
+		for _, character := range label {
+			if !((character >= 'a' && character <= 'z') ||
+				(character >= '0' && character <= '9') || character == '-') {
+				return "", errors.New("station add requires a valid DNS name in --dns")
+			}
+		}
 	}
-	certificate, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, errors.New("station certificate is invalid")
-	}
-	return certificate, nil
+	return name, nil
 }

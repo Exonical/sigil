@@ -360,6 +360,7 @@ mod tests {
             Operation::PivChangePuk,
             Operation::PivChangeManagementKey,
             Operation::PivSetRetries,
+            Operation::PivManagedInitialize,
         ] {
             let signed = sign(grant(operation), &signing_key);
             verifier

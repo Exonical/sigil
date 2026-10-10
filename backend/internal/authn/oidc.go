@@ -2,9 +2,13 @@ package authn
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 )
@@ -17,6 +21,7 @@ type UserStore interface {
 
 type Config struct {
 	Issuer      string
+	CAFile      string
 	Audience    string
 	GroupsClaim string
 }
@@ -43,6 +48,34 @@ func New(ctx context.Context, cfg Config, users UserStore) (*Authenticator, erro
 	}
 	if cfg.GroupsClaim == "" {
 		cfg.GroupsClaim = "groups"
+	}
+	if cfg.CAFile != "" {
+		caPEM, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, errors.New("could not read configured OIDC CA file")
+		}
+		roots, err := x509.SystemCertPool()
+		if err != nil || roots == nil {
+			roots = x509.NewCertPool()
+		}
+		if !roots.AppendCertsFromPEM(caPEM) {
+			return nil, errors.New("configured OIDC CA file contains no certificates")
+		}
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if ok {
+			transport = transport.Clone()
+		} else {
+			transport = &http.Transport{}
+		}
+		tlsConfig := transport.TLSClientConfig
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		} else {
+			tlsConfig = tlsConfig.Clone()
+		}
+		tlsConfig.RootCAs = roots
+		transport.TLSClientConfig = tlsConfig
+		ctx = oidc.ClientContext(ctx, &http.Client{Transport: transport})
 	}
 	provider, err := oidc.NewProvider(ctx, cfg.Issuer)
 	if err != nil {

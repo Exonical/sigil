@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	agentv1 "github.com/Exonical/sigil/backend/gen/sigil/agent/v1"
@@ -19,6 +20,7 @@ import (
 	"github.com/Exonical/sigil/backend/internal/authn"
 	"github.com/Exonical/sigil/backend/internal/config"
 	"github.com/Exonical/sigil/backend/internal/db"
+	"github.com/Exonical/sigil/backend/internal/escrow"
 	"github.com/Exonical/sigil/backend/internal/grants"
 	"github.com/Exonical/sigil/backend/internal/inventory"
 	"github.com/Exonical/sigil/backend/internal/policy"
@@ -40,10 +42,13 @@ type Server struct {
 	config    config.Config
 	policy    policy.Engine
 	logger    *slog.Logger
+	escrow    *escrow.Keyring
+	escrowErr error
+	now       func() time.Time
 }
 
 func New(store *db.Store, authenticator *authn.Authenticator, signer signing.Signer, cfg config.Config, logger *slog.Logger) *Server {
-	return &Server{
+	server := &Server{
 		store:     store,
 		inventory: inventory.New(store),
 		auth:      authenticator,
@@ -51,15 +56,75 @@ func New(store *db.Store, authenticator *authn.Authenticator, signer signing.Sig
 		config:    cfg,
 		policy:    policy.LocalPolicy{},
 		logger:    logger,
+		now:       time.Now,
+	}
+	if cfg.Escrow.KEKID != "" {
+		server.escrow, server.escrowErr = escrow.NewKeyring(
+			cfg.Escrow.KEKID, cfg.Escrow.CurrentKey, cfg.Escrow.PreviousKeys,
+		)
+	}
+	return server
+}
+
+func (s *Server) Close() {
+	if s.escrow != nil {
+		s.escrow.Close()
 	}
 }
 
 func (s *Server) RequestGrant(ctx context.Context, request *backendv1.RequestGrantRequest) (*backendv1.RequestGrantResponse, error) {
-	station, actorID, err := s.authenticatedStation(ctx)
+	authorization, err := s.authorize(ctx, request.AccessToken, request.TokenVendor, request.TokenSerial,
+		request.Operation, request.PivSlot, "RequestGrant")
 	if err != nil {
 		return nil, err
 	}
-	principal, err := s.auth.Authenticate(ctx, request.AccessToken)
+	if _, managed := planManagedOperation(request.Operation); managed {
+		reason := "operation requires managed escrow authorization"
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "RequestGrant", "token", request.TokenSerial, "denied", reason); auditErr != nil {
+			return nil, status.Error(codes.Internal, "could not record grant decision")
+		}
+		return nil, status.Error(codes.FailedPrecondition, reason)
+	}
+	signed, err := grants.Issue(ctx, s.store.Pool, s.signer, grants.IssueRequest{
+		Operation:    request.Operation,
+		UserID:       authorization.principal.UserID,
+		Subject:      authorization.principal.Issuer + "|" + authorization.principal.Subject,
+		StationID:    authorization.station.ID,
+		TokenSerial:  authorization.token.Serial,
+		CallerOSUser: request.CallerOsUser,
+		PIVSlot:      request.PivSlot,
+		Lifetime:     timeSeconds(s.config.Grants.LifetimeSeconds),
+		PolicyReason: authorization.decision.Reason,
+	})
+	if err != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "RequestGrant", "token", request.TokenSerial, "error", "grant issuance failed"); auditErr != nil {
+			s.logger.Error("audit grant issuance failure failed", "error", auditErr)
+		}
+		s.logger.Error("grant issuance failed", "error", err)
+		return nil, status.Error(codes.Internal, "could not issue grant")
+	}
+	return &backendv1.RequestGrantResponse{Grant: signed}, nil
+}
+
+type authorization struct {
+	station   db.Station
+	principal authn.Principal
+	token     db.Token
+	decision  policy.Decision
+}
+
+func (s *Server) authorize(
+	ctx context.Context,
+	accessToken, tokenVendor, tokenSerial string,
+	operation agentv1.Operation,
+	pivSlot uint32,
+	rpcName string,
+) (authorization, error) {
+	station, actorID, err := s.authenticatedStation(ctx)
+	if err != nil {
+		return authorization{}, err
+	}
+	principal, err := s.auth.Authenticate(ctx, accessToken)
 	if err != nil {
 		outcome := "denied"
 		reason := "OIDC access token rejected"
@@ -67,33 +132,33 @@ func (s *Server) RequestGrant(ctx context.Context, request *backendv1.RequestGra
 			outcome = "error"
 			reason = "OIDC user persistence failed"
 		}
-		if auditErr := s.auditEvent(ctx, "station", actorID, "RequestGrant", "token", request.TokenSerial, outcome, reason); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "station", actorID, rpcName, "token", tokenSerial, outcome, reason); auditErr != nil {
 			s.logger.Error("audit OIDC rejection failed", "error", auditErr)
-			return nil, status.Error(codes.Internal, "could not record grant decision")
+			return authorization{}, status.Error(codes.Internal, "could not record authorization decision")
 		}
 		if errors.Is(err, authn.ErrUserStore) {
 			s.logger.Error("OIDC user upsert failed", "error", err)
-			return nil, status.Error(codes.Internal, "could not record authenticated user")
+			return authorization{}, status.Error(codes.Internal, "could not record authenticated user")
 		}
-		return nil, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
+		return authorization{}, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
 	}
-	token, err := s.inventory.FindToken(ctx, request.TokenVendor, request.TokenSerial)
+	token, err := s.inventory.FindToken(ctx, tokenVendor, tokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if auditErr := s.auditEvent(ctx, "user", principal.UserID, "RequestGrant", "token", request.TokenSerial, "denied", "token is not in inventory"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", principal.UserID, rpcName, "token", tokenSerial, "denied", "token is not in inventory"); auditErr != nil {
 			s.logger.Error("audit unknown token decision failed", "error", auditErr)
-			return nil, status.Error(codes.Internal, "could not record grant decision")
+			return authorization{}, status.Error(codes.Internal, "could not record authorization decision")
 		}
-		return nil, status.Error(codes.PermissionDenied, "token is not in inventory")
+		return authorization{}, status.Error(codes.PermissionDenied, "token is not in inventory")
 	}
 	if err != nil {
 		s.logger.Error("token lookup failed", "error", err)
-		return nil, status.Error(codes.Internal, "could not look up token inventory")
+		return authorization{}, status.Error(codes.Internal, "could not look up token inventory")
 	}
 	decision := s.policy.Authorize(policy.Request{
 		Roles:                 rolesFor(principal.Groups, s.config.OIDC.RoleGroups),
 		Station:               station,
 		Token:                 &token,
-		Operation:             request.Operation,
+		Operation:             operation,
 		UserID:                principal.UserID,
 		SelfServiceOperations: s.config.Policy.SelfServiceOperations,
 	})
@@ -101,47 +166,31 @@ func (s *Server) RequestGrant(ctx context.Context, request *backendv1.RequestGra
 		if err := audit.AppendStandalone(ctx, s.store.Pool, audit.Event{
 			ActorType:  "user",
 			ActorID:    principal.UserID,
-			Action:     "RequestGrant",
+			Action:     rpcName,
 			TargetType: "token",
-			TargetID:   request.TokenSerial,
+			TargetID:   tokenSerial,
 			Outcome:    "denied",
 			Detail: map[string]any{
-				"operation": agentv1.Operation_name[int32(request.Operation)],
+				"operation": agentv1.Operation_name[int32(operation)],
 				"station":   station.ID,
 				"reason":    decision.Reason,
 			},
 		}); err != nil {
 			s.logger.Error("audit policy denial failed", "error", err)
-			return nil, status.Error(codes.Internal, "could not record policy decision")
+			return authorization{}, status.Error(codes.Internal, "could not record policy decision")
 		}
-		return nil, status.Error(codes.PermissionDenied, decision.Reason)
+		return authorization{}, status.Error(codes.PermissionDenied, decision.Reason)
 	}
-	if err := grants.ValidatePIVSlot(request.Operation, request.PivSlot); err != nil {
-		if auditErr := s.auditEvent(ctx, "user", principal.UserID, "RequestGrant", "token", request.TokenSerial, "denied", err.Error()); auditErr != nil {
+	if err := grants.ValidatePIVSlot(operation, pivSlot); err != nil {
+		if auditErr := s.auditEvent(ctx, "user", principal.UserID, rpcName, "token", tokenSerial, "denied", err.Error()); auditErr != nil {
 			s.logger.Error("audit invalid grant request failed", "error", auditErr)
-			return nil, status.Error(codes.Internal, "could not record grant decision")
+			return authorization{}, status.Error(codes.Internal, "could not record authorization decision")
 		}
-		return nil, status.Error(codes.InvalidArgument, err.Error())
+		return authorization{}, status.Error(codes.InvalidArgument, err.Error())
 	}
-	signed, err := grants.Issue(ctx, s.store.Pool, s.signer, grants.IssueRequest{
-		Operation:    request.Operation,
-		UserID:       principal.UserID,
-		Subject:      principal.Issuer + "|" + principal.Subject,
-		StationID:    station.ID,
-		TokenSerial:  token.Serial,
-		CallerOSUser: request.CallerOsUser,
-		PIVSlot:      request.PivSlot,
-		Lifetime:     timeSeconds(s.config.Grants.LifetimeSeconds),
-		PolicyReason: decision.Reason,
-	})
-	if err != nil {
-		if auditErr := s.auditEvent(ctx, "user", principal.UserID, "RequestGrant", "token", request.TokenSerial, "error", "grant issuance failed"); auditErr != nil {
-			s.logger.Error("audit grant issuance failure failed", "error", auditErr)
-		}
-		s.logger.Error("grant issuance failed", "error", err)
-		return nil, status.Error(codes.Internal, "could not issue grant")
-	}
-	return &backendv1.RequestGrantResponse{Grant: signed}, nil
+	return authorization{
+		station: station, principal: principal, token: token, decision: decision,
+	}, nil
 }
 
 func timeSeconds(seconds int64) time.Duration {
@@ -182,19 +231,54 @@ func (s *Server) authenticatedStation(ctx context.Context) (db.Station, string, 
 	}
 	digest := sha256.Sum256(spki)
 	actorID := fmt.Sprintf("%x", digest[:])
-	station, err := s.store.StationByCertificateHash(ctx, digest[:])
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && station.Status != "active" {
-		if auditErr := s.auditEvent(ctx, "station", actorID, "AuthenticateStation", "station", actorID, "denied", "station certificate is not active"); auditErr != nil {
+	serial := certificate.SerialNumber.Text(16)
+	dnsNames := normalizeDNSNames(certificate.DNSNames)
+	stations, err := s.store.ActiveStationsByDNSNames(ctx, dnsNames)
+	if err != nil {
+		s.logger.Error("station DNS lookup failed", "error", err)
+		return db.Station{}, actorID, status.Error(codes.Internal, "could not verify station")
+	}
+	if len(stations) != 1 {
+		reason := "station certificate has no registered active DNS SAN match"
+		if len(stations) > 1 {
+			reason = "station certificate DNS SANs match multiple active stations"
+		}
+		if auditErr := s.auditEventDetail(ctx, "station", actorID, "AuthenticateStation", "station", actorID, "denied", map[string]any{
+			"reason":             reason,
+			"certificate_serial": serial,
+			"spki_sha256":        actorID,
+			"dns_sans":           dnsNames,
+		}); auditErr != nil {
 			s.logger.Error("audit station rejection failed", "error", auditErr)
 			return db.Station{}, actorID, status.Error(codes.Internal, "could not record station decision")
 		}
+		if len(stations) > 1 {
+			return db.Station{}, actorID, status.Error(codes.Unauthenticated, "station identity is ambiguous")
+		}
 		return db.Station{}, actorID, status.Error(codes.Unauthenticated, "station is not registered or active")
 	}
-	if err != nil {
-		s.logger.Error("station lookup failed", "error", err)
-		return db.Station{}, actorID, status.Error(codes.Internal, "could not verify station")
+	station := stations[0]
+	if auditErr := s.auditEventDetail(ctx, "station", actorID, "AuthenticateStation", "station", station.ID, "success", map[string]any{
+		"station_dns_name":   station.DNSName,
+		"certificate_serial": serial,
+		"spki_sha256":        actorID,
+		"dns_sans":           dnsNames,
+	}); auditErr != nil {
+		s.logger.Error("audit station authentication failed", "error", auditErr)
+		return db.Station{}, actorID, status.Error(codes.Internal, "could not record station decision")
 	}
 	return station, actorID, nil
+}
+
+func normalizeDNSNames(names []string) []string {
+	normalized := make([]string, 0, len(names))
+	for _, name := range names {
+		name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+		if name != "" && !slices.Contains(normalized, name) {
+			normalized = append(normalized, name)
+		}
+	}
+	return normalized
 }
 
 func peerCertificate(ctx context.Context) (*x509.Certificate, error) {
@@ -230,6 +314,10 @@ func intersects(left, right []string) bool {
 }
 
 func (s *Server) auditEvent(ctx context.Context, actorType, actorID, action, targetType, targetID, outcome, reason string) error {
+	return s.auditEventDetail(ctx, actorType, actorID, action, targetType, targetID, outcome, map[string]any{"reason": reason})
+}
+
+func (s *Server) auditEventDetail(ctx context.Context, actorType, actorID, action, targetType, targetID, outcome string, detail map[string]any) error {
 	return audit.AppendStandalone(ctx, s.store.Pool, audit.Event{
 		ActorType:  actorType,
 		ActorID:    actorID,
@@ -237,7 +325,7 @@ func (s *Server) auditEvent(ctx context.Context, actorType, actorID, action, tar
 		TargetType: targetType,
 		TargetID:   targetID,
 		Outcome:    outcome,
-		Detail:     map[string]any{"reason": reason},
+		Detail:     detail,
 	})
 }
 

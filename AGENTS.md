@@ -61,3 +61,10 @@ Validate it without installing it using `dotnet wix msi validate target\installe
 - Backend grants are required only when the agent itself uses a system-held secret. Operations where the caller supplies a PIN, PUK, or management key are user-configurable and audit-only. Everything the user can already do with stock tools remains user-configurable and only audit-logged, including PIV PIN change, OATH accounts and password, YubiKey OTP slots 1/2, and FIDO PIN change. Windows Settings also lets non-admin users change the FIDO PIN and reset a security key.
 - OATH accounts and YubiKey OTP slots 1/2 are in scope after the Go backend (M7), as user-configurable features.
 - Backend: Go 1.27 server and web portal (inventory, revocation by "delete key", lost keys by token nickname).
+
+## Development environment
+
+- Local Authentik setup is documented in `dev/README.md`; it uses the pinned 2026.8.3 release, PostgreSQL, and no Redis.
+- Keep all generated Authentik, backend signing, escrow, and certificate material under ignored `dev/.secrets/`. Never log or paste these values.
+- `installer/dev/new-station-cert.ps1` requires elevation and uses the machine's `LocalMachine\My` store. Do not run it from an automated development handoff; ask the operator to approve and run it.
+- All `dev/` Podman commands must explicitly use the rootless `podman-machine-default` connection; leave the machine default `podman-machine-default-root` unchanged. Use `localhost` for published ports and database URLs, not `127.0.0.1` or the Podman VM IP; rootful published ports are affected by [Podman issue #29377](https://github.com/containers/podman/issues/29377).

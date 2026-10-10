@@ -33,6 +33,7 @@ const (
 	Operation_PIV_CHANGE_MANAGEMENT_KEY Operation = 8
 	Operation_PIV_SET_RETRIES           Operation = 9
 	Operation_PIV_DELETE_KEY            Operation = 10
+	Operation_PIV_MANAGED_INITIALIZE    Operation = 11
 )
 
 // Enum value maps for Operation.
@@ -47,6 +48,7 @@ var (
 		8:  "PIV_CHANGE_MANAGEMENT_KEY",
 		9:  "PIV_SET_RETRIES",
 		10: "PIV_DELETE_KEY",
+		11: "PIV_MANAGED_INITIALIZE",
 	}
 	Operation_value = map[string]int32{
 		"OPERATION_UNSPECIFIED":     0,
@@ -58,6 +60,7 @@ var (
 		"PIV_CHANGE_MANAGEMENT_KEY": 8,
 		"PIV_SET_RETRIES":           9,
 		"PIV_DELETE_KEY":            10,
+		"PIV_MANAGED_INITIALIZE":    11,
 	}
 )
 
@@ -285,7 +288,7 @@ const file_sigil_agent_v1_grant_proto_rawDesc = "" +
 	"\vSignedGrant\x12\x14\n" +
 	"\x05grant\x18\x01 \x01(\fR\x05grant\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x15\n" +
-	"\x06key_id\x18\x03 \x01(\tR\x05keyId*\xa3\x02\n" +
+	"\x06key_id\x18\x03 \x01(\tR\x05keyId*\xbf\x02\n" +
 	"\tOperation\x12\x19\n" +
 	"\x15OPERATION_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10PIV_GENERATE_KEY\x10\x03\x12\x1a\n" +
@@ -296,7 +299,8 @@ const file_sigil_agent_v1_grant_proto_rawDesc = "" +
 	"\x19PIV_CHANGE_MANAGEMENT_KEY\x10\b\x12\x13\n" +
 	"\x0fPIV_SET_RETRIES\x10\t\x12\x12\n" +
 	"\x0ePIV_DELETE_KEY\x10\n" +
-	"\"\x04\b\x01\x10\x01\"\x04\b\x02\x10\x02*\x17FIDO_FINGERPRINT_ENROLL*\x17FIDO_FINGERPRINT_REMOVEB>Z<github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1b\x06proto3"
+	"\x12\x1a\n" +
+	"\x16PIV_MANAGED_INITIALIZE\x10\v\"\x04\b\x01\x10\x01\"\x04\b\x02\x10\x02*\x17FIDO_FINGERPRINT_ENROLL*\x17FIDO_FINGERPRINT_REMOVEB>Z<github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_sigil_agent_v1_grant_proto_rawDescOnce sync.Once

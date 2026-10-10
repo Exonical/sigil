@@ -12,6 +12,7 @@ import (
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/db"
 	"github.com/Exonical/sigil/backend/internal/signing"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 )
@@ -30,6 +31,28 @@ type IssueRequest struct {
 }
 
 func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, request IssueRequest) (*agentv1.SignedGrant, error) {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin grant transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	signed, err := IssueInTx(ctx, tx, signer, request, "RequestGrant")
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit grant transaction: %w", err)
+	}
+	committed = true
+	return signed, nil
+}
+
+func IssueInTx(ctx context.Context, tx pgx.Tx, signer signing.Signer, request IssueRequest, auditAction string) (*agentv1.SignedGrant, error) {
 	if signer == nil {
 		return nil, errors.New("grant signer is not configured")
 	}
@@ -48,6 +71,9 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, reque
 	}
 	if request.Now.IsZero() {
 		request.Now = time.Now()
+	}
+	if auditAction == "" {
+		auditAction = "RequestGrant"
 	}
 	request.Now = request.Now.UTC().Truncate(time.Second)
 	grantID, err := randomGrantID()
@@ -83,16 +109,6 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, reque
 		return nil, errors.New("grant signer has no key ID")
 	}
 
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("begin grant transaction: %w", err)
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
 	operationName := agentv1.Operation_name[int32(request.Operation)]
 	if err := db.InsertGrant(ctx, tx, db.GrantRecord{
 		ID: grantID, Operation: operationName, UserID: request.UserID,
@@ -105,7 +121,7 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, reque
 	if _, err := audit.Append(ctx, tx, audit.Event{
 		ActorType:  "user",
 		ActorID:    request.UserID,
-		Action:     "RequestGrant",
+		Action:     auditAction,
 		TargetType: "token",
 		TargetID:   request.TokenSerial,
 		Outcome:    "success",
@@ -120,10 +136,6 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, reque
 	}); err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, fmt.Errorf("commit grant transaction: %w", err)
-	}
-	committed = true
 	return signed, nil
 }
 

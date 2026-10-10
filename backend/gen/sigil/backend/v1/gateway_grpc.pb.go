@@ -19,8 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentGateway_RequestGrant_FullMethodName = "/sigil.backend.v1.AgentGateway/RequestGrant"
-	AgentGateway_ReportTokens_FullMethodName = "/sigil.backend.v1.AgentGateway/ReportTokens"
+	AgentGateway_RequestGrant_FullMethodName              = "/sigil.backend.v1.AgentGateway/RequestGrant"
+	AgentGateway_AuthorizeManagedOperation_FullMethodName = "/sigil.backend.v1.AgentGateway/AuthorizeManagedOperation"
+	AgentGateway_CompleteRotation_FullMethodName          = "/sigil.backend.v1.AgentGateway/CompleteRotation"
+	AgentGateway_ReportAudit_FullMethodName               = "/sigil.backend.v1.AgentGateway/ReportAudit"
+	AgentGateway_ReportTokens_FullMethodName              = "/sigil.backend.v1.AgentGateway/ReportTokens"
 )
 
 // AgentGatewayClient is the client API for AgentGateway service.
@@ -28,6 +31,9 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type AgentGatewayClient interface {
 	RequestGrant(ctx context.Context, in *RequestGrantRequest, opts ...grpc.CallOption) (*RequestGrantResponse, error)
+	AuthorizeManagedOperation(ctx context.Context, in *AuthorizeManagedOperationRequest, opts ...grpc.CallOption) (*AuthorizeManagedOperationResponse, error)
+	CompleteRotation(ctx context.Context, in *CompleteRotationRequest, opts ...grpc.CallOption) (*CompleteRotationResponse, error)
+	ReportAudit(ctx context.Context, in *ReportAuditRequest, opts ...grpc.CallOption) (*ReportAuditResponse, error)
 	ReportTokens(ctx context.Context, in *ReportTokensRequest, opts ...grpc.CallOption) (*ReportTokensResponse, error)
 }
 
@@ -49,6 +55,36 @@ func (c *agentGatewayClient) RequestGrant(ctx context.Context, in *RequestGrantR
 	return out, nil
 }
 
+func (c *agentGatewayClient) AuthorizeManagedOperation(ctx context.Context, in *AuthorizeManagedOperationRequest, opts ...grpc.CallOption) (*AuthorizeManagedOperationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AuthorizeManagedOperationResponse)
+	err := c.cc.Invoke(ctx, AgentGateway_AuthorizeManagedOperation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentGatewayClient) CompleteRotation(ctx context.Context, in *CompleteRotationRequest, opts ...grpc.CallOption) (*CompleteRotationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CompleteRotationResponse)
+	err := c.cc.Invoke(ctx, AgentGateway_CompleteRotation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentGatewayClient) ReportAudit(ctx context.Context, in *ReportAuditRequest, opts ...grpc.CallOption) (*ReportAuditResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportAuditResponse)
+	err := c.cc.Invoke(ctx, AgentGateway_ReportAudit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *agentGatewayClient) ReportTokens(ctx context.Context, in *ReportTokensRequest, opts ...grpc.CallOption) (*ReportTokensResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ReportTokensResponse)
@@ -64,6 +100,9 @@ func (c *agentGatewayClient) ReportTokens(ctx context.Context, in *ReportTokensR
 // for forward compatibility.
 type AgentGatewayServer interface {
 	RequestGrant(context.Context, *RequestGrantRequest) (*RequestGrantResponse, error)
+	AuthorizeManagedOperation(context.Context, *AuthorizeManagedOperationRequest) (*AuthorizeManagedOperationResponse, error)
+	CompleteRotation(context.Context, *CompleteRotationRequest) (*CompleteRotationResponse, error)
+	ReportAudit(context.Context, *ReportAuditRequest) (*ReportAuditResponse, error)
 	ReportTokens(context.Context, *ReportTokensRequest) (*ReportTokensResponse, error)
 	mustEmbedUnimplementedAgentGatewayServer()
 }
@@ -77,6 +116,15 @@ type UnimplementedAgentGatewayServer struct{}
 
 func (UnimplementedAgentGatewayServer) RequestGrant(context.Context, *RequestGrantRequest) (*RequestGrantResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RequestGrant not implemented")
+}
+func (UnimplementedAgentGatewayServer) AuthorizeManagedOperation(context.Context, *AuthorizeManagedOperationRequest) (*AuthorizeManagedOperationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AuthorizeManagedOperation not implemented")
+}
+func (UnimplementedAgentGatewayServer) CompleteRotation(context.Context, *CompleteRotationRequest) (*CompleteRotationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CompleteRotation not implemented")
+}
+func (UnimplementedAgentGatewayServer) ReportAudit(context.Context, *ReportAuditRequest) (*ReportAuditResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportAudit not implemented")
 }
 func (UnimplementedAgentGatewayServer) ReportTokens(context.Context, *ReportTokensRequest) (*ReportTokensResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportTokens not implemented")
@@ -120,6 +168,60 @@ func _AgentGateway_RequestGrant_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentGateway_AuthorizeManagedOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AuthorizeManagedOperationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentGatewayServer).AuthorizeManagedOperation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentGateway_AuthorizeManagedOperation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentGatewayServer).AuthorizeManagedOperation(ctx, req.(*AuthorizeManagedOperationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentGateway_CompleteRotation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CompleteRotationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentGatewayServer).CompleteRotation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentGateway_CompleteRotation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentGatewayServer).CompleteRotation(ctx, req.(*CompleteRotationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentGateway_ReportAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportAuditRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentGatewayServer).ReportAudit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentGateway_ReportAudit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentGatewayServer).ReportAudit(ctx, req.(*ReportAuditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AgentGateway_ReportTokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportTokensRequest)
 	if err := dec(in); err != nil {
@@ -148,6 +250,18 @@ var AgentGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RequestGrant",
 			Handler:    _AgentGateway_RequestGrant_Handler,
+		},
+		{
+			MethodName: "AuthorizeManagedOperation",
+			Handler:    _AgentGateway_AuthorizeManagedOperation_Handler,
+		},
+		{
+			MethodName: "CompleteRotation",
+			Handler:    _AgentGateway_CompleteRotation_Handler,
+		},
+		{
+			MethodName: "ReportAudit",
+			Handler:    _AgentGateway_ReportAudit_Handler,
 		},
 		{
 			MethodName: "ReportTokens",

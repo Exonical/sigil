@@ -17,6 +17,8 @@ func TestValidatePIVSlot(t *testing.T) {
 		{"certificate import requires slot", agentv1.Operation_PIV_IMPORT_CERTIFICATE, 0x9c, false},
 		{"certificate deletion requires slot", agentv1.Operation_PIV_DELETE_CERTIFICATE, 0x9d, false},
 		{"key deletion requires slot", agentv1.Operation_PIV_DELETE_KEY, 0x9a, false},
+		{"managed initialization uses no slot", agentv1.Operation_PIV_MANAGED_INITIALIZE, 0, false},
+		{"managed initialization rejects a slot", agentv1.Operation_PIV_MANAGED_INITIALIZE, 0x9a, true},
 		{"unblock does not use a slot", agentv1.Operation_PIV_UNBLOCK_PIN, 0, false},
 		{"missing operation slot", agentv1.Operation_PIV_GENERATE_KEY, 0, true},
 		{"missing key deletion slot", agentv1.Operation_PIV_DELETE_KEY, 0, true},

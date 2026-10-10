@@ -24,8 +24,8 @@ func TestReportedTokensUpsertWithoutReactivatingLostTokens(t *testing.T) {
 	for _, station := range []string{"station-a", "station-b"} {
 		hash := sha256.Sum256([]byte(station))
 		if _, err := store.Pool.Exec(ctx, `
-			INSERT INTO stations(id, display_name, mode, cert_spki_sha256, status)
-			VALUES($1, $1, 'station', $2, 'active')
+			INSERT INTO stations(id, dns_name, display_name, mode, cert_spki_sha256, status)
+			VALUES($1, lower($1), $1, 'station', $2, 'active')
 		`, station, hash[:]); err != nil {
 			t.Fatal(err)
 		}

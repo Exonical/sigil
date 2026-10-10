@@ -177,3 +177,29 @@ func TestAuthorize(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedInitializationIsAGrantablePIVOperation(t *testing.T) {
+	operation := agentv1.Operation_PIV_MANAGED_INITIALIZE
+	assigned := "alice"
+	decision := Authorize(Request{
+		Roles:     []string{"admin"},
+		Station:   db.Station{ID: "station-1", Mode: "station", Status: "active"},
+		Token:     &db.Token{Serial: "39192733", Status: "unassigned"},
+		Operation: operation,
+		UserID:    "admin-user",
+	})
+	if !decision.Allowed {
+		t.Fatalf("managed initialization policy decision = %+v", decision)
+	}
+
+	decision = Authorize(Request{
+		Station:               db.Station{ID: "user-station", Mode: "user", Status: "active"},
+		Token:                 &db.Token{Serial: "39192733", Status: "active", AssignedUserID: &assigned},
+		Operation:             operation,
+		UserID:                "alice",
+		SelfServiceOperations: []string{"PIV_MANAGED_INITIALIZE"},
+	})
+	if !decision.Allowed {
+		t.Fatalf("managed initialization self-service policy decision = %+v", decision)
+	}
+}

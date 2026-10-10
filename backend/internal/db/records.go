@@ -10,6 +10,7 @@ import (
 
 type Station struct {
 	ID          string
+	DNSName     string
 	DisplayName string
 	Mode        string
 	Status      string
@@ -64,16 +65,28 @@ func (s *Store) UpsertUser(ctx context.Context, issuer, subject, email, displayN
 	return id, nil
 }
 
-func (s *Store) StationByCertificateHash(ctx context.Context, hash []byte) (Station, error) {
-	var station Station
-	err := s.Pool.QueryRow(ctx, `
-		SELECT id, display_name, mode, status
-		FROM stations WHERE cert_spki_sha256=$1
-	`, hash).Scan(&station.ID, &station.DisplayName, &station.Mode, &station.Status)
+func (s *Store) ActiveStationsByDNSNames(ctx context.Context, names []string) ([]Station, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT id, dns_name, display_name, mode, status
+		FROM stations
+		WHERE status='active' AND dns_name = ANY($1::text[])
+	`, names)
 	if err != nil {
-		return Station{}, err
+		return nil, err
 	}
-	return station, nil
+	defer rows.Close()
+	stations := make([]Station, 0)
+	for rows.Next() {
+		var station Station
+		if err := rows.Scan(&station.ID, &station.DNSName, &station.DisplayName, &station.Mode, &station.Status); err != nil {
+			return nil, err
+		}
+		stations = append(stations, station)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return stations, nil
 }
 
 func (s *Store) TokenByVendorSerial(ctx context.Context, vendor, serial string) (Token, error) {
@@ -128,11 +141,11 @@ func InsertGrant(ctx context.Context, tx pgx.Tx, grant GrantRecord) error {
 	return nil
 }
 
-func (s *Store) AddStation(ctx context.Context, tx pgx.Tx, station Station, spkiHash []byte) error {
+func (s *Store) AddStation(ctx context.Context, tx pgx.Tx, station Station) error {
 	_, err := tx.Exec(ctx, `
-		INSERT INTO stations(id, display_name, mode, cert_spki_sha256, status)
+		INSERT INTO stations(id, dns_name, display_name, mode, status)
 		VALUES($1, $2, $3, $4, 'active')
-	`, station.ID, station.DisplayName, station.Mode, spkiHash)
+	`, station.ID, station.DNSName, station.DisplayName, station.Mode)
 	if err != nil {
 		return fmt.Errorf("add station: %w", err)
 	}

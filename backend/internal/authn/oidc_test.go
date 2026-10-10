@@ -8,9 +8,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -187,5 +190,69 @@ func TestOIDCMissingTokenIsRejected(t *testing.T) {
 	}
 	if _, err := authenticator.Authenticate(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "required") {
 		t.Fatalf("missing-token error = %v", err)
+	}
+}
+
+func TestOIDCConfiguredCAExtendsSystemRoots(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := &testIssuer{key: key}
+	fixture.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer":                                fixture.server.URL,
+				"jwks_uri":                              fixture.server.URL + "/keys",
+				"authorization_endpoint":                fixture.server.URL + "/authorize",
+				"token_endpoint":                        fixture.server.URL + "/token",
+				"response_types_supported":              []string{"code"},
+				"subject_types_supported":               []string{"public"},
+				"id_token_signing_alg_values_supported": []string{"RS256"},
+			})
+		case "/keys":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"keys": []map[string]string{{
+					"kty": "RSA",
+					"use": "sig",
+					"alg": "RS256",
+					"kid": "test-key",
+					"n":   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
+					"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fixture.server.Close)
+
+	caPath := filepath.Join(t.TempDir(), "oidc-ca.pem")
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.server.Certificate().Raw})
+	if err := os.WriteFile(caPath, caPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	users := &memoryUsers{}
+	authenticator, err := New(context.Background(), Config{
+		Issuer: fixture.server.URL, Audience: "sigil-api", CAFile: caPath,
+	}, users)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := fixture.token(t, fixture.server.URL, "sigil-api", "alice", time.Now().Add(time.Hour), fixture.key)
+	principal, err := authenticator.Authenticate(context.Background(), token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.Subject != "alice" {
+		t.Fatalf("subject = %q, want alice", principal.Subject)
+	}
+	if _, err := New(context.Background(), Config{
+		Issuer: fixture.server.URL, Audience: "sigil-api",
+	}, &memoryUsers{}); err == nil {
+		t.Fatal("self-signed OIDC issuer was trusted without the configured CA")
 	}
 }

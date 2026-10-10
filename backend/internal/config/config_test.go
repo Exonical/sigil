@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,12 +10,23 @@ import (
 
 func TestLoadAppliesDefaultsAndValidatesFiles(t *testing.T) {
 	directory := t.TempDir()
-	for _, name := range []string{"server.crt", "server.key", "client-ca.crt", "grant-key.pem"} {
+	for _, name := range []string{"server.crt", "server.key", "client-ca.crt", "oidc-ca.crt", "grant-key.pem"} {
 		mode := os.FileMode(0o644)
 		if name == "server.key" || name == "grant-key.pem" {
 			mode = 0o600
 		}
 		if err := os.WriteFile(filepath.Join(directory, name), []byte("test"), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	currentKEKPath := filepath.Join(directory, "current.kek")
+	previousKEKPath := filepath.Join(directory, "previous.kek")
+	for path, value := range map[string]byte{currentKEKPath: 0x31, previousKEKPath: 0x42} {
+		key := make([]byte, 32)
+		for index := range key {
+			key[index] = value
+		}
+		if err := os.WriteFile(path, []byte(base64.StdEncoding.EncodeToString(key)), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -30,6 +42,7 @@ client_ca_file = "client-ca.crt"
 
 [oidc]
 issuer = "https://issuer.example"
+ca_file = "oidc-ca.crt"
 audience = "sigil"
 
 [grants]
@@ -37,7 +50,14 @@ key_id = "test"
 signing_key_file = "grant-key.pem"
 
 [policy]
-self_service_operations = ["PIV_DELETE_KEY"]
+self_service_operations = ["PIV_DELETE_KEY", "PIV_MANAGED_INITIALIZE"]
+
+[escrow]
+kek_id = "current"
+kek_file = "current.kek"
+
+[escrow.previous_keks]
+previous = "previous.kek"
 `
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
@@ -49,9 +69,16 @@ self_service_operations = ["PIV_DELETE_KEY"]
 	if loaded.OIDC.GroupsClaim != "groups" || loaded.Grants.LifetimeSeconds != 120 {
 		t.Fatalf("defaults not applied: groups_claim=%q lifetime=%d", loaded.OIDC.GroupsClaim, loaded.Grants.LifetimeSeconds)
 	}
-	if len(loaded.Policy.SelfServiceOperations) != 1 ||
-		loaded.Policy.SelfServiceOperations[0] != "PIV_DELETE_KEY" {
-		t.Fatalf("PIV_DELETE_KEY self-service operation was not accepted: %+v", loaded.Policy.SelfServiceOperations)
+	if loaded.OIDC.CAFile != filepath.Join(directory, "oidc-ca.crt") {
+		t.Fatalf("OIDC CA path = %q", loaded.OIDC.CAFile)
+	}
+	if len(loaded.Escrow.CurrentKey) != 32 || len(loaded.Escrow.PreviousKeys["previous"]) != 32 {
+		t.Fatal("escrow KEKs were not loaded")
+	}
+	if len(loaded.Policy.SelfServiceOperations) != 2 ||
+		loaded.Policy.SelfServiceOperations[0] != "PIV_DELETE_KEY" ||
+		loaded.Policy.SelfServiceOperations[1] != "PIV_MANAGED_INITIALIZE" {
+		t.Fatalf("self-service operations were not accepted: %+v", loaded.Policy.SelfServiceOperations)
 	}
 }
 
