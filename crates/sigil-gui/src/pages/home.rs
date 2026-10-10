@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use sigil_core::{Application, DeviceInfo, Transport};
+use sigil_core::{Application, DeviceInfo};
 
 use crate::{icons::Icon, state::AppState};
 
@@ -19,7 +19,7 @@ pub fn HomePage() -> Element {
                     div { class: "hero-icon", Icon { name: "key", size: 30 } }
                     div {
                         p { class: "eyebrow", "CONNECTED DEVICE" }
-                        h2 { "{device_name(&device)}" }
+                        h2 { "{device.model}" }
                         p { class: "device-meta", "S/N: {device.serial.as_deref().unwrap_or(\"unavailable\")}  ·  F/W: {firmware(&device)}" }
                     }
                     div { class: "hero-badges",
@@ -93,35 +93,6 @@ pub fn HomePage() -> Element {
             }
         },
     }
-}
-
-pub(crate) fn device_name(device: &DeviceInfo) -> String {
-    let Some(form_factor) = device.form_factor.as_deref() else {
-        return device.model.clone();
-    };
-    let name = if form_factor.contains("USB-C") {
-        if form_factor.contains("Nano") {
-            "YubiKey 5C Nano"
-        } else {
-            "YubiKey 5C"
-        }
-    } else if form_factor.contains("USB-A") {
-        if form_factor.contains("Nano") {
-            "YubiKey 5 Nano"
-        } else {
-            "YubiKey 5"
-        }
-    } else {
-        return device.model.clone();
-    };
-    let mut name = name.to_owned();
-    if device.transports.contains(&Transport::Nfc) {
-        name.push_str(" NFC");
-    }
-    if device.fips == Some(true) {
-        name.push_str(" FIPS");
-    }
-    name
 }
 
 pub(crate) fn firmware(device: &DeviceInfo) -> String {

@@ -479,7 +479,7 @@ fn settings_panel(device: &sigil_core::DeviceInfo) -> Element {
         PanelSection { title: "DEVICE",
             DetailValue { label: "SERIAL", value: device.serial.clone().unwrap_or_else(|| "Unavailable".into()) }
             DetailValue { label: "FIRMWARE", value: crate::pages::home::firmware(device) }
-            DetailValue { label: "MODEL", value: crate::pages::home::device_name(device) }
+            DetailValue { label: "MODEL", value: device.model.clone() }
         }
     }
 }

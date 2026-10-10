@@ -19,6 +19,7 @@ use sigil_core::{
     Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result, Transport,
 };
 use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
+use sigil_yubikey::product::{key_type_for_pid, product_name};
 use windows_sys::Win32::{
     Devices::{
         DeviceAndDriverInstallation::{
@@ -265,6 +266,10 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
         device.metadata_access = MetadataAccess::Available;
         device.firmware = metadata.firmware;
         if let Some(details) = metadata.details {
+            let key_type = yubico_pid_from_path(&path.to_string_lossy()).and_then(key_type_for_pid);
+            if let Some(name) = product_name(&details, key_type) {
+                device.model = name;
+            }
             device.serial = details.serial;
             device.firmware = details.firmware.or(device.firmware.take());
             device.form_factor = details.form_factor;
@@ -888,12 +893,19 @@ fn device_for_reader(
     DeviceInfo {
         id,
         vendor: "Yubico".into(),
-        // Do not fabricate a retail model from a form factor or reader name.
-        model: if is_nfc {
-            "YubiKey (NFC)".into()
-        } else {
-            "YubiKey (CCID)".into()
-        },
+        // Yubico's product name, derived from the device-reported management data the way ykman's get_name
+        // derives it. The transport-only name applies only when that data could not be read.
+        model: details
+            .as_ref()
+            .and_then(|info| product_name(info, None))
+            .unwrap_or_else(|| {
+                (if is_nfc {
+                    "YubiKey (NFC)"
+                } else {
+                    "YubiKey (CCID)"
+                })
+                .to_owned()
+            }),
         serial,
         firmware,
         form_factor,
@@ -1086,14 +1098,19 @@ mod tests {
                 patch: 1,
             }),
             form_factor: Some("Keychain (USB-A)".into()),
+            form_factor_code: sigil_yubikey::management::FormFactor::UsbAKeychain,
+            device_fips: false,
+            sky: false,
             fips: Some(false),
             transports: vec![
                 Transport::UsbSmartCard,
                 Transport::UsbHid,
                 Transport::UsbOtp,
+                Transport::Nfc,
             ],
             usb_enabled_applications: vec![Application::Fido2],
             usb_supported_applications: vec![Application::Fido2, Application::Piv],
+            usb_supported_bits: 0x210,
             nfc_enabled_applications: vec![Application::Piv],
             nfc_supported_applications: vec![Application::Piv, Application::Oath],
             config_locked: Some(false),
@@ -1177,7 +1194,7 @@ mod tests {
             Some(management_info_for_reader()),
             Transport::Nfc,
         );
-        assert_eq!(nfc.model, "YubiKey (NFC)");
+        assert_eq!(nfc.model, "YubiKey 5 NFC");
         assert_eq!(nfc.connection, Some(Transport::Nfc));
         assert_eq!(nfc.fips, Some(false));
         assert_eq!(nfc.applications, vec![Application::Piv]);
@@ -1193,7 +1210,7 @@ mod tests {
             Some(management_info_for_reader()),
             Transport::UsbSmartCard,
         );
-        assert_eq!(usb.model, "YubiKey (CCID)");
+        assert_eq!(usb.model, "YubiKey 5 NFC");
         assert_eq!(usb.connection, Some(Transport::UsbSmartCard));
         assert_eq!(usb.fips, Some(false));
         assert_eq!(usb.applications, vec![Application::Fido2]);
@@ -1206,7 +1223,8 @@ mod tests {
             vec![
                 Transport::UsbSmartCard,
                 Transport::UsbHid,
-                Transport::UsbOtp
+                Transport::UsbOtp,
+                Transport::Nfc,
             ]
         );
     }

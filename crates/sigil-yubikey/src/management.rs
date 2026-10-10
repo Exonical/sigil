@@ -11,6 +11,7 @@ const TAG_SERIAL: u8 = 0x02;
 pub const TAG_USB_ENABLED: u8 = 0x03;
 const TAG_FORM_FACTOR: u8 = 0x04;
 const TAG_VERSION: u8 = 0x05;
+const TAG_VERSION_QUALIFIER: u8 = 0x19;
 pub const TAG_MORE_DATA: u8 = 0x10;
 pub const TAG_CONFIG_LOCK: u8 = 0x0a;
 pub const TAG_UNLOCK: u8 = 0x0b;
@@ -52,15 +53,63 @@ pub fn parse_page(encoded: &[u8]) -> std::result::Result<Tags, ParseError> {
         .collect()
 }
 
+/// The YubiKey form factor: the low nibble of the management form-factor byte (ykman `FORM_FACTOR`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormFactor {
+    Unknown,
+    UsbAKeychain,
+    UsbANano,
+    UsbCKeychain,
+    UsbCNano,
+    UsbCLightning,
+    UsbABio,
+    UsbCBio,
+}
+
+impl FormFactor {
+    pub fn from_code(code: u8) -> Self {
+        match code & 0x0f {
+            1 => Self::UsbAKeychain,
+            2 => Self::UsbANano,
+            3 => Self::UsbCKeychain,
+            4 => Self::UsbCNano,
+            5 => Self::UsbCLightning,
+            6 => Self::UsbABio,
+            7 => Self::UsbCBio,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn label(self) -> Option<&'static str> {
+        match self {
+            Self::Unknown => None,
+            Self::UsbAKeychain => Some("Keychain (USB-A)"),
+            Self::UsbANano => Some("Nano (USB-A)"),
+            Self::UsbCKeychain => Some("Keychain (USB-C)"),
+            Self::UsbCNano => Some("Nano (USB-C)"),
+            Self::UsbCLightning => Some("Keychain (USB-C, Lightning)"),
+            Self::UsbABio => Some("Bio (USB-A)"),
+            Self::UsbCBio => Some("Bio (USB-C)"),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ManagementInfo {
     pub serial: Option<String>,
     pub firmware: Option<FirmwareVersion>,
     pub form_factor: Option<String>,
+    pub form_factor_code: FormFactor,
+    /// Form-factor byte bit 0x80: the device is a FIPS series key (ykman `DeviceInfo.is_fips`).
+    pub device_fips: bool,
+    /// Form-factor byte bit 0x40: the device is a Security Key (ykman `DeviceInfo.is_sky`).
+    pub sky: bool,
     pub fips: Option<bool>,
     pub transports: Vec<Transport>,
     pub usb_enabled_applications: Vec<Application>,
     pub usb_supported_applications: Vec<Application>,
+    /// Raw USB capability bits (ykman `CAPABILITY`), used to derive the product name.
+    pub usb_supported_bits: u64,
     pub nfc_enabled_applications: Vec<Application>,
     pub nfc_supported_applications: Vec<Application>,
     pub config_locked: Option<bool>,
@@ -109,20 +158,15 @@ impl ManagementInfo {
                 })
             })
             .or(select_version);
-        let form_factor = tags
+        let firmware = pre_release_version(tags).or(firmware);
+        // ykman `DeviceInfo.parse_tlvs`: the low nibble is the form factor, 0x80 is FIPS and 0x40 is SKY.
+        let form_factor_byte = tags
             .get(&TAG_FORM_FACTOR)
-            .and_then(|value| value.first())
-            .and_then(|value| match value & 0x0f {
-                1 => Some("Keychain (USB-A)"),
-                2 => Some("Nano (USB-A)"),
-                3 => Some("Keychain (USB-C)"),
-                4 => Some("Nano (USB-C)"),
-                5 => Some("Keychain (USB-C, Lightning)"),
-                6 => Some("Bio (USB-A)"),
-                7 => Some("Bio (USB-C)"),
-                _ => None,
-            })
-            .map(str::to_owned);
+            .and_then(|value| value.first().copied());
+        let form_factor_code = FormFactor::from_code(form_factor_byte.unwrap_or(0));
+        let device_fips = form_factor_byte.is_some_and(|value| value & 0x80 != 0);
+        let sky = form_factor_byte.is_some_and(|value| value & 0x40 != 0);
+        let form_factor = form_factor_code.label().map(str::to_owned);
 
         let mut transports = vec![Transport::UsbSmartCard];
         if let Some(bits) = enabled_bits {
@@ -140,10 +184,14 @@ impl ManagementInfo {
             serial,
             firmware,
             form_factor,
+            form_factor_code,
+            device_fips,
+            sky,
             fips,
             transports,
             usb_enabled_applications: enabled_bits.map(applications).unwrap_or_default(),
             usb_supported_applications: applications(supported_bits),
+            usb_supported_bits: supported_bits,
             nfc_enabled_applications: nfc_enabled_bits.map(applications).unwrap_or_default(),
             nfc_supported_applications: nfc_supported_bits.map(applications).unwrap_or_default(),
             config_locked,
@@ -151,6 +199,26 @@ impl ManagementInfo {
             pin_complexity,
         })
     }
+}
+
+/// ykman `DeviceInfo.parse_tlvs`: a version qualifier whose release type is not FINAL (2) replaces the reported
+/// firmware version. Its nested TLVs are version (0x01), release type (0x02) and iteration (0x03).
+fn pre_release_version(tags: &Tags) -> Option<FirmwareVersion> {
+    let qualifier: BTreeMap<u16, Vec<u8>> =
+        sigil_piv::tlv::parse(tags.get(&TAG_VERSION_QUALIFIER)?)
+            .ok()?
+            .into_iter()
+            .collect();
+    const RELEASE_FINAL: u8 = 2;
+    if qualifier.get(&0x02)?.as_slice() == [RELEASE_FINAL] {
+        return None;
+    }
+    let version = qualifier.get(&0x01)?;
+    (version.len() == 3).then(|| FirmwareVersion {
+        major: version[0],
+        minor: version[1],
+        patch: version[2],
+    })
 }
 
 pub fn read_info<T: CardTransport>(transport: &mut T) -> Result<ManagementInfo> {

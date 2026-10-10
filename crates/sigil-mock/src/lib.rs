@@ -203,7 +203,7 @@ impl MockDiscovery {
         Self::with_devices(vec![DeviceInfo {
             id: DeviceId("mock-yubikey-12345678".into()),
             vendor: "Yubico (simulated)".into(),
-            model: "YubiKey 5 NFC (simulated)".into(),
+            model: "YubiKey 5 NFC".into(),
             serial: Some("12345678".into()),
             firmware: Some(FirmwareVersion {
                 major: 5,

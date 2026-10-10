@@ -3,7 +3,7 @@ use sigil_core::DeviceId;
 
 use crate::{
     icons::Icon,
-    pages::home::{device_name, firmware},
+    pages::home::firmware,
     state::{AppState, Page},
 };
 
@@ -45,7 +45,7 @@ pub fn LeftNav() -> Element {
                 if !collapsed {
                     div { class: "device-pill-content",
                         if let Some(device) = current.as_ref() {
-                            strong { "{device_name(device)}" }
+                            strong { "{device.model}" }
                             small { "S/N: {device.serial.as_deref().unwrap_or(\"unavailable\")}" }
                             small { "F/W: {firmware(device)}" }
                         } else {
@@ -65,7 +65,7 @@ pub fn LeftNav() -> Element {
                                 dialog.set(None);
                             },
                             for device in devices.iter() {
-                                option { value: "{device.id.0}", "{device_name(device)}" }
+                                option { value: "{device.id.0}", "{device.model}" }
                             }
                         }
                     }
