@@ -4,6 +4,7 @@ pub mod audit_outbox;
 pub mod backend;
 pub mod caller;
 pub mod config;
+pub mod enrollment;
 pub mod grant;
 pub mod ipc;
 pub mod secure_path;
@@ -77,6 +78,7 @@ pub async fn run(
     if let Some(backend) = &backend {
         service = service.with_backend(Arc::clone(backend));
     }
+    service = service.with_issuing_cas(config.issuing_cas()?);
     if let Some(outbox) = &audit_outbox {
         service = service.with_audit_outbox(Arc::clone(outbox));
     }

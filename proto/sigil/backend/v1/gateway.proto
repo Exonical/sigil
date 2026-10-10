@@ -12,6 +12,8 @@ service AgentGateway {
   rpc CompleteRotation(CompleteRotationRequest) returns (CompleteRotationResponse);
   rpc ReportAudit(ReportAuditRequest) returns (ReportAuditResponse);
   rpc ReportTokens(ReportTokensRequest) returns (ReportTokensResponse);
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
 }
 
 message RequestGrantRequest {
@@ -94,3 +96,43 @@ message ReportTokensRequest {
 }
 
 message ReportTokensResponse {}
+
+message ListProfilesRequest {
+  string access_token = 1;
+  // Optional. When a token is named, only profiles the caller may enroll on that token are returned.
+  string token_vendor = 2;
+  string token_serial = 3;
+}
+
+message CertificateProfile {
+  string name = 1;
+  string display_name = 2;
+  uint32 piv_slot = 3;
+  string algorithm = 4;
+  string pin_policy = 5;
+  string touch_policy = 6;
+  // Set when a token was named: the subject the CA will issue for that token. CSRs must carry this CN.
+  string expected_subject = 7;
+}
+
+message ListProfilesResponse {
+  repeated CertificateProfile profiles = 1;
+}
+
+message IssueCertificateRequest {
+  string access_token = 1;
+  string token_vendor = 2;
+  string token_serial = 3;
+  string caller_os_user = 4;
+  string profile = 5;
+  bytes csr_der = 6;
+  bytes attestation_der = 7;
+  bytes attestation_intermediate_der = 8;
+}
+
+message IssueCertificateResponse {
+  repeated bytes chain_der = 1;
+  string serial_number = 2;
+  string subject = 3;
+  int64 not_after_unix = 4;
+}

@@ -50,15 +50,15 @@ type GrantRecord struct {
 	KeyID        string
 }
 
-func (s *Store) UpsertUser(ctx context.Context, issuer, subject, email, displayName string) (string, error) {
+func (s *Store) UpsertUser(ctx context.Context, issuer, subject, username, email, displayName string) (string, error) {
 	var id string
 	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO users(issuer, subject, email, display_name)
-		VALUES($1, $2, $3, $4)
+		INSERT INTO users(issuer, subject, username, email, display_name)
+		VALUES($1, $2, $3, $4, $5)
 		ON CONFLICT(issuer, subject) DO UPDATE
-		SET email=EXCLUDED.email, display_name=EXCLUDED.display_name, last_seen_at=now()
+		SET username=EXCLUDED.username, email=EXCLUDED.email, display_name=EXCLUDED.display_name, last_seen_at=now()
 		RETURNING id::text
-	`, issuer, subject, email, displayName).Scan(&id)
+	`, issuer, subject, username, email, displayName).Scan(&id)
 	if err != nil {
 		return "", fmt.Errorf("upsert authenticated user: %w", err)
 	}

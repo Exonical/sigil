@@ -234,6 +234,20 @@ impl ManagedAuthority for FakeAuthority {
             .max()
             .unwrap_or_default())
     }
+
+    async fn list_certificate_profiles(
+        &self,
+        _request: sigil_proto::backend::v1::ListProfilesRequest,
+    ) -> Result<sigil_proto::backend::v1::ListProfilesResponse, Status> {
+        Err(Status::unimplemented("fake authority has no profiles"))
+    }
+
+    async fn issue_certificate(
+        &self,
+        _request: sigil_proto::backend::v1::IssueCertificateRequest,
+    ) -> Result<sigil_proto::backend::v1::IssueCertificateResponse, Status> {
+        Err(Status::unimplemented("fake authority does not issue"))
+    }
 }
 
 fn secret(value: Vec<u8>, algorithm: &str) -> ManagedSecret {

@@ -13,6 +13,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
+use crate::enrollment;
 use crate::grant::{GrantExpectation, GrantProvider, GrantRequest, GrantVerifier, Unconfigured};
 use crate::{
     audit_outbox::{AuditOutbox, PendingCompletion},
@@ -61,6 +62,7 @@ pub struct AgentService {
     grant_verifier: Arc<GrantVerifier>,
     backend: Option<Arc<dyn ManagedAuthority>>,
     audit_outbox: Option<Arc<AuditOutbox>>,
+    issuing_cas: Vec<Vec<u8>>,
 }
 
 impl AgentService {
@@ -73,7 +75,13 @@ impl AgentService {
             grant_verifier: Arc::new(GrantVerifier::new(HashMap::new())),
             backend: None,
             audit_outbox: None,
+            issuing_cas: Vec::new(),
         }
+    }
+
+    pub fn with_issuing_cas(mut self, issuing_cas: Vec<Vec<u8>>) -> Self {
+        self.issuing_cas = issuing_cas;
+        self
     }
 
     pub fn with_authorization(
@@ -730,6 +738,171 @@ fn audit<T>(
             result = "error",
             code = ?status.code()
         ),
+    }
+}
+
+fn with_caller<T>(message: T, caller: &CallerIdentity) -> Request<T> {
+    let mut request = Request::new(message);
+    request.extensions_mut().insert(caller.clone());
+    request
+}
+
+impl AgentService {
+    async fn backend_profiles(
+        &self,
+        device_id: &str,
+        managed: &v1::ManagedAuthorization,
+    ) -> std::result::Result<
+        (
+            String,
+            String,
+            sigil_proto::backend::v1::ListProfilesResponse,
+        ),
+        Status,
+    > {
+        let backend = self.backend.clone().ok_or_else(|| {
+            status_from_error(&CredentialError::BackendUnavailable(
+                "backend is not configured".into(),
+            ))
+        })?;
+        if managed.access_token.is_empty() {
+            return Err(status_from_error(&CredentialError::BackendRejected(
+                "managed access token is required".into(),
+            )));
+        }
+        let id = DeviceId(device_id.to_owned());
+        let credentials = self.credentials.clone();
+        let info = blocking(move || credentials.device(&id)).await?;
+        let (vendor, serial) = token_identity(&info).ok_or_else(|| {
+            status_from_error(&CredentialError::OperationUnauthorized(
+                "the device serial number is unavailable".into(),
+            ))
+        })?;
+        let profiles = backend
+            .list_certificate_profiles(sigil_proto::backend::v1::ListProfilesRequest {
+                access_token: managed.access_token.clone(),
+                token_vendor: vendor.clone(),
+                token_serial: serial.clone(),
+            })
+            .await?;
+        Ok((vendor, serial, profiles))
+    }
+
+    async fn enroll_certificate(
+        &self,
+        caller: &CallerIdentity,
+        device_id: &str,
+        mut input: v1::EnrollPivCertificateRequest,
+    ) -> std::result::Result<v1::EnrollPivCertificateResponse, Status> {
+        let managed = input.managed.take().ok_or_else(|| {
+            Status::invalid_argument("managed authorization is required for enrollment")
+        })?;
+        let pin = Zeroizing::new(std::mem::take(&mut input.pin));
+        let serial = input.expected_serial.clone();
+        let (vendor, token_serial, profiles) = self.backend_profiles(device_id, &managed).await?;
+        let profile = profiles
+            .profiles
+            .into_iter()
+            .find(|profile| profile.name == input.profile)
+            .ok_or_else(|| Status::invalid_argument("unknown certificate profile"))?;
+        if profile.expected_subject.is_empty() {
+            return Err(Status::failed_precondition(
+                "the token has no assigned user for this certificate profile",
+            ));
+        }
+        let slot_byte = profile.piv_slot;
+        let generate = v1::GeneratePivKeyRequest {
+            id: device_id.to_owned(),
+            expected_serial: serial.clone(),
+            management_key: Vec::new(),
+            management_key_algorithm: 0,
+            slot_byte,
+            algorithm: enrollment::key_algorithm_name(&profile.algorithm)? as i32,
+            pin_policy: enrollment::pin_policy_name(&profile.pin_policy)? as i32,
+            touch_policy: enrollment::touch_policy_name(&profile.touch_policy)? as i32,
+            managed: Some(managed.clone()),
+        };
+        let spki = v1::agent_server::Agent::generate_piv_key(self, with_caller(generate, caller))
+            .await?
+            .into_inner()
+            .subject_public_key_info;
+        let attested = v1::agent_server::Agent::attest_piv_key(
+            self,
+            with_caller(
+                v1::AttestPivKeyRequest {
+                    id: device_id.to_owned(),
+                    expected_serial: serial.clone(),
+                    slot_byte,
+                },
+                caller,
+            ),
+        )
+        .await?
+        .into_inner();
+        let csr_der = v1::agent_server::Agent::sign_piv_csr(
+            self,
+            with_caller(
+                v1::SignPivCsrRequest {
+                    id: device_id.to_owned(),
+                    expected_serial: serial.clone(),
+                    pin: pin.to_vec(),
+                    slot_byte,
+                    subject_dn: format!("CN={}", profile.expected_subject),
+                },
+                caller,
+            ),
+        )
+        .await?
+        .into_inner()
+        .csr_der;
+        drop(pin);
+        let backend = self.backend.clone().ok_or_else(|| {
+            status_from_error(&CredentialError::BackendUnavailable(
+                "backend is not configured".into(),
+            ))
+        })?;
+        let issued = backend
+            .issue_certificate(sigil_proto::backend::v1::IssueCertificateRequest {
+                access_token: managed.access_token.clone(),
+                token_vendor: vendor,
+                token_serial,
+                caller_os_user: caller.os_user.clone(),
+                profile: profile.name.clone(),
+                csr_der,
+                attestation_der: attested.attestation_der,
+                attestation_intermediate_der: attested.intermediate_der,
+            })
+            .await?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or_default();
+        enrollment::verify_issued_chain(&issued.chain_der, &self.issuing_cas, &spki, now).map_err(
+            |reason| status_from_error(&CredentialError::BackendRejected(reason.to_owned())),
+        )?;
+        let certificate_der = issued.chain_der[0].clone();
+        v1::agent_server::Agent::import_piv_certificate(
+            self,
+            with_caller(
+                v1::ImportPivCertificateRequest {
+                    id: device_id.to_owned(),
+                    expected_serial: serial,
+                    management_key: Vec::new(),
+                    management_key_algorithm: 0,
+                    slot_byte,
+                    certificate_der: certificate_der.clone(),
+                    managed: Some(managed),
+                },
+                caller,
+            ),
+        )
+        .await?;
+        Ok(v1::EnrollPivCertificateResponse {
+            certificate_der,
+            not_after_unix: issued.not_after_unix,
+            subject: issued.subject,
+            serial_number: issued.serial_number,
+        })
     }
 }
 
@@ -1648,6 +1821,73 @@ impl v1::agent_server::Agent for AgentService {
             &result,
         );
         result.map(|_| Response::new(v1::Empty {}))
+    }
+
+    async fn list_certificate_profiles(
+        &self,
+        request: Request<v1::ListCertificateProfilesRequest>,
+    ) -> std::result::Result<Response<v1::ListCertificateProfilesResponse>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller_piv(
+            &request,
+            "ListCertificateProfiles",
+            &device_id,
+            "PIV_ENROLL",
+            None,
+        )?;
+        let mut input = request.into_inner();
+        let managed = input.managed.take().unwrap_or_default();
+        let result =
+            self.backend_profiles(&device_id, &managed)
+                .await
+                .and_then(|(_, _, profiles)| {
+                    profiles
+                        .profiles
+                        .iter()
+                        .map(enrollment::profile_message)
+                        .collect::<std::result::Result<Vec<_>, Status>>()
+                });
+        let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
+        audit_piv(
+            &caller,
+            "ListCertificateProfiles",
+            &device_id,
+            "PIV_ENROLL",
+            None,
+            "",
+            None,
+            &outcome,
+        );
+        result.map(|profiles| Response::new(v1::ListCertificateProfilesResponse { profiles }))
+    }
+
+    async fn enroll_piv_certificate(
+        &self,
+        request: Request<v1::EnrollPivCertificateRequest>,
+    ) -> std::result::Result<Response<v1::EnrollPivCertificateResponse>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller_piv(
+            &request,
+            "EnrollPivCertificate",
+            &device_id,
+            "PIV_ENROLL",
+            None,
+        )?;
+        let input = request.into_inner();
+        let serial = input.expected_serial.clone();
+        let result = self.enroll_certificate(&caller, &device_id, input).await;
+        let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
+        audit_piv(
+            &caller,
+            "EnrollPivCertificate",
+            &device_id,
+            "PIV_ENROLL",
+            None,
+            &serial,
+            None,
+            &outcome,
+        );
+        result.map(Response::new)
     }
 
     async fn generate_piv_key(

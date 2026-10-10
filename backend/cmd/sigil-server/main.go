@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/authn"
+	"github.com/Exonical/sigil/backend/internal/ca"
 	"github.com/Exonical/sigil/backend/internal/config"
 	"github.com/Exonical/sigil/backend/internal/db"
 	"github.com/Exonical/sigil/backend/internal/escrow"
@@ -50,6 +52,8 @@ func run(args []string) error {
 		default:
 			return errors.New("expected station add or station disable")
 		}
+	case "token":
+		return tokenCommand(args[1:])
 	case "audit":
 		if len(args) < 2 || args[1] != "verify" {
 			return errors.New("expected audit verify")
@@ -90,6 +94,11 @@ func serve(args []string) error {
 		return err
 	}
 	service := gateway.New(store, authenticator, signer, *cfg, slog.Default())
+	cas, err := buildCertificateAuthorities(cfg.CA)
+	if err != nil {
+		return err
+	}
+	service.ConfigureIssuance(cas)
 	defer service.Close()
 	server, err := gateway.NewGRPCServer(cfg.TLS, service)
 	if err != nil {
@@ -305,4 +314,32 @@ func normalizeDNSName(value string) (string, error) {
 		}
 	}
 	return name, nil
+}
+
+func buildCertificateAuthorities(configs map[string]config.CA) (map[string]ca.CA, error) {
+	cas := make(map[string]ca.CA, len(configs))
+	for name, settings := range configs {
+		root, err := os.ReadFile(settings.RootFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA %q root file: %w", name, err)
+		}
+		encrypted, err := os.ReadFile(settings.ProvisionerKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA %q provisioner key: %w", name, err)
+		}
+		password, err := os.ReadFile(settings.ProvisionerPasswordFile)
+		if err != nil {
+			return nil, fmt.Errorf("read CA %q provisioner password: %w", name, err)
+		}
+		key, err := ca.LoadProvisionerKey(encrypted, bytes.TrimSpace(password))
+		if err != nil {
+			return nil, fmt.Errorf("load CA %q provisioner key: %w", name, err)
+		}
+		client, err := ca.NewStep(ca.StepConfig{URL: settings.URL, RootPEM: root, Provisioner: settings.Provisioner, Key: key})
+		if err != nil {
+			return nil, fmt.Errorf("configure CA %q: %w", name, err)
+		}
+		cas[name] = client
+	}
+	return cas, nil
 }

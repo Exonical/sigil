@@ -57,3 +57,14 @@ Managed operations (cms piv managed ... and --managed on key and certificate com
 4. Run managed commands through the agent: `.\target\sidekick\debug\cms.exe --agent '\\.\pipe\sigil-agent-dev' piv managed init <device-id>` (the device ID comes from cms device list). The agent refuses the operation unless the key is at factory defaults.
 
 Without `--agent`, managed commands fail with "managed operations need the Sigil agent".
+
+# Certificate enrollment through the dev CA
+
+The dev certificate authority is Smallstep step-ca, pinned to 0.30.2 and run in rootless Podman on the `podman-machine-default` connection.
+
+1. Start it: `.\dev\stepca\up.ps1`. It serves `https://localhost:9100`; host port 9100 avoids the Authentik server on 9000. It creates the `sigil-backend` JWK provisioner, the root at `dev\.secrets\stepca\root_ca.crt`, and the encrypted provisioner key and password under `dev\.secrets\stepca\` (never printed).
+2. The backend reads the CA from `[ca.dev-step]` and the `piv-authentication` profile in `dev\.secrets\backend\backend.toml`. Restart the backend after changing either.
+3. The step-ca server certificate is valid for 24 hours and is reissued when the container starts. If the backend reports a TLS or CA error after a day, rerun `.\dev\stepca\up.ps1`.
+4. Assign the token to a user who has signed in at least once: `go run ./cmd/sigil-server token assign --config ..\dev\.secrets\backend\backend.toml --serial <serial> --user <username-or-email>` from `backend\`. The certificate subject is the assigned user's username, and the CSR must carry the same common name. The agent builds it from `ListProfiles`.
+5. The elevated dev agent installs a certificate only if it chains to `issuing-ca.crt`, which `dev\agent\setup.ps1` copies from the step-ca root. Rerun setup elevated, then restart the agent.
+6. Enroll (agent mode, signed in): `cms --agent '\\.\pipe\sigil-agent-dev' piv profiles <device-id>` and then `cms --agent '\\.\pipe\sigil-agent-dev' piv enroll <device-id> --profile piv-authentication`. The command prompts once for the PIV PIN. The agent generates the key on the token, attests slot 9a, has the backend sign the CSR, verifies the chain against `issuing-ca.crt` and the key on the token, then imports the certificate.

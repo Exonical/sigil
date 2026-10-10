@@ -842,6 +842,372 @@ func (*ReportTokensResponse) Descriptor() ([]byte, []int) {
 	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{12}
 }
 
+type ListProfilesRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	// Optional. When a token is named, only profiles the caller may enroll on that token are returned.
+	TokenVendor   string `protobuf:"bytes,2,opt,name=token_vendor,json=tokenVendor,proto3" json:"token_vendor,omitempty"`
+	TokenSerial   string `protobuf:"bytes,3,opt,name=token_serial,json=tokenSerial,proto3" json:"token_serial,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProfilesRequest) Reset() {
+	*x = ListProfilesRequest{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProfilesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProfilesRequest) ProtoMessage() {}
+
+func (x *ListProfilesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProfilesRequest.ProtoReflect.Descriptor instead.
+func (*ListProfilesRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ListProfilesRequest) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *ListProfilesRequest) GetTokenVendor() string {
+	if x != nil {
+		return x.TokenVendor
+	}
+	return ""
+}
+
+func (x *ListProfilesRequest) GetTokenSerial() string {
+	if x != nil {
+		return x.TokenSerial
+	}
+	return ""
+}
+
+type CertificateProfile struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	DisplayName string                 `protobuf:"bytes,2,opt,name=display_name,json=displayName,proto3" json:"display_name,omitempty"`
+	PivSlot     uint32                 `protobuf:"varint,3,opt,name=piv_slot,json=pivSlot,proto3" json:"piv_slot,omitempty"`
+	Algorithm   string                 `protobuf:"bytes,4,opt,name=algorithm,proto3" json:"algorithm,omitempty"`
+	PinPolicy   string                 `protobuf:"bytes,5,opt,name=pin_policy,json=pinPolicy,proto3" json:"pin_policy,omitempty"`
+	TouchPolicy string                 `protobuf:"bytes,6,opt,name=touch_policy,json=touchPolicy,proto3" json:"touch_policy,omitempty"`
+	// Set when a token was named: the subject the CA will issue for that token. CSRs must carry this CN.
+	ExpectedSubject string `protobuf:"bytes,7,opt,name=expected_subject,json=expectedSubject,proto3" json:"expected_subject,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CertificateProfile) Reset() {
+	*x = CertificateProfile{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateProfile) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateProfile) ProtoMessage() {}
+
+func (x *CertificateProfile) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateProfile.ProtoReflect.Descriptor instead.
+func (*CertificateProfile) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CertificateProfile) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CertificateProfile) GetDisplayName() string {
+	if x != nil {
+		return x.DisplayName
+	}
+	return ""
+}
+
+func (x *CertificateProfile) GetPivSlot() uint32 {
+	if x != nil {
+		return x.PivSlot
+	}
+	return 0
+}
+
+func (x *CertificateProfile) GetAlgorithm() string {
+	if x != nil {
+		return x.Algorithm
+	}
+	return ""
+}
+
+func (x *CertificateProfile) GetPinPolicy() string {
+	if x != nil {
+		return x.PinPolicy
+	}
+	return ""
+}
+
+func (x *CertificateProfile) GetTouchPolicy() string {
+	if x != nil {
+		return x.TouchPolicy
+	}
+	return ""
+}
+
+func (x *CertificateProfile) GetExpectedSubject() string {
+	if x != nil {
+		return x.ExpectedSubject
+	}
+	return ""
+}
+
+type ListProfilesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Profiles      []*CertificateProfile  `protobuf:"bytes,1,rep,name=profiles,proto3" json:"profiles,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListProfilesResponse) Reset() {
+	*x = ListProfilesResponse{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListProfilesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListProfilesResponse) ProtoMessage() {}
+
+func (x *ListProfilesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListProfilesResponse.ProtoReflect.Descriptor instead.
+func (*ListProfilesResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListProfilesResponse) GetProfiles() []*CertificateProfile {
+	if x != nil {
+		return x.Profiles
+	}
+	return nil
+}
+
+type IssueCertificateRequest struct {
+	state                      protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken                string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	TokenVendor                string                 `protobuf:"bytes,2,opt,name=token_vendor,json=tokenVendor,proto3" json:"token_vendor,omitempty"`
+	TokenSerial                string                 `protobuf:"bytes,3,opt,name=token_serial,json=tokenSerial,proto3" json:"token_serial,omitempty"`
+	CallerOsUser               string                 `protobuf:"bytes,4,opt,name=caller_os_user,json=callerOsUser,proto3" json:"caller_os_user,omitempty"`
+	Profile                    string                 `protobuf:"bytes,5,opt,name=profile,proto3" json:"profile,omitempty"`
+	CsrDer                     []byte                 `protobuf:"bytes,6,opt,name=csr_der,json=csrDer,proto3" json:"csr_der,omitempty"`
+	AttestationDer             []byte                 `protobuf:"bytes,7,opt,name=attestation_der,json=attestationDer,proto3" json:"attestation_der,omitempty"`
+	AttestationIntermediateDer []byte                 `protobuf:"bytes,8,opt,name=attestation_intermediate_der,json=attestationIntermediateDer,proto3" json:"attestation_intermediate_der,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *IssueCertificateRequest) Reset() {
+	*x = IssueCertificateRequest{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueCertificateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueCertificateRequest) ProtoMessage() {}
+
+func (x *IssueCertificateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueCertificateRequest.ProtoReflect.Descriptor instead.
+func (*IssueCertificateRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *IssueCertificateRequest) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *IssueCertificateRequest) GetTokenVendor() string {
+	if x != nil {
+		return x.TokenVendor
+	}
+	return ""
+}
+
+func (x *IssueCertificateRequest) GetTokenSerial() string {
+	if x != nil {
+		return x.TokenSerial
+	}
+	return ""
+}
+
+func (x *IssueCertificateRequest) GetCallerOsUser() string {
+	if x != nil {
+		return x.CallerOsUser
+	}
+	return ""
+}
+
+func (x *IssueCertificateRequest) GetProfile() string {
+	if x != nil {
+		return x.Profile
+	}
+	return ""
+}
+
+func (x *IssueCertificateRequest) GetCsrDer() []byte {
+	if x != nil {
+		return x.CsrDer
+	}
+	return nil
+}
+
+func (x *IssueCertificateRequest) GetAttestationDer() []byte {
+	if x != nil {
+		return x.AttestationDer
+	}
+	return nil
+}
+
+func (x *IssueCertificateRequest) GetAttestationIntermediateDer() []byte {
+	if x != nil {
+		return x.AttestationIntermediateDer
+	}
+	return nil
+}
+
+type IssueCertificateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ChainDer      [][]byte               `protobuf:"bytes,1,rep,name=chain_der,json=chainDer,proto3" json:"chain_der,omitempty"`
+	SerialNumber  string                 `protobuf:"bytes,2,opt,name=serial_number,json=serialNumber,proto3" json:"serial_number,omitempty"`
+	Subject       string                 `protobuf:"bytes,3,opt,name=subject,proto3" json:"subject,omitempty"`
+	NotAfterUnix  int64                  `protobuf:"varint,4,opt,name=not_after_unix,json=notAfterUnix,proto3" json:"not_after_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueCertificateResponse) Reset() {
+	*x = IssueCertificateResponse{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueCertificateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueCertificateResponse) ProtoMessage() {}
+
+func (x *IssueCertificateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueCertificateResponse.ProtoReflect.Descriptor instead.
+func (*IssueCertificateResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *IssueCertificateResponse) GetChainDer() [][]byte {
+	if x != nil {
+		return x.ChainDer
+	}
+	return nil
+}
+
+func (x *IssueCertificateResponse) GetSerialNumber() string {
+	if x != nil {
+		return x.SerialNumber
+	}
+	return ""
+}
+
+func (x *IssueCertificateResponse) GetSubject() string {
+	if x != nil {
+		return x.Subject
+	}
+	return ""
+}
+
+func (x *IssueCertificateResponse) GetNotAfterUnix() int64 {
+	if x != nil {
+		return x.NotAfterUnix
+	}
+	return 0
+}
+
 var File_sigil_backend_v1_gateway_proto protoreflect.FileDescriptor
 
 const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
@@ -911,13 +1277,44 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"connection\"N\n" +
 	"\x13ReportTokensRequest\x127\n" +
 	"\x06tokens\x18\x01 \x03(\v2\x1f.sigil.backend.v1.ObservedTokenR\x06tokens\"\x16\n" +
-	"\x14ReportTokensResponse2\x9a\x04\n" +
+	"\x14ReportTokensResponse\"~\n" +
+	"\x13ListProfilesRequest\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12!\n" +
+	"\ftoken_vendor\x18\x02 \x01(\tR\vtokenVendor\x12!\n" +
+	"\ftoken_serial\x18\x03 \x01(\tR\vtokenSerial\"\xf1\x01\n" +
+	"\x12CertificateProfile\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
+	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x19\n" +
+	"\bpiv_slot\x18\x03 \x01(\rR\apivSlot\x12\x1c\n" +
+	"\talgorithm\x18\x04 \x01(\tR\talgorithm\x12\x1d\n" +
+	"\n" +
+	"pin_policy\x18\x05 \x01(\tR\tpinPolicy\x12!\n" +
+	"\ftouch_policy\x18\x06 \x01(\tR\vtouchPolicy\x12)\n" +
+	"\x10expected_subject\x18\a \x01(\tR\x0fexpectedSubject\"X\n" +
+	"\x14ListProfilesResponse\x12@\n" +
+	"\bprofiles\x18\x01 \x03(\v2$.sigil.backend.v1.CertificateProfileR\bprofiles\"\xc6\x02\n" +
+	"\x17IssueCertificateRequest\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12!\n" +
+	"\ftoken_vendor\x18\x02 \x01(\tR\vtokenVendor\x12!\n" +
+	"\ftoken_serial\x18\x03 \x01(\tR\vtokenSerial\x12$\n" +
+	"\x0ecaller_os_user\x18\x04 \x01(\tR\fcallerOsUser\x12\x18\n" +
+	"\aprofile\x18\x05 \x01(\tR\aprofile\x12\x17\n" +
+	"\acsr_der\x18\x06 \x01(\fR\x06csrDer\x12'\n" +
+	"\x0fattestation_der\x18\a \x01(\fR\x0eattestationDer\x12@\n" +
+	"\x1cattestation_intermediate_der\x18\b \x01(\fR\x1aattestationIntermediateDer\"\x9c\x01\n" +
+	"\x18IssueCertificateResponse\x12\x1b\n" +
+	"\tchain_der\x18\x01 \x03(\fR\bchainDer\x12#\n" +
+	"\rserial_number\x18\x02 \x01(\tR\fserialNumber\x12\x18\n" +
+	"\asubject\x18\x03 \x01(\tR\asubject\x12$\n" +
+	"\x0enot_after_unix\x18\x04 \x01(\x03R\fnotAfterUnix2\xe4\x05\n" +
 	"\fAgentGateway\x12]\n" +
 	"\fRequestGrant\x12%.sigil.backend.v1.RequestGrantRequest\x1a&.sigil.backend.v1.RequestGrantResponse\x12\x84\x01\n" +
 	"\x19AuthorizeManagedOperation\x122.sigil.backend.v1.AuthorizeManagedOperationRequest\x1a3.sigil.backend.v1.AuthorizeManagedOperationResponse\x12i\n" +
 	"\x10CompleteRotation\x12).sigil.backend.v1.CompleteRotationRequest\x1a*.sigil.backend.v1.CompleteRotationResponse\x12Z\n" +
 	"\vReportAudit\x12$.sigil.backend.v1.ReportAuditRequest\x1a%.sigil.backend.v1.ReportAuditResponse\x12]\n" +
-	"\fReportTokens\x12%.sigil.backend.v1.ReportTokensRequest\x1a&.sigil.backend.v1.ReportTokensResponseBBZ@github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1b\x06proto3"
+	"\fReportTokens\x12%.sigil.backend.v1.ReportTokensRequest\x1a&.sigil.backend.v1.ReportTokensResponse\x12]\n" +
+	"\fListProfiles\x12%.sigil.backend.v1.ListProfilesRequest\x1a&.sigil.backend.v1.ListProfilesResponse\x12i\n" +
+	"\x10IssueCertificate\x12).sigil.backend.v1.IssueCertificateRequest\x1a*.sigil.backend.v1.IssueCertificateResponseBBZ@github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1b\x06proto3"
 
 var (
 	file_sigil_backend_v1_gateway_proto_rawDescOnce sync.Once
@@ -931,7 +1328,7 @@ func file_sigil_backend_v1_gateway_proto_rawDescGZIP() []byte {
 	return file_sigil_backend_v1_gateway_proto_rawDescData
 }
 
-var file_sigil_backend_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_sigil_backend_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_sigil_backend_v1_gateway_proto_goTypes = []any{
 	(*RequestGrantRequest)(nil),               // 0: sigil.backend.v1.RequestGrantRequest
 	(*RequestGrantResponse)(nil),              // 1: sigil.backend.v1.RequestGrantResponse
@@ -946,35 +1343,45 @@ var file_sigil_backend_v1_gateway_proto_goTypes = []any{
 	(*ObservedToken)(nil),                     // 10: sigil.backend.v1.ObservedToken
 	(*ReportTokensRequest)(nil),               // 11: sigil.backend.v1.ReportTokensRequest
 	(*ReportTokensResponse)(nil),              // 12: sigil.backend.v1.ReportTokensResponse
-	(v1.Operation)(0),                         // 13: sigil.agent.v1.Operation
-	(*v1.SignedGrant)(nil),                    // 14: sigil.agent.v1.SignedGrant
+	(*ListProfilesRequest)(nil),               // 13: sigil.backend.v1.ListProfilesRequest
+	(*CertificateProfile)(nil),                // 14: sigil.backend.v1.CertificateProfile
+	(*ListProfilesResponse)(nil),              // 15: sigil.backend.v1.ListProfilesResponse
+	(*IssueCertificateRequest)(nil),           // 16: sigil.backend.v1.IssueCertificateRequest
+	(*IssueCertificateResponse)(nil),          // 17: sigil.backend.v1.IssueCertificateResponse
+	(v1.Operation)(0),                         // 18: sigil.agent.v1.Operation
+	(*v1.SignedGrant)(nil),                    // 19: sigil.agent.v1.SignedGrant
 }
 var file_sigil_backend_v1_gateway_proto_depIdxs = []int32{
-	13, // 0: sigil.backend.v1.RequestGrantRequest.operation:type_name -> sigil.agent.v1.Operation
-	14, // 1: sigil.backend.v1.RequestGrantResponse.grant:type_name -> sigil.agent.v1.SignedGrant
-	13, // 2: sigil.backend.v1.AuthorizeManagedOperationRequest.operation:type_name -> sigil.agent.v1.Operation
-	14, // 3: sigil.backend.v1.AuthorizeManagedOperationResponse.grant:type_name -> sigil.agent.v1.SignedGrant
+	18, // 0: sigil.backend.v1.RequestGrantRequest.operation:type_name -> sigil.agent.v1.Operation
+	19, // 1: sigil.backend.v1.RequestGrantResponse.grant:type_name -> sigil.agent.v1.SignedGrant
+	18, // 2: sigil.backend.v1.AuthorizeManagedOperationRequest.operation:type_name -> sigil.agent.v1.Operation
+	19, // 3: sigil.backend.v1.AuthorizeManagedOperationResponse.grant:type_name -> sigil.agent.v1.SignedGrant
 	3,  // 4: sigil.backend.v1.AuthorizeManagedOperationResponse.current_management_key:type_name -> sigil.backend.v1.EscrowedSecret
 	3,  // 5: sigil.backend.v1.AuthorizeManagedOperationResponse.current_puk:type_name -> sigil.backend.v1.EscrowedSecret
 	3,  // 6: sigil.backend.v1.AuthorizeManagedOperationResponse.new_management_key:type_name -> sigil.backend.v1.EscrowedSecret
 	3,  // 7: sigil.backend.v1.AuthorizeManagedOperationResponse.new_puk:type_name -> sigil.backend.v1.EscrowedSecret
 	7,  // 8: sigil.backend.v1.ReportAuditRequest.events:type_name -> sigil.backend.v1.AgentAuditEvent
 	10, // 9: sigil.backend.v1.ReportTokensRequest.tokens:type_name -> sigil.backend.v1.ObservedToken
-	0,  // 10: sigil.backend.v1.AgentGateway.RequestGrant:input_type -> sigil.backend.v1.RequestGrantRequest
-	2,  // 11: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:input_type -> sigil.backend.v1.AuthorizeManagedOperationRequest
-	5,  // 12: sigil.backend.v1.AgentGateway.CompleteRotation:input_type -> sigil.backend.v1.CompleteRotationRequest
-	8,  // 13: sigil.backend.v1.AgentGateway.ReportAudit:input_type -> sigil.backend.v1.ReportAuditRequest
-	11, // 14: sigil.backend.v1.AgentGateway.ReportTokens:input_type -> sigil.backend.v1.ReportTokensRequest
-	1,  // 15: sigil.backend.v1.AgentGateway.RequestGrant:output_type -> sigil.backend.v1.RequestGrantResponse
-	4,  // 16: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:output_type -> sigil.backend.v1.AuthorizeManagedOperationResponse
-	6,  // 17: sigil.backend.v1.AgentGateway.CompleteRotation:output_type -> sigil.backend.v1.CompleteRotationResponse
-	9,  // 18: sigil.backend.v1.AgentGateway.ReportAudit:output_type -> sigil.backend.v1.ReportAuditResponse
-	12, // 19: sigil.backend.v1.AgentGateway.ReportTokens:output_type -> sigil.backend.v1.ReportTokensResponse
-	15, // [15:20] is the sub-list for method output_type
-	10, // [10:15] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	14, // 10: sigil.backend.v1.ListProfilesResponse.profiles:type_name -> sigil.backend.v1.CertificateProfile
+	0,  // 11: sigil.backend.v1.AgentGateway.RequestGrant:input_type -> sigil.backend.v1.RequestGrantRequest
+	2,  // 12: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:input_type -> sigil.backend.v1.AuthorizeManagedOperationRequest
+	5,  // 13: sigil.backend.v1.AgentGateway.CompleteRotation:input_type -> sigil.backend.v1.CompleteRotationRequest
+	8,  // 14: sigil.backend.v1.AgentGateway.ReportAudit:input_type -> sigil.backend.v1.ReportAuditRequest
+	11, // 15: sigil.backend.v1.AgentGateway.ReportTokens:input_type -> sigil.backend.v1.ReportTokensRequest
+	13, // 16: sigil.backend.v1.AgentGateway.ListProfiles:input_type -> sigil.backend.v1.ListProfilesRequest
+	16, // 17: sigil.backend.v1.AgentGateway.IssueCertificate:input_type -> sigil.backend.v1.IssueCertificateRequest
+	1,  // 18: sigil.backend.v1.AgentGateway.RequestGrant:output_type -> sigil.backend.v1.RequestGrantResponse
+	4,  // 19: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:output_type -> sigil.backend.v1.AuthorizeManagedOperationResponse
+	6,  // 20: sigil.backend.v1.AgentGateway.CompleteRotation:output_type -> sigil.backend.v1.CompleteRotationResponse
+	9,  // 21: sigil.backend.v1.AgentGateway.ReportAudit:output_type -> sigil.backend.v1.ReportAuditResponse
+	12, // 22: sigil.backend.v1.AgentGateway.ReportTokens:output_type -> sigil.backend.v1.ReportTokensResponse
+	15, // 23: sigil.backend.v1.AgentGateway.ListProfiles:output_type -> sigil.backend.v1.ListProfilesResponse
+	17, // 24: sigil.backend.v1.AgentGateway.IssueCertificate:output_type -> sigil.backend.v1.IssueCertificateResponse
+	18, // [18:25] is the sub-list for method output_type
+	11, // [11:18] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_sigil_backend_v1_gateway_proto_init() }
@@ -988,7 +1395,7 @@ func file_sigil_backend_v1_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sigil_backend_v1_gateway_proto_rawDesc), len(file_sigil_backend_v1_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -23,7 +23,7 @@ type memoryUsers struct {
 	records int
 }
 
-func (m *memoryUsers) UpsertUser(_ context.Context, issuer, subject, _, _ string) (string, error) {
+func (m *memoryUsers) UpsertUser(_ context.Context, issuer, subject, _, _, _ string) (string, error) {
 	m.records++
 	return issuer + "|" + subject, nil
 }

@@ -33,10 +33,12 @@ Copy-Item -LiteralPath (Join-Path $backendDirectory 'backend-server.crt') `
     -Destination (Join-Path $agentDirectory 'backend-server.crt') -Force
 Copy-Item -LiteralPath (Join-Path $backendDirectory 'grant-signing-public.pem') `
     -Destination (Join-Path $agentDirectory 'grant-signing-public.pem') -Force
+Copy-Item -LiteralPath (Join-Path $root 'dev\.secrets\stepca\root_ca.crt') -Destination (Join-Path $agentDirectory 'issuing-ca.crt') -Force
 
 $config = @'
 grant_keys = { "sigil-dev-v1" = "grant-signing-public.pem" }
 data_dir = "data"
+issuing_ca_files = ["issuing-ca.crt"]
 
 [backend]
 url = "https://localhost:50443"
@@ -53,7 +55,8 @@ if ($isAdministrator) {
     foreach ($path in @(
         $configPath,
         (Join-Path $agentDirectory 'backend-server.crt'),
-        (Join-Path $agentDirectory 'grant-signing-public.pem')
+        (Join-Path $agentDirectory 'grant-signing-public.pem'),
+        (Join-Path $agentDirectory 'issuing-ca.crt')
     )) {
         Set-Acl -LiteralPath $path -AclObject $fileAcl
     }

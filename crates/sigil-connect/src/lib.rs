@@ -109,6 +109,19 @@ pub trait ManagedPivAgent: Send + Sync {
         new_pin: &PivPin,
         token: &str,
     ) -> Result<(), CredentialError>;
+    fn certificate_profiles(
+        &self,
+        id: &DeviceId,
+        token: &str,
+    ) -> Result<Vec<sigil_client::CertificateProfile>, CredentialError>;
+    fn enroll_certificate(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        profile: &str,
+        pin: &PivPin,
+        token: &str,
+    ) -> Result<sigil_client::EnrolledCertificate, CredentialError>;
 }
 
 impl ManagedPivAgent for AgentClient {
@@ -179,6 +192,25 @@ impl ManagedPivAgent for AgentClient {
         token: &str,
     ) -> Result<(), CredentialError> {
         self.unblock_piv_pin_managed(id, serial, new_pin, token)
+    }
+
+    fn certificate_profiles(
+        &self,
+        id: &DeviceId,
+        token: &str,
+    ) -> Result<Vec<sigil_client::CertificateProfile>, CredentialError> {
+        self.list_certificate_profiles(id, token)
+    }
+
+    fn enroll_certificate(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        profile: &str,
+        pin: &PivPin,
+        token: &str,
+    ) -> Result<sigil_client::EnrolledCertificate, CredentialError> {
+        self.enroll_piv_certificate(id, serial, profile, pin, token)
     }
 }
 

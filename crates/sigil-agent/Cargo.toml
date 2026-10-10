@@ -46,6 +46,7 @@ rustls-platform-verifier = "0.7.1"
 async-trait = "0.1.89"
 hyper-util = { version = "0.1", features = ["tokio"] }
 tower = { version = "0.5", features = ["util"] }
+x509-parser = { version = "0.18", features = ["verify"] }
 
 [dev-dependencies]
 sigil-client = { path = "../sigil-client" }
@@ -57,4 +58,3 @@ rustls-cng = { version = "0.7.1", default-features = false, features = ["ring"] 
 sha1 = "0.10.7"
 windows-service = "0.8.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_RemoteDesktop", "Win32_System_SystemServices"] }
-x509-parser = "0.18"

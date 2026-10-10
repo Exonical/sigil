@@ -16,6 +16,7 @@ import (
 
 	agentv1 "github.com/Exonical/sigil/backend/gen/sigil/agent/v1"
 	backendv1 "github.com/Exonical/sigil/backend/gen/sigil/backend/v1"
+	"github.com/Exonical/sigil/backend/internal/attestation"
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/authn"
 	"github.com/Exonical/sigil/backend/internal/config"
@@ -45,6 +46,7 @@ type Server struct {
 	escrow    *escrow.Keyring
 	escrowErr error
 	now       func() time.Time
+	issuers   issuanceSettings
 }
 
 func New(store *db.Store, authenticator *authn.Authenticator, signer signing.Signer, cfg config.Config, logger *slog.Logger) *Server {
@@ -57,6 +59,7 @@ func New(store *db.Store, authenticator *authn.Authenticator, signer signing.Sig
 		policy:    policy.LocalPolicy{},
 		logger:    logger,
 		now:       time.Now,
+		issuers:   issuanceSettings{attest: attestation.Verify},
 	}
 	if cfg.Escrow.KEKID != "" {
 		server.escrow, server.escrowErr = escrow.NewKeyring(

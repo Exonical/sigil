@@ -24,6 +24,8 @@ const (
 	AgentGateway_CompleteRotation_FullMethodName          = "/sigil.backend.v1.AgentGateway/CompleteRotation"
 	AgentGateway_ReportAudit_FullMethodName               = "/sigil.backend.v1.AgentGateway/ReportAudit"
 	AgentGateway_ReportTokens_FullMethodName              = "/sigil.backend.v1.AgentGateway/ReportTokens"
+	AgentGateway_ListProfiles_FullMethodName              = "/sigil.backend.v1.AgentGateway/ListProfiles"
+	AgentGateway_IssueCertificate_FullMethodName          = "/sigil.backend.v1.AgentGateway/IssueCertificate"
 )
 
 // AgentGatewayClient is the client API for AgentGateway service.
@@ -35,6 +37,8 @@ type AgentGatewayClient interface {
 	CompleteRotation(ctx context.Context, in *CompleteRotationRequest, opts ...grpc.CallOption) (*CompleteRotationResponse, error)
 	ReportAudit(ctx context.Context, in *ReportAuditRequest, opts ...grpc.CallOption) (*ReportAuditResponse, error)
 	ReportTokens(ctx context.Context, in *ReportTokensRequest, opts ...grpc.CallOption) (*ReportTokensResponse, error)
+	ListProfiles(ctx context.Context, in *ListProfilesRequest, opts ...grpc.CallOption) (*ListProfilesResponse, error)
+	IssueCertificate(ctx context.Context, in *IssueCertificateRequest, opts ...grpc.CallOption) (*IssueCertificateResponse, error)
 }
 
 type agentGatewayClient struct {
@@ -95,6 +99,26 @@ func (c *agentGatewayClient) ReportTokens(ctx context.Context, in *ReportTokensR
 	return out, nil
 }
 
+func (c *agentGatewayClient) ListProfiles(ctx context.Context, in *ListProfilesRequest, opts ...grpc.CallOption) (*ListProfilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListProfilesResponse)
+	err := c.cc.Invoke(ctx, AgentGateway_ListProfiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentGatewayClient) IssueCertificate(ctx context.Context, in *IssueCertificateRequest, opts ...grpc.CallOption) (*IssueCertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IssueCertificateResponse)
+	err := c.cc.Invoke(ctx, AgentGateway_IssueCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentGatewayServer is the server API for AgentGateway service.
 // All implementations must embed UnimplementedAgentGatewayServer
 // for forward compatibility.
@@ -104,6 +128,8 @@ type AgentGatewayServer interface {
 	CompleteRotation(context.Context, *CompleteRotationRequest) (*CompleteRotationResponse, error)
 	ReportAudit(context.Context, *ReportAuditRequest) (*ReportAuditResponse, error)
 	ReportTokens(context.Context, *ReportTokensRequest) (*ReportTokensResponse, error)
+	ListProfiles(context.Context, *ListProfilesRequest) (*ListProfilesResponse, error)
+	IssueCertificate(context.Context, *IssueCertificateRequest) (*IssueCertificateResponse, error)
 	mustEmbedUnimplementedAgentGatewayServer()
 }
 
@@ -128,6 +154,12 @@ func (UnimplementedAgentGatewayServer) ReportAudit(context.Context, *ReportAudit
 }
 func (UnimplementedAgentGatewayServer) ReportTokens(context.Context, *ReportTokensRequest) (*ReportTokensResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportTokens not implemented")
+}
+func (UnimplementedAgentGatewayServer) ListProfiles(context.Context, *ListProfilesRequest) (*ListProfilesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListProfiles not implemented")
+}
+func (UnimplementedAgentGatewayServer) IssueCertificate(context.Context, *IssueCertificateRequest) (*IssueCertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IssueCertificate not implemented")
 }
 func (UnimplementedAgentGatewayServer) mustEmbedUnimplementedAgentGatewayServer() {}
 func (UnimplementedAgentGatewayServer) testEmbeddedByValue()                      {}
@@ -240,6 +272,42 @@ func _AgentGateway_ReportTokens_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentGateway_ListProfiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListProfilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentGatewayServer).ListProfiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentGateway_ListProfiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentGatewayServer).ListProfiles(ctx, req.(*ListProfilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _AgentGateway_IssueCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IssueCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentGatewayServer).IssueCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentGateway_IssueCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentGatewayServer).IssueCertificate(ctx, req.(*IssueCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentGateway_ServiceDesc is the grpc.ServiceDesc for AgentGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -266,6 +334,14 @@ var AgentGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReportTokens",
 			Handler:    _AgentGateway_ReportTokens_Handler,
+		},
+		{
+			MethodName: "ListProfiles",
+			Handler:    _AgentGateway_ListProfiles_Handler,
+		},
+		{
+			MethodName: "IssueCertificate",
+			Handler:    _AgentGateway_IssueCertificate_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

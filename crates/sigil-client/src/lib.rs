@@ -411,6 +411,69 @@ impl AgentClient {
             .map_err(Self::map_status)
     }
 
+    pub fn list_certificate_profiles(
+        &self,
+        id: &DeviceId,
+        access_token: &str,
+    ) -> Result<Vec<CertificateProfile>> {
+        self.runtime
+            .block_on(self.rpc.clone().list_certificate_profiles(
+                v1::ListCertificateProfilesRequest {
+                    id: id.0.clone(),
+                    managed: Some(managed_authorization(access_token)),
+                },
+            ))
+            .map(|response| {
+                response
+                    .into_inner()
+                    .profiles
+                    .into_iter()
+                    .map(|profile| CertificateProfile {
+                        name: profile.name,
+                        display_name: profile.display_name,
+                        slot: format!("{:02x}", profile.slot_byte),
+                        algorithm: profile.algorithm,
+                        pin_policy: profile.pin_policy,
+                        touch_policy: profile.touch_policy,
+                        expected_subject: profile.expected_subject,
+                    })
+                    .collect()
+            })
+            .map_err(Self::map_status)
+    }
+
+    pub fn enroll_piv_certificate(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        profile: &str,
+        pin: &PivPin,
+        access_token: &str,
+    ) -> Result<EnrolledCertificate> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .enroll_piv_certificate(v1::EnrollPivCertificateRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        profile: profile.to_owned(),
+                        pin: pin.as_bytes().to_vec(),
+                        managed: Some(managed_authorization(access_token)),
+                    }),
+            )
+            .map(|response| {
+                let response = response.into_inner();
+                EnrolledCertificate {
+                    certificate_der: response.certificate_der,
+                    not_after_unix: response.not_after_unix,
+                    subject: response.subject,
+                    serial_number: response.serial_number,
+                }
+            })
+            .map_err(Self::map_status)
+    }
+
     pub fn generate_piv_key_managed(
         &self,
         id: &DeviceId,
@@ -1090,4 +1153,27 @@ mod tests {
         let devices = client.list().expect("read installed agent device list");
         eprintln!("installed_service_device_count={}", devices.len());
     }
+}
+
+/// A certificate profile the backend offers to this user for this token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertificateProfile {
+    pub name: String,
+    pub display_name: String,
+    /// PIV slot as two lowercase hex digits, for example `9a`.
+    pub slot: String,
+    pub algorithm: String,
+    pub pin_policy: String,
+    pub touch_policy: String,
+    /// Subject common name the CA will issue for the token's assigned user.
+    pub expected_subject: String,
+}
+
+/// A certificate the agent installed after the CA issued it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnrolledCertificate {
+    pub certificate_der: Vec<u8>,
+    pub not_after_unix: i64,
+    pub subject: String,
+    pub serial_number: String,
 }

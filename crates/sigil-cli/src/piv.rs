@@ -25,6 +25,16 @@ pub enum PivCommand {
         #[command(subcommand)]
         command: ManagedCommand,
     },
+    /// List certificate profiles the backend allows for this token (agent only).
+    Profiles {
+        device: String,
+    },
+    /// Enroll a certificate for a profile: generate the key, attest it, get it signed, and install it (agent only).
+    Enroll {
+        device: String,
+        #[arg(long)]
+        profile: String,
+    },
     Info {
         device: String,
     },
@@ -335,6 +345,76 @@ fn handle_with_prompter<P: SecretPrompter>(
     prompter: &mut P,
 ) -> Result<String> {
     match command {
+        PivCommand::Profiles { device } => {
+            let agent = managed_agent(agent)?;
+            let token = auth::managed_access_token()?;
+            let id = DeviceId(device);
+            let profiles = agent
+                .certificate_profiles(&id, &token)
+                .map_err(managed_error)?;
+            if json {
+                Ok(serde_json::to_string_pretty(
+                    &profiles
+                        .iter()
+                        .map(|profile| {
+                            serde_json::json!({
+                                "name": profile.name,
+                                "display_name": profile.display_name,
+                                "slot": profile.slot,
+                                "algorithm": profile.algorithm,
+                                "pin_policy": profile.pin_policy,
+                                "touch_policy": profile.touch_policy,
+                                "subject": profile.expected_subject,
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )?)
+            } else if profiles.is_empty() {
+                Ok("No certificate profiles are available for this token.".into())
+            } else {
+                Ok(profiles
+                    .iter()
+                    .map(|profile| {
+                        format!(
+                            "{}: {} (slot {}, {}, PIN {}, touch {}, subject CN={})",
+                            profile.name,
+                            profile.display_name,
+                            profile.slot,
+                            profile.algorithm,
+                            profile.pin_policy,
+                            profile.touch_policy,
+                            profile.expected_subject
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"))
+            }
+        }
+        PivCommand::Enroll { device, profile } => {
+            let agent = managed_agent(agent)?;
+            let token = auth::managed_access_token()?;
+            let id = DeviceId(device);
+            let serial = device_serial(service, &id)?;
+            let fips = service.device(&id)?.fips == Some(true);
+            let pin = prompt_pin("PIV PIN: ", fips, prompter)?;
+            let enrolled = agent
+                .enroll_certificate(&id, &serial, &profile, &pin, &token)
+                .map_err(managed_error)?;
+            mutation_output(
+                json,
+                serde_json::json!({
+                    "operation": "enroll",
+                    "profile": profile,
+                    "subject": enrolled.subject,
+                    "serial_number": enrolled.serial_number,
+                    "not_after_unix": enrolled.not_after_unix,
+                }),
+                format!(
+                    "Enrolled {profile}: subject {}, certificate serial {}, valid until unix time {}.",
+                    enrolled.subject, enrolled.serial_number, enrolled.not_after_unix
+                ),
+            )
+        }
         PivCommand::Managed { command } => {
             let agent = managed_agent(agent)?;
             let token = auth::managed_access_token()?;

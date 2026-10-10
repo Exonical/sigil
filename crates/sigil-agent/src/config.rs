@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::Context;
 use p256::{ecdsa::VerifyingKey, pkcs8::DecodePublicKey};
+use rustls::pki_types::{CertificateDer, pem::PemObject as _};
 use serde::Deserialize;
 use sigil_core::CredentialError;
 
@@ -17,6 +18,8 @@ pub struct AgentConfig {
     pub station_id: Option<String>,
     pub grant_keys: HashMap<String, PathBuf>,
     pub backend: Option<BackendConfig>,
+    /// Root or intermediate certificates that issued certificates must chain to before the agent installs them.
+    pub issuing_ca_files: Vec<PathBuf>,
     /// Agent-owned mutable state (audit outbox, logs). Relative paths resolve against the config directory.
     pub data_dir: Option<PathBuf>,
     #[serde(skip)]
@@ -212,8 +215,26 @@ impl AgentConfig {
         crate::secure_path::trusted_key_path(&self.config_dir, path, self.allow_insecure_paths)
     }
 
+    #[cfg(any(debug_assertions, test))]
     pub(crate) fn trusted_path(&self, path: &Path) -> anyhow::Result<PathBuf> {
         self.key_path(path)
+    }
+
+    /// Loads the configured issuing CA certificates as DER, resolving and checking each file like other trusted paths.
+    pub fn issuing_cas(&self) -> anyhow::Result<Vec<Vec<u8>>> {
+        let mut certificates = Vec::new();
+        for requested in &self.issuing_ca_files {
+            let path = self.key_path(requested)?;
+            let pem = std::fs::read(&path)
+                .with_context(|| format!("could not read issuing CA file {}", path.display()))?;
+            for der in CertificateDer::pem_slice_iter(&pem) {
+                let der = der.with_context(|| {
+                    format!("issuing CA file {} is not valid PEM", path.display())
+                })?;
+                certificates.push(der.as_ref().to_vec());
+            }
+        }
+        Ok(certificates)
     }
 
     pub fn data_dir(&self) -> &Path {

@@ -16,7 +16,7 @@ import (
 var ErrUserStore = errors.New("OIDC user store unavailable")
 
 type UserStore interface {
-	UpsertUser(ctx context.Context, issuer, subject, email, displayName string) (string, error)
+	UpsertUser(ctx context.Context, issuer, subject, username, email, displayName string) (string, error)
 }
 
 type Config struct {
@@ -30,6 +30,7 @@ type Principal struct {
 	UserID      string
 	Issuer      string
 	Subject     string
+	Username    string
 	Email       string
 	DisplayName string
 	Groups      []string
@@ -101,8 +102,9 @@ func (a *Authenticator) Authenticate(ctx context.Context, accessToken string) (P
 		return Principal{}, errors.New("OIDC subject is missing")
 	}
 	var claims struct {
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		Username string `json:"preferred_username"`
+		Email    string `json:"email"`
+		Name     string `json:"name"`
 	}
 	if err := token.Claims(&claims); err != nil {
 		return Principal{}, fmt.Errorf("decode OIDC user claims: %w", err)
@@ -117,7 +119,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, accessToken string) (P
 			return Principal{}, errors.New("OIDC groups claim is not a string list")
 		}
 	}
-	userID, err := a.users.UpsertUser(ctx, a.issuer, token.Subject, claims.Email, claims.Name)
+	userID, err := a.users.UpsertUser(ctx, a.issuer, token.Subject, claims.Username, claims.Email, claims.Name)
 	if err != nil {
 		return Principal{}, fmt.Errorf("%w: %v", ErrUserStore, err)
 	}
@@ -125,6 +127,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, accessToken string) (P
 		UserID:      userID,
 		Issuer:      a.issuer,
 		Subject:     token.Subject,
+		Username:    claims.Username,
 		Email:       claims.Email,
 		DisplayName: claims.Name,
 		Groups:      groups,

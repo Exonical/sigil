@@ -15,13 +15,15 @@ import (
 )
 
 type Config struct {
-	ListenGRPC  string `toml:"listen_grpc"`
-	DatabaseURL string `toml:"database_url"`
-	TLS         TLS    `toml:"tls"`
-	OIDC        OIDC   `toml:"oidc"`
-	Grants      Grants `toml:"grants"`
-	Policy      Policy `toml:"policy"`
-	Escrow      Escrow `toml:"escrow"`
+	ListenGRPC  string        `toml:"listen_grpc"`
+	DatabaseURL string        `toml:"database_url"`
+	TLS         TLS           `toml:"tls"`
+	OIDC        OIDC          `toml:"oidc"`
+	Grants      Grants        `toml:"grants"`
+	Policy      Policy        `toml:"policy"`
+	Escrow      Escrow        `toml:"escrow"`
+	CA          map[string]CA `toml:"ca"`
+	Profiles    []Profile     `toml:"profiles"`
 }
 
 type TLS struct {
@@ -86,6 +88,7 @@ func Load(path string) (*Config, error) {
 	cfg.OIDC.CAFile = resolvePath(base, cfg.OIDC.CAFile)
 	cfg.Grants.SigningKeyFile = resolvePath(base, cfg.Grants.SigningKeyFile)
 	cfg.Escrow.KEKFile = resolvePath(base, cfg.Escrow.KEKFile)
+	resolveCAPaths(base, cfg.CA)
 	for id, path := range cfg.Escrow.PreviousKEKs {
 		cfg.Escrow.PreviousKEKs[id] = resolvePath(base, path)
 	}
@@ -181,6 +184,12 @@ func (c *Config) Validate() error {
 		default:
 			return fmt.Errorf("unknown self_service_operations entry %q", operation)
 		}
+	}
+	if err := validateCAs(c.CA); err != nil {
+		return err
+	}
+	if err := validateProfiles(c.Profiles, c.CA); err != nil {
+		return err
 	}
 	return nil
 }

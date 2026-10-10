@@ -66,7 +66,28 @@ signing_key_file = "grant-signing-key.pem"
 lifetime_seconds = 120
 
 [policy]
-self_service_operations = ["PIV_MANAGED_INITIALIZE", "PIV_CHANGE_PUK", "PIV_CHANGE_MANAGEMENT_KEY"]
+self_service_operations = ["PIV_MANAGED_INITIALIZE", "PIV_CHANGE_PUK", "PIV_CHANGE_MANAGEMENT_KEY", "PIV_GENERATE_KEY", "PIV_IMPORT_CERTIFICATE"]
+
+[ca.dev-step]
+type = "step"
+url = "https://localhost:9100"
+root_file = "../stepca/root_ca.crt"
+provisioner = "sigil-backend"
+provisioner_key_file = "../stepca/provisioner.jwk"
+provisioner_password_file = "../stepca/provisioner-password.txt"
+
+[[profiles]]
+name = "piv-authentication"
+display_name = "PIV Authentication"
+slot = "9a"
+algorithm = "p256"
+pin_policy = "once"
+touch_policy = "never"
+subject = "CN={username}"
+email_san = true
+validity_hours = 720
+ca = "dev-step"
+roles = ["admin", "helpdesk", "user"]
 
 [escrow]
 kek_id = "sigil-dev-v1"

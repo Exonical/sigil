@@ -7,7 +7,7 @@ use std::{
 use async_trait::async_trait;
 use rustls::{
     ClientConfig, RootCertStore,
-    pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject as _},
+    pki_types::{CertificateDer, ServerName, pem::PemObject as _},
 };
 use sigil_core::{DeviceInfo, Transport};
 use sigil_proto::{
@@ -56,6 +56,14 @@ pub trait ManagedAuthority: Send + Sync {
     async fn complete_rotation(&self, rotation_id: &str, applied: bool) -> Result<(), Status>;
     async fn report_tokens(&self, tokens: Vec<backendv1::ObservedToken>) -> Result<(), Status>;
     async fn report_audit(&self, events: Vec<backendv1::AgentAuditEvent>) -> Result<u64, Status>;
+    async fn list_certificate_profiles(
+        &self,
+        request: backendv1::ListProfilesRequest,
+    ) -> Result<backendv1::ListProfilesResponse, Status>;
+    async fn issue_certificate(
+        &self,
+        request: backendv1::IssueCertificateRequest,
+    ) -> Result<backendv1::IssueCertificateResponse, Status>;
 }
 
 #[derive(Clone)]
@@ -125,15 +133,15 @@ impl GrpcBackend {
     }
 
     pub fn selected_identity_info(&self) -> anyhow::Result<ClientIdentityInfo> {
-        #[cfg(windows)]
-        if let ClientIdentity::WindowsStore(options) = &self.tls.identity {
-            return select_windows_certificate(options)
-                .map(|selected| selected.metadata.identity_info());
+        match &self.tls.identity {
+            #[cfg(windows)]
+            ClientIdentity::WindowsStore(options) => select_windows_certificate(options)
+                .map(|selected| selected.metadata.identity_info()),
+            #[allow(unreachable_patterns)]
+            _ => anyhow::bail!(
+                "client certificate details are available only for Windows certificate stores"
+            ),
         }
-
-        anyhow::bail!(
-            "client certificate details are available only for Windows certificate stores"
-        )
     }
 
     async fn connect(
@@ -264,6 +272,38 @@ impl ManagedAuthority for GrpcBackend {
         Ok(())
     }
 
+    async fn list_certificate_profiles(
+        &self,
+        request: backendv1::ListProfilesRequest,
+    ) -> Result<backendv1::ListProfilesResponse, Status> {
+        if request.access_token.len() > MAX_ACCESS_TOKEN_BYTES {
+            return Err(Status::invalid_argument(
+                "managed access token exceeds 16 KiB",
+            ));
+        }
+        let mut client = self.connect().await?;
+        Ok(client
+            .list_profiles(Request::new(request))
+            .await?
+            .into_inner())
+    }
+
+    async fn issue_certificate(
+        &self,
+        request: backendv1::IssueCertificateRequest,
+    ) -> Result<backendv1::IssueCertificateResponse, Status> {
+        if request.access_token.len() > MAX_ACCESS_TOKEN_BYTES {
+            return Err(Status::invalid_argument(
+                "managed access token exceeds 16 KiB",
+            ));
+        }
+        let mut client = self.connect().await?;
+        Ok(client
+            .issue_certificate(Request::new(request))
+            .await?
+            .into_inner())
+    }
+
     async fn report_audit(&self, events: Vec<backendv1::AgentAuditEvent>) -> Result<u64, Status> {
         let mut client = self.connect().await?;
         Ok(client
@@ -312,9 +352,10 @@ impl BackendTlsSettings {
                 if certs.is_empty() {
                     anyhow::bail!("backend client certificate file contains no certificates");
                 }
-                let key = PrivateKeyDer::from_pem_file(key_file).map_err(|error| {
-                    anyhow::anyhow!("could not parse backend client private key: {error}")
-                })?;
+                let key =
+                    rustls::pki_types::PrivateKeyDer::from_pem_file(key_file).map_err(|error| {
+                        anyhow::anyhow!("could not parse backend client private key: {error}")
+                    })?;
                 client_builder
                     .with_client_auth_cert(certs, key)
                     .map_err(anyhow::Error::from)?
@@ -842,6 +883,20 @@ mod tests {
 
     #[tonic::async_trait]
     impl AgentGateway for FakeGateway {
+        async fn list_profiles(
+            &self,
+            _request: Request<backendv1::ListProfilesRequest>,
+        ) -> Result<tonic::Response<backendv1::ListProfilesResponse>, Status> {
+            Err(Status::unimplemented("fake gateway has no profiles"))
+        }
+
+        async fn issue_certificate(
+            &self,
+            _request: Request<backendv1::IssueCertificateRequest>,
+        ) -> Result<tonic::Response<backendv1::IssueCertificateResponse>, Status> {
+            Err(Status::unimplemented("fake gateway does not issue"))
+        }
+
         async fn request_grant(
             &self,
             _request: Request<RequestGrantRequest>,

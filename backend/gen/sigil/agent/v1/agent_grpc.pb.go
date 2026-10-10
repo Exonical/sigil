@@ -45,6 +45,8 @@ const (
 	Agent_ResetPiv_FullMethodName                    = "/sigil.agent.v1.Agent/ResetPiv"
 	Agent_InitializeManagedPiv_FullMethodName        = "/sigil.agent.v1.Agent/InitializeManagedPiv"
 	Agent_RotateManagedPivSecret_FullMethodName      = "/sigil.agent.v1.Agent/RotateManagedPivSecret"
+	Agent_ListCertificateProfiles_FullMethodName     = "/sigil.agent.v1.Agent/ListCertificateProfiles"
+	Agent_EnrollPivCertificate_FullMethodName        = "/sigil.agent.v1.Agent/EnrollPivCertificate"
 )
 
 // AgentClient is the client API for Agent service.
@@ -77,6 +79,8 @@ type AgentClient interface {
 	ResetPiv(ctx context.Context, in *ResetPivRequest, opts ...grpc.CallOption) (*Empty, error)
 	InitializeManagedPiv(ctx context.Context, in *InitializeManagedPivRequest, opts ...grpc.CallOption) (*Empty, error)
 	RotateManagedPivSecret(ctx context.Context, in *RotateManagedPivSecretRequest, opts ...grpc.CallOption) (*Empty, error)
+	ListCertificateProfiles(ctx context.Context, in *ListCertificateProfilesRequest, opts ...grpc.CallOption) (*ListCertificateProfilesResponse, error)
+	EnrollPivCertificate(ctx context.Context, in *EnrollPivCertificateRequest, opts ...grpc.CallOption) (*EnrollPivCertificateResponse, error)
 }
 
 type agentClient struct {
@@ -365,6 +369,26 @@ func (c *agentClient) RotateManagedPivSecret(ctx context.Context, in *RotateMana
 	return out, nil
 }
 
+func (c *agentClient) ListCertificateProfiles(ctx context.Context, in *ListCertificateProfilesRequest, opts ...grpc.CallOption) (*ListCertificateProfilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListCertificateProfilesResponse)
+	err := c.cc.Invoke(ctx, Agent_ListCertificateProfiles_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) EnrollPivCertificate(ctx context.Context, in *EnrollPivCertificateRequest, opts ...grpc.CallOption) (*EnrollPivCertificateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnrollPivCertificateResponse)
+	err := c.cc.Invoke(ctx, Agent_EnrollPivCertificate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServer is the server API for Agent service.
 // All implementations must embed UnimplementedAgentServer
 // for forward compatibility.
@@ -395,6 +419,8 @@ type AgentServer interface {
 	ResetPiv(context.Context, *ResetPivRequest) (*Empty, error)
 	InitializeManagedPiv(context.Context, *InitializeManagedPivRequest) (*Empty, error)
 	RotateManagedPivSecret(context.Context, *RotateManagedPivSecretRequest) (*Empty, error)
+	ListCertificateProfiles(context.Context, *ListCertificateProfilesRequest) (*ListCertificateProfilesResponse, error)
+	EnrollPivCertificate(context.Context, *EnrollPivCertificateRequest) (*EnrollPivCertificateResponse, error)
 	mustEmbedUnimplementedAgentServer()
 }
 
@@ -482,6 +508,12 @@ func (UnimplementedAgentServer) InitializeManagedPiv(context.Context, *Initializ
 }
 func (UnimplementedAgentServer) RotateManagedPivSecret(context.Context, *RotateManagedPivSecretRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateManagedPivSecret not implemented")
+}
+func (UnimplementedAgentServer) ListCertificateProfiles(context.Context, *ListCertificateProfilesRequest) (*ListCertificateProfilesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListCertificateProfiles not implemented")
+}
+func (UnimplementedAgentServer) EnrollPivCertificate(context.Context, *EnrollPivCertificateRequest) (*EnrollPivCertificateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method EnrollPivCertificate not implemented")
 }
 func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
 func (UnimplementedAgentServer) testEmbeddedByValue()               {}
@@ -958,6 +990,42 @@ func _Agent_RotateManagedPivSecret_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Agent_ListCertificateProfiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListCertificateProfilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).ListCertificateProfiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_ListCertificateProfiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).ListCertificateProfiles(ctx, req.(*ListCertificateProfilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_EnrollPivCertificate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EnrollPivCertificateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).EnrollPivCertificate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_EnrollPivCertificate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).EnrollPivCertificate(ctx, req.(*EnrollPivCertificateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Agent_ServiceDesc is the grpc.ServiceDesc for Agent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1060,6 +1128,14 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RotateManagedPivSecret",
 			Handler:    _Agent_RotateManagedPivSecret_Handler,
+		},
+		{
+			MethodName: "ListCertificateProfiles",
+			Handler:    _Agent_ListCertificateProfiles_Handler,
+		},
+		{
+			MethodName: "EnrollPivCertificate",
+			Handler:    _Agent_EnrollPivCertificate_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
