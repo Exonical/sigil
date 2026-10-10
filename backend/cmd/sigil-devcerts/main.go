@@ -136,11 +136,11 @@ func writeAuthentikLocalhostIdentity(outputDirectory string) (string, error) {
 		Subject:               pkix.Name{CommonName: "Sigil Authentik localhost"},
 		NotBefore:             now.Add(-time.Minute),
 		NotAfter:              now.AddDate(1, 0, 0),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		DNSNames:              []string{"localhost"},
 		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-		IsCA:                  true,
+		IsCA:                  false,
 		BasicConstraintsValid: true,
 	}
 	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
@@ -185,6 +185,9 @@ func validateAuthentikLocalhostIdentity(certPath, keyPath string, now time.Time)
 	}
 	if !slices.Contains(certificate.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
 		return errors.New("certificate lacks the server-auth extended key usage")
+	}
+	if certificate.IsCA {
+		return errors.New("certificate is marked as a CA; a server certificate must not be")
 	}
 	keyPEM, err := os.ReadFile(keyPath)
 	if err != nil {

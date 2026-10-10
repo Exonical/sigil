@@ -941,3 +941,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
     .fips-banner { align-items: flex-start; flex-wrap: wrap; }
     .fips-banner .primary-button { margin-left: 0; }
 }
+
+/* Sign-in controls in the left navigation */
+.auth-button, .auth-cancel, .auth-menu { width: 100%; background: transparent; border: 0; color: var(--muted); text-align: left; }
+.auth-button:disabled { opacity: 0.6; cursor: default; }
+.auth-cancel, .auth-menu { font-size: 13px; }

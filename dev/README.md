@@ -26,3 +26,32 @@
 `dev\.secrets\` is ignored by Git. Keep it local and do not paste its contents into issues or logs. The Authentik containers are persistent; `.\dev\authentik\down.ps1` stops them but preserves their volumes.
 
 All `dev/` Podman commands explicitly use the rootless `podman-machine-default` connection. The machine's default connection remains `podman-machine-default-root`. Use `localhost` (which reaches the rootless published port over `::1`); do not use `127.0.0.1` or the Podman VM IP. This avoids the rootful published-port limitation tracked in Podman issue [#29377](https://github.com/containers/podman/issues/29377).
+
+# Sign in (CLI and GUI, debug builds)
+
+Sign-in uses the dev Authentik public client sigil (authorization code with PKCE, loopback redirect). Machine policy normally supplies the issuer, client ID and CA file (HKLM\SOFTWARE\Policies\Sigil: OidcIssuer, OidcClientId, OidcCaFile). Debug builds also accept environment overrides. Set these in the same PowerShell session before running cms or sigil-gui:
+
+```powershell
+$env:SIGIL_OIDC_ISSUER='https://localhost:9443/application/o/sigil/'
+$env:SIGIL_OIDC_CLIENT_ID='sigil'
+$env:SIGIL_OIDC_CA_FILE="$PWD\dev\.secrets\authentik-ca.pem"
+```
+
+Test users are listed in dev\.secrets\users.txt; read the file for the usernames and passwords. Never paste those values into logs or tickets.
+
+- `cms whoami` shows the signed-in user, or `not signed in`. It never prints tokens.
+- cms login opens the browser to the Authentik sign-in page and waits for the loopback callback (5-minute limit). The refresh token is stored in Windows Credential Manager under Sigil:oidc:<issuer>|<client>; the access token stays in memory.
+- cms logout revokes the refresh token and removes the stored record.
+- A live discovery check needs no credentials: cargo test -p sigil-auth --test oidc_flow live_discovery -- --ignored --nocapture.
+
+# Managed PIV through the elevated debug agent
+
+Managed operations (cms piv managed ... and --managed on key and certificate commands) need the agent and a signed-in user. Run them against the elevated debug agent:
+
+1. From an elevated PowerShell session at the repository root: `.\dev\agent\setup.ps1`, then `cargo build -p sigil-agent`.
+2. In that elevated session, start the agent with the dev configuration and a dev pipe:
+   `.\target\sidekick\debug\sigil-agent.exe --config dev\.secrets\agent\agent.toml run --endpoint '\\.\pipe\sigil-agent-dev'`
+3. In a second, non-elevated PowerShell session with the sign-in variables above set, sign in once: `.\target\sidekick\debug\cms.exe login`.
+4. Run managed commands through the agent: `.\target\sidekick\debug\cms.exe --agent '\\.\pipe\sigil-agent-dev' piv managed init <device-id>` (the device ID comes from cms device list). The agent refuses the operation unless the key is at factory defaults.
+
+Without `--agent`, managed commands fail with "managed operations need the Sigil agent".

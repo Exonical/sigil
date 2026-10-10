@@ -11,6 +11,7 @@ members = [
     "crates/sigil-agent",
     "crates/sigil-client",
     "crates/sigil-connect",
+    "crates/sigil-auth",
     "crates/sigil-cli",
     "crates/sigil-gui",
 ]

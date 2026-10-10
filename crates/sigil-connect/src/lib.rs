@@ -5,7 +5,10 @@ use std::{fs, path::Path};
 use serde::Deserialize;
 use sigil_app::CredentialService;
 use sigil_client::{AgentClient, DEFAULT_ENDPOINT};
-use sigil_core::{CredentialError, DeviceDiscovery, DeviceManagement, PivManagement};
+use sigil_core::{
+    CredentialError, DeviceDiscovery, DeviceId, DeviceManagement, PivKeyConfiguration,
+    PivManagement, PivPin, PivSlot,
+};
 use sigil_platform::NativeDiscovery;
 use thiserror::Error;
 
@@ -48,6 +51,135 @@ pub struct ConnectedService {
     pub credentials: CredentialService,
     pub mode: ConnectionMode,
     pub warning: Option<String>,
+    /// Managed (escrow-backed) PIV operations. Only the agent provides them.
+    pub managed: Option<std::sync::Arc<dyn ManagedPivAgent>>,
+}
+
+/// The managed secret a rotation replaces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagedSecret {
+    Puk,
+    ManagementKey,
+}
+
+/// Escrow-backed PIV operations. The agent holds the secrets and checks the backend grant
+/// inside the card transaction; the caller supplies only the sign-in access token.
+pub trait ManagedPivAgent: Send + Sync {
+    fn initialize(&self, id: &DeviceId, serial: &str, token: &str) -> Result<(), CredentialError>;
+    fn rotate_secret(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        secret: ManagedSecret,
+        token: &str,
+    ) -> Result<(), CredentialError>;
+    fn generate_key(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        configuration: PivKeyConfiguration,
+        token: &str,
+    ) -> Result<Vec<u8>, CredentialError>;
+    fn import_certificate(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        slot: PivSlot,
+        certificate_der: &[u8],
+        token: &str,
+    ) -> Result<(), CredentialError>;
+    fn delete_certificate(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        slot: PivSlot,
+        token: &str,
+    ) -> Result<(), CredentialError>;
+    fn delete_key(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        slot: PivSlot,
+        token: &str,
+    ) -> Result<(), CredentialError>;
+    fn unblock_pin(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        new_pin: &PivPin,
+        token: &str,
+    ) -> Result<(), CredentialError>;
+}
+
+impl ManagedPivAgent for AgentClient {
+    fn initialize(&self, id: &DeviceId, serial: &str, token: &str) -> Result<(), CredentialError> {
+        self.initialize_managed_piv(id, serial, token)
+    }
+
+    fn rotate_secret(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        secret: ManagedSecret,
+        token: &str,
+    ) -> Result<(), CredentialError> {
+        let kind = match secret {
+            ManagedSecret::Puk => sigil_proto::v1::ManagedSecretKind::Puk,
+            ManagedSecret::ManagementKey => sigil_proto::v1::ManagedSecretKind::ManagementKey,
+        };
+        self.rotate_managed_piv_secret(id, serial, kind, token)
+    }
+
+    fn generate_key(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        configuration: PivKeyConfiguration,
+        token: &str,
+    ) -> Result<Vec<u8>, CredentialError> {
+        self.generate_piv_key_managed(id, serial, configuration, token)
+    }
+
+    fn import_certificate(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        slot: PivSlot,
+        certificate_der: &[u8],
+        token: &str,
+    ) -> Result<(), CredentialError> {
+        self.import_piv_certificate_managed(id, serial, slot, certificate_der, token)
+    }
+
+    fn delete_certificate(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        slot: PivSlot,
+        token: &str,
+    ) -> Result<(), CredentialError> {
+        self.delete_piv_certificate_managed(id, serial, slot, token)
+    }
+
+    fn delete_key(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        slot: PivSlot,
+        token: &str,
+    ) -> Result<(), CredentialError> {
+        self.delete_piv_key_managed(id, serial, slot, token)
+    }
+
+    fn unblock_pin(
+        &self,
+        id: &DeviceId,
+        serial: &str,
+        new_pin: &PivPin,
+        token: &str,
+    ) -> Result<(), CredentialError> {
+        self.unblock_piv_pin_managed(id, serial, new_pin, token)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -189,6 +321,7 @@ pub fn connect_with_policy(
             credentials: mock_service(),
             mode: selection.mode,
             warning: selection.warning,
+            managed: None,
         });
     }
 
@@ -223,24 +356,29 @@ pub fn connect_with_policy(
         None => AgentAttempt::NotAttempted,
     };
     let selection = select_connection(preference, require_agent, elevated, attempt)?;
-    let credentials = match &selection.mode {
+    let (credentials, managed) = match &selection.mode {
         ConnectionMode::Agent { .. } => {
             let client = std::sync::Arc::new(agent.expect("selected connected agent"));
             let discovery: std::sync::Arc<dyn DeviceDiscovery> = client.clone();
             let piv_management: std::sync::Arc<dyn PivManagement> = client.clone();
-            let device_management: std::sync::Arc<dyn DeviceManagement> = client;
-            CredentialService::new_with_device_management(
-                discovery,
-                piv_management,
-                device_management,
+            let device_management: std::sync::Arc<dyn DeviceManagement> = client.clone();
+            let managed: std::sync::Arc<dyn ManagedPivAgent> = client;
+            (
+                CredentialService::new_with_device_management(
+                    discovery,
+                    piv_management,
+                    device_management,
+                ),
+                Some(managed),
             )
         }
-        ConnectionMode::Direct { .. } => native_service(),
+        ConnectionMode::Direct { .. } => (native_service(), None),
     };
     Ok(ConnectedService {
         credentials,
         mode: selection.mode,
         warning: selection.warning,
+        managed,
     })
 }
 

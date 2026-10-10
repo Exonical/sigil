@@ -5357,6 +5357,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "sigil-auth"
+version = "0.1.2"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "getrandom 0.4.3",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "p256",
+ "rcgen",
+ "rsa",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "toml 0.8.2",
+ "url",
+ "windows-sys 0.61.2",
+ "zeroize",
+]
+
+[[package]]
 name = "sigil-cli"
 version = "0.1.2"
 dependencies = [
@@ -5366,10 +5395,12 @@ dependencies = [
  "serde_json",
  "sigil-agent",
  "sigil-app",
+ "sigil-auth",
  "sigil-client",
  "sigil-connect",
  "sigil-core",
  "sigil-mock",
+ "tokio",
  "tracing-subscriber",
  "zeroize",
 ]
@@ -5398,6 +5429,7 @@ dependencies = [
  "sigil-core",
  "sigil-mock",
  "sigil-platform",
+ "sigil-proto",
  "thiserror 2.0.21",
  "toml 0.8.2",
  "windows-sys 0.61.2",
@@ -5420,9 +5452,11 @@ dependencies = [
  "dioxus",
  "rfd",
  "sigil-app",
+ "sigil-auth",
  "sigil-connect",
  "sigil-core",
  "sigil-piv",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.61.2",

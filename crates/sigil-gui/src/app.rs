@@ -60,9 +60,15 @@ fn ConnectedApp() -> Element {
     let initial_toast = connection.warning.clone();
     let page = use_signal(startup_page);
     let initial_dialog = startup_dialog();
+    let auth_config = use_hook(crate::auth::load_config);
+    let auth_cancel = use_hook(|| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let state = AppState {
         credentials: connection.credentials.clone(),
         mode: connection.mode.clone(),
+        auth_config,
+        auth: use_signal_sync(|| crate::auth::AuthStatus::Checking),
+        session: use_signal_sync(|| None::<std::sync::Arc<sigil_auth::Session>>),
+        auth_cancel,
         devices: initial_devices,
         selected_device,
         page,
@@ -86,6 +92,7 @@ fn ConnectedApp() -> Element {
             connection_mode = ?watcher_state.mode,
             "GUI connection initialized"
         );
+        crate::auth::restore(&watcher_state);
         let service = watcher_state.credentials.clone();
         let mut devices = watcher_state.devices;
         let mut selected = watcher_state.selected_device;

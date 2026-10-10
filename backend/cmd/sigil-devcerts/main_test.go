@@ -53,6 +53,9 @@ func TestAuthentikLocalhostIdentityIsValidAndReused(t *testing.T) {
 	if !slices.Contains(certificate.ExtKeyUsage, x509.ExtKeyUsageServerAuth) {
 		t.Fatal("localhost certificate lacks the server-auth extended key usage")
 	}
+	if certificate.IsCA {
+		t.Fatal("localhost certificate must be a leaf, not a CA")
+	}
 	for _, hostname := range []string{"localhost", "127.0.0.1", "::1"} {
 		if err := certificate.VerifyHostname(hostname); err != nil {
 			t.Errorf("certificate does not cover %s: %v", hostname, err)

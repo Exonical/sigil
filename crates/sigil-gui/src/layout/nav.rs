@@ -79,6 +79,7 @@ pub fn LeftNav() -> Element {
                 NavItem { page: Page::Slots, icon: "grid" }
             }
             div { class: "nav-bottom",
+                crate::auth::AuthArea {}
                 NavItem { page: Page::Settings, icon: "settings" }
             }
         }

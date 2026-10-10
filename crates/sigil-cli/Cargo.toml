@@ -13,6 +13,8 @@ path = "src/main.rs"
 sigil-core = { path = "../sigil-core" }
 sigil-app = { path = "../sigil-app" }
 sigil-connect = { path = "../sigil-connect" }
+sigil-auth = { path = "../sigil-auth" }
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
 clap.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true

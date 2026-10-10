@@ -67,6 +67,10 @@ pub enum DialogKind {
 pub struct AppState {
     pub credentials: CredentialService,
     pub mode: ConnectionMode,
+    pub auth_config: crate::auth::AuthConfig,
+    pub auth: SyncSignal<crate::auth::AuthStatus>,
+    pub session: SyncSignal<Option<std::sync::Arc<sigil_auth::Session>>>,
+    pub auth_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub devices: SyncSignal<Vec<DeviceInfo>>,
     pub selected_device: SyncSignal<Option<DeviceId>>,
     pub page: Signal<Page>,

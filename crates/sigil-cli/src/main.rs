@@ -4,6 +4,7 @@ use sigil_app::CredentialService;
 use sigil_connect::{ConnectOptions, ConnectionMode};
 use sigil_core::{CredentialError, DeviceId, DeviceInfo};
 
+mod auth;
 mod piv;
 
 #[derive(Parser)]
@@ -24,6 +25,12 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Sign in to the identity provider in the browser.
+    Login,
+    /// Sign out and revoke the stored refresh token.
+    Logout,
+    /// Show the signed-in user.
+    Whoami,
     Device {
         #[command(subcommand)]
         command: DeviceCommand,
@@ -100,6 +107,9 @@ fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
 }
 
 fn run(args: Args) -> Result<String> {
+    if auth::is_auth_command(&args.command) {
+        return auth::handle(&args.command, args.json);
+    }
     let connection = sigil_connect::connect(ConnectOptions {
         agent: args.agent,
         direct: args.direct,
@@ -110,7 +120,8 @@ fn run(args: Args) -> Result<String> {
         eprintln!("{warning}");
     }
     let direct = matches!(connection.mode, ConnectionMode::Direct { .. });
-    run_command(&connection.credentials, args.command, args.json).map_err(|error| {
+    let managed = connection.managed.as_deref();
+    run_command(&connection.credentials, managed, args.command, args.json).map_err(|error| {
         if direct
             && error
                 .downcast_ref::<CredentialError>()
@@ -123,8 +134,14 @@ fn run(args: Args) -> Result<String> {
     })
 }
 
-fn run_command(service: &CredentialService, command: Command, json: bool) -> Result<String> {
+fn run_command(
+    service: &CredentialService,
+    managed: Option<&dyn sigil_connect::ManagedPivAgent>,
+    command: Command,
+    json: bool,
+) -> Result<String> {
     match command {
+        Command::Login | Command::Logout | Command::Whoami => auth::handle(&command, json),
         Command::Device {
             command: DeviceCommand::List,
         } => render_list(&service.devices()?, json),
@@ -164,7 +181,7 @@ fn run_command(service: &CredentialService, command: Command, json: bool) -> Res
                 ))
             }
         }
-        Command::Piv { command } => piv::handle(service, command, json),
+        Command::Piv { command } => piv::handle(service, managed, command, json),
         Command::Fido {
             command: FidoCommand::Info { device },
         } => {
@@ -515,6 +532,96 @@ mod tests {
             client.enroll_fingerprint(&id, "1234", &mut |_| {}),
             Err(sigil_core::CredentialError::UnsupportedOperation(_))
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn managed_flags_conflict_with_management_key_options() {
+        for command in [
+            vec![
+                "cms",
+                "piv",
+                "key",
+                "generate",
+                "dev",
+                "--slot",
+                "9a",
+                "--algorithm",
+                "p256",
+                "--managed",
+                "--current-default",
+            ],
+            vec![
+                "cms",
+                "piv",
+                "key",
+                "delete",
+                "dev",
+                "--slot",
+                "9a",
+                "--managed",
+                "--current-default",
+            ],
+            vec![
+                "cms",
+                "piv",
+                "certificate",
+                "import",
+                "dev",
+                "--slot",
+                "9a",
+                "--file",
+                "x.pem",
+                "--managed",
+                "--current-default",
+            ],
+            vec![
+                "cms",
+                "piv",
+                "certificate",
+                "delete",
+                "dev",
+                "--slot",
+                "9a",
+                "--managed",
+                "--current-default",
+            ],
+        ] {
+            assert!(Args::try_parse_from(command).is_err());
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn managed_commands_in_direct_mode_require_the_agent() -> Result<()> {
+        for command in [
+            vec![
+                "cms",
+                "--direct-mock",
+                "piv",
+                "managed",
+                "init",
+                "mock-yubikey-12345678",
+            ],
+            vec![
+                "cms",
+                "--direct-mock",
+                "piv",
+                "managed",
+                "rotate",
+                "mock-yubikey-12345678",
+                "--secret",
+                "puk",
+            ],
+        ] {
+            let error = run(Args::try_parse_from(command)?).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("managed operations need the Sigil agent"),
+                "unexpected error: {error}"
+            );
+        }
         Ok(())
     }
 

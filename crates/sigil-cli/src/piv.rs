@@ -8,6 +8,7 @@ use std::{
 use anyhow::{Result, bail, ensure};
 use clap::{Subcommand, ValueEnum};
 use sigil_app::CredentialService;
+use sigil_connect::{ManagedPivAgent, ManagedSecret};
 use sigil_core::{
     CertificateFormat, CredentialError, DeviceId, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
     PinPolicy, PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo,
@@ -15,8 +16,15 @@ use sigil_core::{
 };
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::auth;
+
 #[derive(Subcommand)]
 pub enum PivCommand {
+    /// Escrow-backed operations that the agent performs with backend-released secrets.
+    Managed {
+        #[command(subcommand)]
+        command: ManagedCommand,
+    },
     Info {
         device: String,
     },
@@ -66,6 +74,24 @@ pub enum PivCommand {
 }
 
 #[derive(Subcommand)]
+pub enum ManagedCommand {
+    /// Replace the factory PUK and management key with backend-escrowed secrets (agent only).
+    Init { device: String },
+    /// Rotate the PUK or management key to a new backend-escrowed secret (agent only).
+    Rotate {
+        device: String,
+        #[arg(long, value_enum)]
+        secret: ManagedSecretArg,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum ManagedSecretArg {
+    Puk,
+    ManagementKey,
+}
+
+#[derive(Subcommand)]
 pub enum CertificateCommand {
     Show {
         device: String,
@@ -85,6 +111,8 @@ pub enum CertificateCommand {
         slot: PivSlot,
         #[arg(long)]
         file: PathBuf,
+        #[arg(long, conflicts_with = "current_default")]
+        managed: bool,
         #[arg(long)]
         current_default: bool,
     },
@@ -92,6 +120,8 @@ pub enum CertificateCommand {
         device: String,
         #[arg(long)]
         slot: PivSlot,
+        #[arg(long, conflicts_with = "current_default")]
+        managed: bool,
         #[arg(long)]
         current_default: bool,
     },
@@ -99,8 +129,14 @@ pub enum CertificateCommand {
 
 #[derive(Subcommand)]
 pub enum PinCommand {
-    Change { device: String },
-    Unblock { device: String },
+    Change {
+        device: String,
+    },
+    Unblock {
+        device: String,
+        #[arg(long)]
+        managed: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -131,6 +167,8 @@ pub enum KeyCommand {
         pin_policy: PinPolicyArg,
         #[arg(long, value_enum, default_value_t = TouchPolicyArg::Default)]
         touch_policy: TouchPolicyArg,
+        #[arg(long, conflicts_with = "current_default")]
+        managed: bool,
         #[arg(long)]
         current_default: bool,
     },
@@ -138,6 +176,8 @@ pub enum KeyCommand {
         device: String,
         #[arg(long)]
         slot: PivSlot,
+        #[arg(long, conflicts_with = "current_default")]
+        managed: bool,
         #[arg(long)]
         current_default: bool,
     },
@@ -252,17 +292,86 @@ impl SecretPrompter for TerminalSecretPrompter {
     }
 }
 
-pub fn handle(service: &CredentialService, command: PivCommand, json: bool) -> Result<String> {
-    handle_with_prompter(service, command, json, &mut TerminalSecretPrompter)
+pub fn handle(
+    service: &CredentialService,
+    agent: Option<&dyn ManagedPivAgent>,
+    command: PivCommand,
+    json: bool,
+) -> Result<String> {
+    handle_with_prompter(service, agent, command, json, &mut TerminalSecretPrompter)
+}
+
+fn managed_agent(agent: Option<&dyn ManagedPivAgent>) -> Result<&dyn ManagedPivAgent> {
+    agent.ok_or_else(|| {
+        anyhow::anyhow!(
+            "managed operations need the Sigil agent; use --agent or start the agent service"
+        )
+    })
+}
+
+fn managed_error(error: CredentialError) -> anyhow::Error {
+    match error {
+        CredentialError::BackendRejected(detail) => {
+            anyhow::anyhow!("the backend rejected the operation: {detail}")
+        }
+        CredentialError::BackendUnavailable(_) => {
+            anyhow::anyhow!("the Sigil backend is unavailable; try again later")
+        }
+        CredentialError::PivNotFactoryDefault => anyhow::anyhow!(
+            "this key is not at factory defaults; reset PIV before managed initialization"
+        ),
+        CredentialError::ManagedRotationIncomplete(rotation) => {
+            anyhow::anyhow!("rotation {rotation} is incomplete; an administrator must recover it")
+        }
+        other => other.into(),
+    }
 }
 
 fn handle_with_prompter<P: SecretPrompter>(
     service: &CredentialService,
+    agent: Option<&dyn ManagedPivAgent>,
     command: PivCommand,
     json: bool,
     prompter: &mut P,
 ) -> Result<String> {
     match command {
+        PivCommand::Managed { command } => {
+            let agent = managed_agent(agent)?;
+            let token = auth::managed_access_token()?;
+            match command {
+                ManagedCommand::Init { device } => {
+                    let id = DeviceId(device);
+                    let serial = device_serial(service, &id)?;
+                    agent
+                        .initialize(&id, &serial, &token)
+                        .map_err(managed_error)?;
+                    mutation_output(
+                        json,
+                        serde_json::json!({ "operation": "managed_initialize" }),
+                        "Initialized managed PIV: the PUK and management key are now backend-escrowed."
+                            .into(),
+                    )
+                }
+                ManagedCommand::Rotate { device, secret } => {
+                    let id = DeviceId(device);
+                    let serial = device_serial(service, &id)?;
+                    let (kind, label) = match secret {
+                        ManagedSecretArg::Puk => (ManagedSecret::Puk, "PUK"),
+                        ManagedSecretArg::ManagementKey => {
+                            (ManagedSecret::ManagementKey, "management key")
+                        }
+                    };
+                    agent
+                        .rotate_secret(&id, &serial, kind, &token)
+                        .map_err(managed_error)?;
+                    mutation_output(
+                        json,
+                        serde_json::json!({ "operation": "managed_rotate", "secret": label }),
+                        format!("Rotated the managed PIV {label}."),
+                    )
+                }
+            }
+        }
         PivCommand::Info { device } => {
             let info = service.piv_info(&DeviceId(device))?;
             render_info(&info, json)
@@ -349,12 +458,25 @@ fn handle_with_prompter<P: SecretPrompter>(
                 device,
                 slot,
                 file,
+                managed,
                 current_default,
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
-                let key = management_key(service, &id, current_default, prompter)?;
                 let certificate = fs::read(&file)?;
+                if managed {
+                    let agent = managed_agent(agent)?;
+                    let token = auth::managed_access_token()?;
+                    agent
+                        .import_certificate(&id, &serial, slot, &certificate, &token)
+                        .map_err(managed_error)?;
+                    return mutation_output(
+                        json,
+                        serde_json::json!({ "operation": "import_certificate", "slot": slot, "managed": true }),
+                        format!("Imported certificate for slot {slot}."),
+                    );
+                }
+                let key = management_key(service, &id, current_default, prompter)?;
                 service.import_certificate(&id, &serial, &key, slot, &certificate)?;
                 mutation_output(
                     json,
@@ -365,10 +487,23 @@ fn handle_with_prompter<P: SecretPrompter>(
             CertificateCommand::Delete {
                 device,
                 slot,
+                managed,
                 current_default,
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
+                if managed {
+                    let agent = managed_agent(agent)?;
+                    let token = auth::managed_access_token()?;
+                    agent
+                        .delete_certificate(&id, &serial, slot, &token)
+                        .map_err(managed_error)?;
+                    return mutation_output(
+                        json,
+                        serde_json::json!({ "operation": "delete_certificate", "slot": slot, "managed": true }),
+                        format!("Deleted certificate for slot {slot}."),
+                    );
+                }
                 let key = management_key(service, &id, current_default, prompter)?;
                 service.delete_certificate(&id, &serial, &key, slot)?;
                 mutation_output(
@@ -391,9 +526,22 @@ fn handle_with_prompter<P: SecretPrompter>(
                     "Changed PIV PIN.".into(),
                 )
             }
-            PinCommand::Unblock { device } => {
+            PinCommand::Unblock { device, managed } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
+                if managed {
+                    let agent = managed_agent(agent)?;
+                    let token = auth::managed_access_token()?;
+                    let new_pin = prompt_new_pin(service, &id, prompter)?;
+                    agent
+                        .unblock_pin(&id, &serial, &new_pin, &token)
+                        .map_err(managed_error)?;
+                    return mutation_output(
+                        json,
+                        serde_json::json!({ "operation": "unblock_pin", "managed": true }),
+                        "Unblocked PIV PIN.".into(),
+                    );
+                }
                 let puk = current_puk(service, &id, "PIV PUK: ", prompter)?;
                 let new_pin = prompt_new_pin(service, &id, prompter)?;
                 service.unblock_pin(&id, &serial, &puk, &new_pin)?;
@@ -442,10 +590,38 @@ fn handle_with_prompter<P: SecretPrompter>(
                 algorithm,
                 pin_policy,
                 touch_policy,
+                managed,
                 current_default,
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
+                if managed {
+                    let agent = managed_agent(agent)?;
+                    let token = auth::managed_access_token()?;
+                    let spki = agent
+                        .generate_key(
+                            &id,
+                            &serial,
+                            PivKeyConfiguration {
+                                slot,
+                                algorithm: algorithm.into(),
+                                pin_policy: pin_policy.into(),
+                                touch_policy: touch_policy.into(),
+                            },
+                            &token,
+                        )
+                        .map_err(managed_error)?;
+                    return mutation_output(
+                        json,
+                        serde_json::json!({
+                            "operation": "generate_key",
+                            "slot": slot,
+                            "managed": true,
+                            "subject_public_key_info": encode_hex(&spki),
+                        }),
+                        format!("Generated key in slot {slot}."),
+                    );
+                }
                 let key = management_key(service, &id, current_default, prompter)?;
                 let spki = service.generate_key(
                     &id,
@@ -471,10 +647,23 @@ fn handle_with_prompter<P: SecretPrompter>(
             KeyCommand::Delete {
                 device,
                 slot,
+                managed,
                 current_default,
             } => {
                 let id = DeviceId(device);
                 let serial = device_serial(service, &id)?;
+                if managed {
+                    let agent = managed_agent(agent)?;
+                    let token = auth::managed_access_token()?;
+                    agent
+                        .delete_key(&id, &serial, slot, &token)
+                        .map_err(managed_error)?;
+                    return mutation_output(
+                        json,
+                        serde_json::json!({ "operation": "delete_key", "slot": slot, "managed": true }),
+                        format!("Deleted key in slot {slot}."),
+                    );
+                }
                 let key = management_key(service, &id, current_default, prompter)?;
                 service.delete_key(&id, &serial, &key, slot)?;
                 mutation_output(
