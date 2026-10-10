@@ -3,17 +3,20 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/Exonical/sigil/backend/internal/admin"
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/authn"
 	"github.com/Exonical/sigil/backend/internal/ca"
@@ -22,6 +25,7 @@ import (
 	"github.com/Exonical/sigil/backend/internal/escrow"
 	"github.com/Exonical/sigil/backend/internal/gateway"
 	"github.com/Exonical/sigil/backend/internal/lifecycle"
+	"github.com/Exonical/sigil/backend/internal/portal"
 	"github.com/Exonical/sigil/backend/internal/signing"
 )
 
@@ -109,6 +113,11 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	go startLostKeys(ctx, store, cfg, cas)
+	if cfg.ListenPortal != "" {
+		if err := startPortal(ctx, cfg, store, authenticator); err != nil {
+			return err
+		}
+	}
 	slog.Info("starting backend gRPC gateway", "listen_grpc", cfg.ListenGRPC)
 	return gateway.ListenAndServe(ctx, cfg.ListenGRPC, server)
 }
@@ -355,4 +364,41 @@ func startLostKeys(ctx context.Context, store *db.Store, cfg *config.Config, cas
 	}
 	grace := time.Duration(cfg.Lifecycle.LostRevocationGraceHours) * time.Hour
 	lifecycle.NewLostKeys(store, cas, profileCA, grace, slog.Default()).Run(ctx, time.Minute)
+}
+
+// startPortal serves the admin portal and its Connect API over HTTPS on listen_portal. It uses the backend's
+// server certificate and does not require a client certificate.
+func startPortal(ctx context.Context, cfg *config.Config, store *db.Store, authenticator *authn.Authenticator) error {
+	service := admin.NewService(store, authenticator, cfg.OIDC.RoleGroups)
+	prefix, api := service.Handler()
+	handler, err := portal.NewHandler(portal.Options{
+		Issuer:     cfg.OIDC.Issuer,
+		ClientID:   cfg.Portal.ClientID,
+		PublicURL:  cfg.Portal.PublicURL,
+		DevOrigins: cfg.Portal.DevOrigins,
+		APIPrefix:  prefix,
+		API:        api,
+	})
+	if err != nil {
+		return err
+	}
+	server := &http.Server{
+		Addr:              cfg.ListenPortal,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+	}()
+	go func() {
+		slog.Info("starting admin portal", "listen_portal", cfg.ListenPortal)
+		if err := server.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("admin portal stopped", "error", err)
+		}
+	}()
+	return nil
 }

@@ -1,0 +1,230 @@
+syntax = "proto3";
+
+package sigil.admin.v1;
+
+option go_package = "github.com/Exonical/sigil/backend/gen/sigil/admin/v1;adminv1";
+
+// AdminService is the Connect API for the admin web portal. Every RPC requires a bearer access token
+// for an admin or helpdesk user. Mutations are audited with the user as the actor.
+// Escrow values are never part of any message: escrow records expose only kind, version, state and dates.
+service AdminService {
+  rpc GetDashboard(Empty) returns (DashboardResponse);
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  rpc GetToken(TokenRef) returns (GetTokenResponse);
+  rpc AssignToken(AssignTokenRequest) returns (Empty);
+  rpc UnassignToken(TokenRef) returns (Empty);
+  rpc SetNickname(SetNicknameRequest) returns (Empty);
+  rpc ReportLost(TokenRef) returns (Empty);
+  rpc MarkFound(TokenRef) returns (MarkFoundResponse);
+  rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
+  rpc ListCertificates(ListCertificatesRequest) returns (ListCertificatesResponse);
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (Empty);
+  rpc ListStations(Empty) returns (ListStationsResponse);
+  rpc AddStation(AddStationRequest) returns (Empty);
+  rpc SetStationStatus(SetStationStatusRequest) returns (Empty);
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+  rpc VerifyAudit(Empty) returns (VerifyAuditResponse);
+}
+
+message Empty {}
+
+message TokenRef {
+  string vendor = 1;
+  string serial = 2;
+}
+
+message UserSummary {
+  string id = 1;
+  string username = 2;
+  string email = 3;
+  string display_name = 4;
+}
+
+message TokenSummary {
+  string id = 1;
+  string vendor = 2;
+  string model = 3;
+  string serial = 4;
+  string firmware = 5;
+  string form_factor = 6;
+  string nickname = 7;
+  string status = 8;
+  UserSummary assigned_user = 9;
+  int64 lost_at_unix = 10;
+  int64 last_seen_unix = 11;
+  int64 active_certificates = 12;
+}
+
+message CertificateSummary {
+  string id = 1;
+  string token_serial = 2;
+  string slot = 3;
+  string profile = 4;
+  string user_display = 5;
+  string serial_number = 6;
+  string subject = 7;
+  int64 not_before_unix = 8;
+  int64 not_after_unix = 9;
+  string status = 10;
+  int64 revoked_at_unix = 11;
+  string revocation_reason = 12;
+}
+
+message EscrowVersion {
+  string kind = 1;
+  int32 version = 2;
+  string state = 3;
+  int64 created_at_unix = 4;
+  int64 activated_at_unix = 5;
+}
+
+message AuditEvent {
+  int64 seq = 1;
+  int64 occurred_at_unix = 2;
+  string actor_type = 3;
+  string actor_id = 4;
+  string action = 5;
+  string target_type = 6;
+  string target_id = 7;
+  string outcome = 8;
+  string detail_json = 9;
+}
+
+message DashboardResponse {
+  map<string, int64> tokens_by_status = 1;
+  int64 active_certificates = 2;
+  int64 certificates_expiring_30_days = 3;
+  map<string, int64> stations_by_status = 4;
+  int64 lost_tokens_pending_revocation = 5;
+}
+
+message ListTokensRequest {
+  string search = 1;
+  string status = 2;
+  int32 page_size = 3;
+  int32 page = 4;
+}
+
+message ListTokensResponse {
+  repeated TokenSummary tokens = 1;
+  int64 total = 2;
+}
+
+message GetTokenResponse {
+  TokenSummary token = 1;
+  repeated CertificateSummary certificates = 2;
+  repeated EscrowVersion escrow = 3;
+  repeated AuditEvent audit = 4;
+}
+
+message AssignTokenRequest {
+  TokenRef token = 1;
+  string username_or_email = 2;
+}
+
+message SetNicknameRequest {
+  TokenRef token = 1;
+  // Empty clears the nickname.
+  string nickname = 2;
+}
+
+message MarkFoundResponse {
+  // True when certificates were already revoked, so the user must enroll again.
+  bool re_enrollment_required = 1;
+}
+
+message DeleteKeyRequest {
+  TokenRef token = 1;
+  // Must equal the token serial. Guards against deleting the wrong key.
+  string confirm_serial = 2;
+}
+
+message DeleteKeyResponse {
+  int32 revoked = 1;
+  // Certificates whose revocation failed. A retry attempts only these and any still active.
+  repeated string failed_certificate_ids = 2;
+}
+
+message ListCertificatesRequest {
+  string status = 1;
+  // Only certificates expiring before this Unix time, when non-zero.
+  int64 expiring_before_unix = 2;
+  string profile = 3;
+  string token_serial = 4;
+  int32 page_size = 5;
+  int32 page = 6;
+}
+
+message ListCertificatesResponse {
+  repeated CertificateSummary certificates = 1;
+  int64 total = 2;
+}
+
+message RevokeCertificateRequest {
+  string certificate_id = 1;
+  // RFC 5280 reason: keyCompromise, cessationOfOperation, superseded, unspecified.
+  string reason = 2;
+}
+
+message ListStationsResponse {
+  repeated StationSummary stations = 1;
+}
+
+message StationSummary {
+  string id = 1;
+  string dns_name = 2;
+  string display_name = 3;
+  string mode = 4;
+  string status = 5;
+}
+
+message AddStationRequest {
+  string dns_name = 1;
+  string mode = 2;
+}
+
+message SetStationStatusRequest {
+  string id = 1;
+  string status = 2;
+}
+
+message ListUsersRequest {
+  string search = 1;
+  int32 page_size = 2;
+  int32 page = 3;
+}
+
+message UserWithTokens {
+  UserSummary user = 1;
+  int64 token_count = 2;
+}
+
+message ListUsersResponse {
+  repeated UserWithTokens users = 1;
+  int64 total = 2;
+}
+
+message ListAuditRequest {
+  string actor_type = 1;
+  string actor_id = 2;
+  string action = 3;
+  string target = 4;
+  int64 from_unix = 5;
+  int64 to_unix = 6;
+  // Return events with seq below this cursor. Zero means the newest page.
+  int64 before_seq = 7;
+  int32 page_size = 8;
+}
+
+message ListAuditResponse {
+  repeated AuditEvent events = 1;
+  // Pass as before_seq to fetch the next page. Zero when there are no more events.
+  int64 next_before_seq = 2;
+}
+
+message VerifyAuditResponse {
+  bool ok = 1;
+  int64 events_checked = 2;
+  string failure = 3;
+}

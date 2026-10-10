@@ -15,16 +15,18 @@ import (
 )
 
 type Config struct {
-	ListenGRPC  string        `toml:"listen_grpc"`
-	DatabaseURL string        `toml:"database_url"`
-	TLS         TLS           `toml:"tls"`
-	OIDC        OIDC          `toml:"oidc"`
-	Grants      Grants        `toml:"grants"`
-	Policy      Policy        `toml:"policy"`
-	Escrow      Escrow        `toml:"escrow"`
-	CA          map[string]CA `toml:"ca"`
-	Profiles    []Profile     `toml:"profiles"`
-	Lifecycle   Lifecycle     `toml:"lifecycle"`
+	ListenGRPC   string        `toml:"listen_grpc"`
+	DatabaseURL  string        `toml:"database_url"`
+	TLS          TLS           `toml:"tls"`
+	OIDC         OIDC          `toml:"oidc"`
+	Grants       Grants        `toml:"grants"`
+	Policy       Policy        `toml:"policy"`
+	Escrow       Escrow        `toml:"escrow"`
+	CA           map[string]CA `toml:"ca"`
+	Profiles     []Profile     `toml:"profiles"`
+	Lifecycle    Lifecycle     `toml:"lifecycle"`
+	ListenPortal string        `toml:"listen_portal"`
+	Portal       Portal        `toml:"portal"`
 }
 
 type TLS struct {
@@ -78,6 +80,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.OIDC.GroupsClaim == "" {
 		cfg.OIDC.GroupsClaim = "groups"
+	}
+	if cfg.Portal.ClientID == "" {
+		cfg.Portal.ClientID = "sigil"
+	}
+	if cfg.Portal.PublicURL == "" && cfg.ListenPortal != "" {
+		cfg.Portal.PublicURL = "https://" + cfg.ListenPortal
 	}
 	if cfg.Lifecycle.LostRevocationGraceHours == 0 {
 		cfg.Lifecycle.LostRevocationGraceHours = 24
@@ -158,6 +166,9 @@ func (c *Config) Validate() error {
 	if c.Grants.KeyID == "" || c.Grants.SigningKeyFile == "" {
 		return fmt.Errorf("grants key_id and signing_key_file are required")
 	}
+	if err := c.validatePortal(); err != nil {
+		return err
+	}
 	if c.Lifecycle.LostRevocationGraceHours < 1 || c.Lifecycle.LostRevocationGraceHours > 720 {
 		return fmt.Errorf("lifecycle lost_revocation_grace_hours must be between 1 and 720")
 	}
@@ -234,4 +245,35 @@ func CheckPrivateFile(path string) error {
 type Lifecycle struct {
 	// LostRevocationGraceHours is how long a lost token keeps its certificates before they are revoked.
 	LostRevocationGraceHours int `toml:"lost_revocation_grace_hours"`
+}
+
+// Portal configures the admin web portal listener and its browser settings.
+type Portal struct {
+	// PublicURL is the portal origin the browser uses for API calls. It defaults to https://<listen_portal>.
+	PublicURL string `toml:"public_url"`
+	// ClientID is the OIDC public client the portal signs in with.
+	ClientID string `toml:"client_id"`
+	// DevOrigins are Vite dev-server origins allowed to call the API with CORS. Empty in production.
+	DevOrigins []string `toml:"dev_origins"`
+}
+
+func (c *Config) validatePortal() error {
+	if c.ListenPortal == "" {
+		if c.Portal.PublicURL != "" || len(c.Portal.DevOrigins) != 0 {
+			return fmt.Errorf("portal settings require listen_portal")
+		}
+		return nil
+	}
+	if _, _, err := net.SplitHostPort(c.ListenPortal); err != nil {
+		return fmt.Errorf("listen_portal must be a host:port address")
+	}
+	if !strings.HasPrefix(c.Portal.PublicURL, "https://") {
+		return fmt.Errorf("portal public_url must be an HTTPS URL")
+	}
+	for _, origin := range c.Portal.DevOrigins {
+		if !strings.HasPrefix(origin, "http://localhost:") && !strings.HasPrefix(origin, "http://127.0.0.1:") {
+			return fmt.Errorf("portal dev_origins must be local http origins")
+		}
+	}
+	return nil
 }
