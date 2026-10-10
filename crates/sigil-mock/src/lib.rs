@@ -9,8 +9,8 @@ use std::{
 };
 
 use sigil_core::{
-    Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
+    Application, AttestationInspection, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId,
+    DeviceInfo, DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
     FingerprintProgress, FirmwareVersion, KeyOrigin, KeyStatus, ManagedPivInitializationOutcome,
     ManagementKey, ManagementKeyAlgorithm, ManagementKeyStatus, MetadataAccess, PinPolicy,
     PivAlgorithm, PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyAlgorithm,
@@ -190,6 +190,7 @@ pub struct MockDiscovery {
     listeners: Mutex<Vec<Sender<DeviceEvent>>>,
     piv_states: Mutex<HashMap<DeviceId, MockPivState>>,
     managed_initialization_fault: Mutex<ManagedInitializationFault>,
+    attestation_failure: Mutex<Option<String>>,
 }
 
 #[derive(Default)]
@@ -302,6 +303,13 @@ impl MockDiscovery {
             listeners: Mutex::new(Vec::new()),
             piv_states: Mutex::new(piv_states),
             managed_initialization_fault: Mutex::new(ManagedInitializationFault::default()),
+            attestation_failure: Mutex::new(None),
+        }
+    }
+
+    pub fn inject_attestation_failure(&self, reason: &str) {
+        if let Ok(mut failure) = self.attestation_failure.lock() {
+            *failure = Some(reason.to_owned());
         }
     }
 
@@ -622,13 +630,26 @@ impl PivManagement for MockDiscovery {
         slot: PivSlot,
     ) -> Result<PivAttestation> {
         self.verify_expected_serial(id, expected_serial)?;
+        let failure = self
+            .attestation_failure
+            .lock()
+            .ok()
+            .and_then(|failure| failure.clone());
         self.with_piv_state(id, |state| {
-            if !state.slots.contains_key(&slot) || slot == PivSlot::ATTESTATION {
-                return Err(CredentialError::CertificateNotFound(slot.to_string()));
-            }
+            let slot_state = state
+                .slots
+                .get(&slot)
+                .filter(|_| slot != PivSlot::ATTESTATION)
+                .ok_or_else(|| CredentialError::CertificateNotFound(slot.to_string()))?;
             Ok(PivAttestation {
                 attestation_der: P256_CERT.to_vec(),
                 intermediate_der: P256_CERT.to_vec(),
+                inspection: simulated_inspection(
+                    slot,
+                    expected_serial,
+                    slot_state,
+                    failure.clone(),
+                ),
             })
         })
     }
@@ -895,6 +916,43 @@ impl DeviceDiscovery for MockDiscovery {
             .map_err(|_| CredentialError::InventoryUnavailable)?
             .push(sender);
         Ok(receiver)
+    }
+}
+
+/// The inspection a simulated device reports. The chain is not a Yubico chain, so the root is named as simulated
+/// and the attested fields are taken from the stored slot, so enrollment checks run against real mock state.
+fn simulated_inspection(
+    slot: PivSlot,
+    serial: &str,
+    state: &MockPivSlot,
+    failure: Option<String>,
+) -> AttestationInspection {
+    let pin_policy = match state.pin_policy {
+        PinPolicy::Never => Some(0x01),
+        PinPolicy::Once => Some(0x02),
+        PinPolicy::Always => Some(0x03),
+        PinPolicy::Default => Some(match slot {
+            PivSlot::SIGNATURE => 0x03,
+            PivSlot::CARD_AUTHENTICATION => 0x01,
+            _ => 0x02,
+        }),
+        PinPolicy::MatchOnce | PinPolicy::MatchAlways => None,
+    };
+    let touch_policy = match state.touch_policy {
+        TouchPolicy::Default | TouchPolicy::Never => 0x01,
+        TouchPolicy::Always => 0x02,
+        TouchPolicy::Cached => 0x03,
+    };
+    AttestationInspection {
+        verified: failure.is_none(),
+        verification_error: failure,
+        attestation_root: Some("Simulated attestation root (mock device)".into()),
+        attested_serial: serial.parse().ok(),
+        attested_slot: Some(slot.byte()),
+        firmware: Some("5.7.4".into()),
+        pin_policy,
+        touch_policy: Some(touch_policy),
+        subject_public_key_info: Some(state.public_key_spki.clone()),
     }
 }
 

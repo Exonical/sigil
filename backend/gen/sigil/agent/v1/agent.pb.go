@@ -3348,8 +3348,18 @@ type AttestPivKeyResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	AttestationDer  []byte                 `protobuf:"bytes,1,opt,name=attestation_der,json=attestationDer,proto3" json:"attestation_der,omitempty"`
 	IntermediateDer []byte                 `protobuf:"bytes,2,opt,name=intermediate_der,json=intermediateDer,proto3" json:"intermediate_der,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// The chain check and the fields the attestation asserts. A failed check is reported here, not as an RPC error.
+	Verified             bool    `protobuf:"varint,3,opt,name=verified,proto3" json:"verified,omitempty"`
+	VerificationError    string  `protobuf:"bytes,4,opt,name=verification_error,json=verificationError,proto3" json:"verification_error,omitempty"`
+	AttestationRoot      string  `protobuf:"bytes,5,opt,name=attestation_root,json=attestationRoot,proto3" json:"attestation_root,omitempty"`
+	AttestedSerial       *uint64 `protobuf:"varint,6,opt,name=attested_serial,json=attestedSerial,proto3,oneof" json:"attested_serial,omitempty"`
+	Firmware             string  `protobuf:"bytes,7,opt,name=firmware,proto3" json:"firmware,omitempty"`
+	AttestedSlot         *uint32 `protobuf:"varint,8,opt,name=attested_slot,json=attestedSlot,proto3,oneof" json:"attested_slot,omitempty"`
+	PinPolicy            *uint32 `protobuf:"varint,9,opt,name=pin_policy,json=pinPolicy,proto3,oneof" json:"pin_policy,omitempty"`
+	TouchPolicy          *uint32 `protobuf:"varint,10,opt,name=touch_policy,json=touchPolicy,proto3,oneof" json:"touch_policy,omitempty"`
+	SubjectPublicKeyInfo []byte  `protobuf:"bytes,11,opt,name=subject_public_key_info,json=subjectPublicKeyInfo,proto3" json:"subject_public_key_info,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *AttestPivKeyResponse) Reset() {
@@ -3392,6 +3402,69 @@ func (x *AttestPivKeyResponse) GetAttestationDer() []byte {
 func (x *AttestPivKeyResponse) GetIntermediateDer() []byte {
 	if x != nil {
 		return x.IntermediateDer
+	}
+	return nil
+}
+
+func (x *AttestPivKeyResponse) GetVerified() bool {
+	if x != nil {
+		return x.Verified
+	}
+	return false
+}
+
+func (x *AttestPivKeyResponse) GetVerificationError() string {
+	if x != nil {
+		return x.VerificationError
+	}
+	return ""
+}
+
+func (x *AttestPivKeyResponse) GetAttestationRoot() string {
+	if x != nil {
+		return x.AttestationRoot
+	}
+	return ""
+}
+
+func (x *AttestPivKeyResponse) GetAttestedSerial() uint64 {
+	if x != nil && x.AttestedSerial != nil {
+		return *x.AttestedSerial
+	}
+	return 0
+}
+
+func (x *AttestPivKeyResponse) GetFirmware() string {
+	if x != nil {
+		return x.Firmware
+	}
+	return ""
+}
+
+func (x *AttestPivKeyResponse) GetAttestedSlot() uint32 {
+	if x != nil && x.AttestedSlot != nil {
+		return *x.AttestedSlot
+	}
+	return 0
+}
+
+func (x *AttestPivKeyResponse) GetPinPolicy() uint32 {
+	if x != nil && x.PinPolicy != nil {
+		return *x.PinPolicy
+	}
+	return 0
+}
+
+func (x *AttestPivKeyResponse) GetTouchPolicy() uint32 {
+	if x != nil && x.TouchPolicy != nil {
+		return *x.TouchPolicy
+	}
+	return 0
+}
+
+func (x *AttestPivKeyResponse) GetSubjectPublicKeyInfo() []byte {
+	if x != nil {
+		return x.SubjectPublicKeyInfo
 	}
 	return nil
 }
@@ -4572,10 +4645,25 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x13AttestPivKeyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12\x1b\n" +
-	"\tslot_byte\x18\x03 \x01(\rR\bslotByte\"j\n" +
+	"\tslot_byte\x18\x03 \x01(\rR\bslotByte\"\x9d\x04\n" +
 	"\x14AttestPivKeyResponse\x12'\n" +
 	"\x0fattestation_der\x18\x01 \x01(\fR\x0eattestationDer\x12)\n" +
-	"\x10intermediate_der\x18\x02 \x01(\fR\x0fintermediateDer\"\x9a\x01\n" +
+	"\x10intermediate_der\x18\x02 \x01(\fR\x0fintermediateDer\x12\x1a\n" +
+	"\bverified\x18\x03 \x01(\bR\bverified\x12-\n" +
+	"\x12verification_error\x18\x04 \x01(\tR\x11verificationError\x12)\n" +
+	"\x10attestation_root\x18\x05 \x01(\tR\x0fattestationRoot\x12,\n" +
+	"\x0fattested_serial\x18\x06 \x01(\x04H\x00R\x0eattestedSerial\x88\x01\x01\x12\x1a\n" +
+	"\bfirmware\x18\a \x01(\tR\bfirmware\x12(\n" +
+	"\rattested_slot\x18\b \x01(\rH\x01R\fattestedSlot\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"pin_policy\x18\t \x01(\rH\x02R\tpinPolicy\x88\x01\x01\x12&\n" +
+	"\ftouch_policy\x18\n" +
+	" \x01(\rH\x03R\vtouchPolicy\x88\x01\x01\x125\n" +
+	"\x17subject_public_key_info\x18\v \x01(\fR\x14subjectPublicKeyInfoB\x12\n" +
+	"\x10_attested_serialB\x10\n" +
+	"\x0e_attested_slotB\r\n" +
+	"\v_pin_policyB\x0f\n" +
+	"\r_touch_policy\"\x9a\x01\n" +
 	"\x11SignPivCsrRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12\x10\n" +
@@ -5016,6 +5104,7 @@ func file_sigil_agent_v1_agent_proto_init() {
 	file_sigil_agent_v1_agent_proto_msgTypes[27].OneofWrappers = []any{}
 	file_sigil_agent_v1_agent_proto_msgTypes[28].OneofWrappers = []any{}
 	file_sigil_agent_v1_agent_proto_msgTypes[30].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[39].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

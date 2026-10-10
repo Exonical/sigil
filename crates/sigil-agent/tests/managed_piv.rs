@@ -58,6 +58,7 @@ struct FakeAuthority {
     profiles: Mutex<Vec<sigil_proto::backend::v1::CertificateProfile>>,
     issuer: Mutex<Option<(rcgen::Certificate, rcgen::KeyPair)>>,
     substitute_key: AtomicBool,
+    issue_calls: AtomicUsize,
     last_csr_common_name: Mutex<Option<String>>,
 }
 
@@ -75,6 +76,7 @@ impl FakeAuthority {
             profiles: Mutex::new(Vec::new()),
             issuer: Mutex::new(None),
             substitute_key: AtomicBool::new(false),
+            issue_calls: AtomicUsize::new(0),
             last_csr_common_name: Mutex::new(None),
         }
     }
@@ -256,6 +258,7 @@ impl ManagedAuthority for FakeAuthority {
         &self,
         request: sigil_proto::backend::v1::IssueCertificateRequest,
     ) -> Result<sigil_proto::backend::v1::IssueCertificateResponse, Status> {
+        self.issue_calls.fetch_add(1, Ordering::SeqCst);
         issue_test_certificate(self, request)
     }
 }
@@ -268,6 +271,10 @@ impl FakeAuthority {
     ) {
         self.profiles.lock().expect("profiles mutex").push(profile);
         *self.issuer.lock().expect("issuer mutex") = Some(ca);
+    }
+
+    fn issue_count(&self) -> usize {
+        self.issue_calls.load(Ordering::SeqCst)
     }
 
     fn substitute_key_on_issue(&self) {
@@ -1055,6 +1062,42 @@ async fn enrollment_rejects_a_certificate_issued_for_a_different_key_and_install
         "unexpected rejection: {}",
         error.message()
     );
+    assert!(
+        mock.piv_certificate(&id, PivSlot::AUTHENTICATION)
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn enrollment_stops_before_issuance_when_the_attestation_does_not_verify() {
+    let (mock, credentials) = mock_service();
+    mock.inject_attestation_failure("the chain does not reach a Yubico root");
+    let backend = Arc::new(FakeAuthority::new());
+    backend.enable_enrollment(
+        enrollment_profile(),
+        test_root_authority("Sigil Test Issuing Root"),
+    );
+    let service = agent_service(credentials, Some(backend.clone()), None);
+    let id = DeviceId("mock-yubikey-12345678".into());
+
+    let error = Agent::enroll_piv_certificate(
+        &service,
+        with_caller(Request::new(enroll_request(managed_token()))),
+    )
+    .await
+    .expect_err("an unverified attestation must stop enrollment");
+
+    assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+    assert!(
+        error
+            .message()
+            .contains("attestation rejected before issuance")
+            && error.message().contains("does not reach a Yubico root"),
+        "unexpected rejection: {}",
+        error.message()
+    );
+    assert_eq!(backend.issue_count(), 0, "no certificate may be requested");
     assert!(
         mock.piv_certificate(&id, PivSlot::AUTHENTICATION)
             .unwrap()

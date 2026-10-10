@@ -23,6 +23,8 @@ sigil-app = { path = "../sigil-app" }
 sigil-platform = { path = "../sigil-platform" }
 sigil-mock = { path = "../sigil-mock" }
 sigil-proto = { path = "../sigil-proto" }
+sigil-client = { path = "../sigil-client" }
+sigil-yubikey = { path = "../sigil-yubikey" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
@@ -49,7 +51,6 @@ tower = { version = "0.5", features = ["util"] }
 x509-parser = { version = "0.18", features = ["verify"] }
 
 [dev-dependencies]
-sigil-client = { path = "../sigil-client" }
 rcgen = { version = "=0.13.2", features = ["pem", "x509-parser"] }
 tempfile = "3.27.0"
 

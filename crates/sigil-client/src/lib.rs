@@ -10,8 +10,8 @@ use std::{
 };
 
 use sigil_core::{
-    Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
+    Application, AttestationInspection, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId,
+    DeviceInfo, DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
     FingerprintProgress, ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivAttestation,
     PivCertificate, PivInfo, PivInspection, PivKeyConfiguration, PivManagement, PivPin, PivPuk,
     PivSlot, PivSlotInfo, Result, Secret, TouchPolicy,
@@ -255,13 +255,7 @@ impl AgentClient {
                 expected_serial: expected_serial.to_owned(),
                 slot_byte: u32::from(slot.byte()),
             }))
-            .map(|response| {
-                let response = response.into_inner();
-                PivAttestation {
-                    attestation_der: response.attestation_der,
-                    intermediate_der: response.intermediate_der,
-                }
-            })
+            .map(|response| attestation_from_response(&response.into_inner()))
             .map_err(Self::map_status)
     }
 
@@ -1176,4 +1170,31 @@ pub struct EnrolledCertificate {
     pub not_after_unix: i64,
     pub subject: String,
     pub serial_number: String,
+}
+
+/// Converts the agent's attestation response, including the verification result, to the domain type.
+pub fn attestation_from_response(response: &v1::AttestPivKeyResponse) -> PivAttestation {
+    let text = |value: &str| (!value.is_empty()).then(|| value.to_owned());
+    PivAttestation {
+        attestation_der: response.attestation_der.clone(),
+        intermediate_der: response.intermediate_der.clone(),
+        inspection: AttestationInspection {
+            verified: response.verified,
+            verification_error: text(&response.verification_error),
+            attestation_root: text(&response.attestation_root),
+            attested_serial: response.attested_serial,
+            attested_slot: response
+                .attested_slot
+                .and_then(|slot| u8::try_from(slot).ok()),
+            firmware: text(&response.firmware),
+            pin_policy: response
+                .pin_policy
+                .and_then(|value| u8::try_from(value).ok()),
+            touch_policy: response
+                .touch_policy
+                .and_then(|value| u8::try_from(value).ok()),
+            subject_public_key_info: (!response.subject_public_key_info.is_empty())
+                .then(|| response.subject_public_key_info.clone()),
+        },
+    }
 }

@@ -848,6 +848,29 @@ impl AgentService {
         )
         .await?
         .into_inner();
+        let attestation = sigil_client::attestation_from_response(&attested);
+        let expected_serial = serial
+            .parse::<u64>()
+            .map_err(|_| Status::failed_precondition("the token serial is not numeric"))?;
+        let expected_pin = pin_policy(enrollment::pin_policy_name(&profile.pin_policy)? as i32)
+            .map_err(|error| status_from_error(&error))?;
+        let expected_touch =
+            touch_policy(enrollment::touch_policy_name(&profile.touch_policy)? as i32)
+                .map_err(|error| status_from_error(&error))?;
+        let expected_slot = piv_slot(slot_byte).map_err(|error| status_from_error(&error))?;
+        sigil_yubikey::attestation::check_expected(
+            &attestation.inspection,
+            &sigil_yubikey::attestation::ExpectedAttestation {
+                serial: expected_serial,
+                slot: expected_slot,
+                pin_policy: expected_pin,
+                touch_policy: expected_touch,
+                subject_public_key_info: &spki,
+            },
+        )
+        .map_err(|reason| {
+            Status::failed_precondition(format!("attestation rejected before issuance: {reason}"))
+        })?;
         let csr_der = v1::agent_server::Agent::sign_piv_csr(
             self,
             with_caller(
@@ -2182,12 +2205,7 @@ impl v1::agent_server::Agent for AgentService {
             None,
             &result,
         );
-        result.map(|attestation| {
-            Response::new(v1::AttestPivKeyResponse {
-                attestation_der: attestation.attestation_der,
-                intermediate_der: attestation.intermediate_der,
-            })
-        })
+        result.map(|attestation| Response::new(attestation_response(attestation)))
     }
 
     async fn sign_piv_csr(
@@ -3273,6 +3291,23 @@ fn touch_policy(value: i32) -> CoreResult<TouchPolicy> {
         v1::TouchPolicy::Unspecified => Err(CredentialError::UnsupportedOperation(
             "PIV touch policy is required".into(),
         )),
+    }
+}
+
+fn attestation_response(attestation: sigil_core::PivAttestation) -> v1::AttestPivKeyResponse {
+    let inspection = attestation.inspection;
+    v1::AttestPivKeyResponse {
+        attestation_der: attestation.attestation_der,
+        intermediate_der: attestation.intermediate_der,
+        verified: inspection.verified,
+        verification_error: inspection.verification_error.unwrap_or_default(),
+        attestation_root: inspection.attestation_root.unwrap_or_default(),
+        attested_serial: inspection.attested_serial,
+        firmware: inspection.firmware.unwrap_or_default(),
+        attested_slot: inspection.attested_slot.map(u32::from),
+        pin_policy: inspection.pin_policy.map(u32::from),
+        touch_policy: inspection.touch_policy.map(u32::from),
+        subject_public_key_info: inspection.subject_public_key_info.unwrap_or_default(),
     }
 }
 

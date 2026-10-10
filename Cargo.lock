@@ -5381,6 +5381,7 @@ dependencies = [
  "sigil-mock",
  "sigil-platform",
  "sigil-proto",
+ "sigil-yubikey",
  "tempfile",
  "tokio",
  "tokio-rustls",

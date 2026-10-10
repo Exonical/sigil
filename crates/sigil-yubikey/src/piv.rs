@@ -12,6 +12,7 @@ use rsa::{
 };
 use sha2::{Digest, Sha256, Sha384};
 use sha2_legacy::Digest as LegacyDigest;
+use sigil_core::AttestationInspection;
 use sigil_core::{
     CredentialError, FirmwareVersion, KeyOrigin, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
     ManagementKeyStatus, PinPolicy, PivAlgorithm, PivAttestation, PivInfo, PivKeyMetadata, PivPin,
@@ -368,10 +369,32 @@ pub fn attest_selected<T: CardTransport>(
         CredentialError::CertificateNotFound(PivSlot::ATTESTATION.to_string()),
     )?;
     let intermediate_der = certificate_from_object(&object)?;
+    let inspection = attestation_inspection(&attestation_der, &intermediate_der);
     Ok(PivAttestation {
         attestation_der,
         intermediate_der,
+        inspection,
     })
+}
+
+/// Checks the attestation against the embedded Yubico roots. A failure is reported in the result, not as an error.
+fn attestation_inspection(
+    attestation_der: &[u8],
+    intermediate_der: &[u8],
+) -> AttestationInspection {
+    match AttestationTrust::embedded() {
+        Ok(trust) => attestation::inspect(
+            attestation_der,
+            intermediate_der,
+            &trust,
+            attestation::now_unix(),
+        )
+        .into_inspection(),
+        Err(error) => AttestationInspection {
+            verification_error: Some(error.to_string()),
+            ..AttestationInspection::default()
+        },
+    }
 }
 
 pub fn attest<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Result<PivAttestation> {
@@ -677,7 +700,7 @@ fn unsigned_integer_to_u64(bytes: &[u8]) -> Result<u64> {
     })
 }
 
-fn attested_pin_policy(slot: PivSlot, policy: PinPolicy) -> Result<u8> {
+pub(crate) fn attested_pin_policy(slot: PivSlot, policy: PinPolicy) -> Result<u8> {
     match policy {
         PinPolicy::Never => Ok(0x01),
         PinPolicy::Once => Ok(0x02),
@@ -694,7 +717,7 @@ fn attested_pin_policy(slot: PivSlot, policy: PinPolicy) -> Result<u8> {
     }
 }
 
-fn attested_touch_policy(policy: TouchPolicy) -> u8 {
+pub(crate) fn attested_touch_policy(policy: TouchPolicy) -> u8 {
     match policy {
         TouchPolicy::Default | TouchPolicy::Never => 0x01,
         TouchPolicy::Always => 0x02,

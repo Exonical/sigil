@@ -274,10 +274,28 @@ pub struct PivCertificate {
     pub der: Vec<u8>,
 }
 
+/// The result of checking a PIV attestation chain and the fields it asserts. A failed check is reported here rather
+/// than as an error, so the attestation can still be inspected.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct AttestationInspection {
+    pub verified: bool,
+    pub verification_error: Option<String>,
+    /// Subject common name of the root the chain verified to.
+    pub attestation_root: Option<String>,
+    pub attested_serial: Option<u64>,
+    pub attested_slot: Option<u8>,
+    pub firmware: Option<String>,
+    pub pin_policy: Option<u8>,
+    pub touch_policy: Option<u8>,
+    /// DER SubjectPublicKeyInfo of the attested key.
+    pub subject_public_key_info: Option<Vec<u8>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PivAttestation {
     pub attestation_der: Vec<u8>,
     pub intermediate_der: Vec<u8>,
+    pub inspection: AttestationInspection,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

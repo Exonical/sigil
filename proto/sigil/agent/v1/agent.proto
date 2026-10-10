@@ -378,6 +378,16 @@ message AttestPivKeyRequest {
 message AttestPivKeyResponse {
   bytes attestation_der = 1;
   bytes intermediate_der = 2;
+  // The chain check and the fields the attestation asserts. A failed check is reported here, not as an RPC error.
+  bool verified = 3;
+  string verification_error = 4;
+  string attestation_root = 5;
+  optional uint64 attested_serial = 6;
+  string firmware = 7;
+  optional uint32 attested_slot = 8;
+  optional uint32 pin_policy = 9;
+  optional uint32 touch_policy = 10;
+  bytes subject_public_key_info = 11;
 }
 
 message SignPivCsrRequest {

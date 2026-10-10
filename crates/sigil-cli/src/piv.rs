@@ -761,6 +761,8 @@ fn handle_with_prompter<P: SecretPrompter>(
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
             let attestation = service.attest(&id, &serial, slot)?;
+            let verification = attestation_verification_line(&attestation.inspection);
+            let details = attestation_details(&attestation);
             if let Some(directory) = output {
                 fs::create_dir_all(&directory)?;
                 write_new(
@@ -777,14 +779,17 @@ fn handle_with_prompter<P: SecretPrompter>(
                         "operation": "attest",
                         "slot": slot,
                         "output": directory,
+                        "attestation": details,
                     }),
-                    format!("Wrote attestation for slot {slot}."),
+                    format!("{verification}\nWrote attestation for slot {slot}."),
                 )
+            } else if json {
+                Ok(serde_json::to_string_pretty(&details)?)
             } else {
-                Ok(serde_json::to_string_pretty(&serde_json::json!({
-                    "attestation_der": attestation.attestation_der,
-                    "intermediate_der": attestation.intermediate_der,
-                }))?)
+                Ok(format!(
+                    "{verification}\n{}",
+                    attestation_fields_text(&attestation.inspection)
+                ))
             }
         }
         PivCommand::Csr {
@@ -1078,6 +1083,59 @@ fn render_slots(slots: &[PivSlotInfo], json: bool) -> Result<String> {
         ));
     }
     Ok(lines.join("\n"))
+}
+
+/// The verification result as the first line of output: "Verified: chains to <root>" or "NOT VERIFIED: <reason>".
+fn attestation_verification_line(inspection: &sigil_core::AttestationInspection) -> String {
+    if inspection.verified {
+        format!(
+            "Verified: chains to {}",
+            inspection
+                .attestation_root
+                .as_deref()
+                .unwrap_or("a Yubico root")
+        )
+    } else {
+        format!(
+            "NOT VERIFIED: {}",
+            inspection
+                .verification_error
+                .as_deref()
+                .unwrap_or("unknown reason")
+        )
+    }
+}
+
+fn attestation_details(attestation: &sigil_core::PivAttestation) -> serde_json::Value {
+    let inspection = &attestation.inspection;
+    serde_json::json!({
+        "verified": inspection.verified,
+        "verification_error": inspection.verification_error,
+        "attestation_root": inspection.attestation_root,
+        "attested_serial": inspection.attested_serial,
+        "attested_slot": inspection.attested_slot,
+        "firmware": inspection.firmware,
+        "pin_policy": inspection.pin_policy,
+        "touch_policy": inspection.touch_policy,
+        "attestation_der": attestation.attestation_der,
+        "intermediate_der": attestation.intermediate_der,
+    })
+}
+
+fn attestation_fields_text(inspection: &sigil_core::AttestationInspection) -> String {
+    let show = |value: Option<String>| value.unwrap_or_else(|| "unavailable".to_owned());
+    format!(
+        "Serial: {}\nFirmware: {}\nSlot: {}\nPIN policy: {}\nTouch policy: {}",
+        show(inspection.attested_serial.map(|serial| serial.to_string())),
+        show(inspection.firmware.clone()),
+        show(inspection.attested_slot.map(|slot| format!("{slot:02x}"))),
+        show(inspection.pin_policy.map(|policy| format!("{policy:02x}"))),
+        show(
+            inspection
+                .touch_policy
+                .map(|policy| format!("{policy:02x}"))
+        ),
+    )
 }
 
 #[cfg(test)]

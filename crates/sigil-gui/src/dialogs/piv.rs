@@ -1333,6 +1333,25 @@ fn execute_operation(
             .attest(id, serial, slot)
             .map_err(|error| error.to_string())
             .and_then(|attestation| {
+                let verification = if attestation.inspection.verified {
+                    format!(
+                        "Verified: chains to {}",
+                        attestation
+                            .inspection
+                            .attestation_root
+                            .as_deref()
+                            .unwrap_or("a Yubico root")
+                    )
+                } else {
+                    format!(
+                        "NOT VERIFIED: {}",
+                        attestation
+                            .inspection
+                            .verification_error
+                            .as_deref()
+                            .unwrap_or("unknown reason")
+                    )
+                };
                 std::fs::write(&path, attestation.attestation_der)
                     .map_err(|error| error.to_string())?;
                 let intermediate = path.with_file_name(format!(
@@ -1344,7 +1363,7 @@ fn execute_operation(
                 std::fs::write(&intermediate, attestation.intermediate_der)
                     .map_err(|error| error.to_string())?;
                 Ok(format!(
-                    "Attestation and intermediate saved to {}.",
+                    "{verification}. Attestation and intermediate saved to {}.",
                     path.display()
                 ))
             }),

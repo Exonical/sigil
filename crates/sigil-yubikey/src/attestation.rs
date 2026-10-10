@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use der::{Decode, DecodePem, Encode};
 use sha2_legacy::{Digest, Sha256, Sha384, Sha512};
-use sigil_core::{CredentialError, Result};
+use sigil_core::{AttestationInspection, CredentialError, PinPolicy, PivSlot, Result, TouchPolicy};
 use x509_cert::Certificate;
 use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages};
 use x509_cert::spki::SubjectPublicKeyInfoOwned;
@@ -86,6 +86,7 @@ pub struct AttestationReport {
     pub firmware: Option<String>,
     pub pin_policy: Option<u8>,
     pub touch_policy: Option<u8>,
+    pub subject_public_key_info: Option<Vec<u8>>,
 }
 
 /// Verifies `attestation` against `trust`, using `slot_certificate` (F9) and the trust intermediates to build the path.
@@ -336,6 +337,11 @@ fn verify_ecdsa(
 }
 
 fn parse_fields(leaf: &Certificate, report: &mut AttestationReport) {
+    report.subject_public_key_info = leaf
+        .tbs_certificate()
+        .subject_public_key_info()
+        .to_der()
+        .ok();
     report.attested_slot = common_name(leaf.tbs_certificate().subject())
         .strip_prefix("YubiKey PIV Attestation ")
         .map(str::to_owned);
@@ -419,4 +425,77 @@ pub fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+impl AttestationReport {
+    /// The same result in the vendor-neutral form that travels with an attestation.
+    pub fn into_inspection(self) -> AttestationInspection {
+        AttestationInspection {
+            verified: self.verified,
+            verification_error: self.verification_error,
+            attestation_root: self.attestation_root,
+            attested_serial: self.serial,
+            attested_slot: self
+                .attested_slot
+                .as_deref()
+                .and_then(|slot| u8::from_str_radix(slot, 16).ok()),
+            firmware: self.firmware,
+            pin_policy: self.pin_policy,
+            touch_policy: self.touch_policy,
+            subject_public_key_info: self.subject_public_key_info,
+        }
+    }
+}
+
+/// What an attestation must assert for the key that was just generated for enrollment.
+pub struct ExpectedAttestation<'a> {
+    pub serial: u64,
+    pub slot: PivSlot,
+    pub pin_policy: PinPolicy,
+    pub touch_policy: TouchPolicy,
+    pub subject_public_key_info: &'a [u8],
+}
+
+/// Checks an inspected attestation against what enrollment expects. Returns the first mismatch as the reason.
+/// An attestation that did not verify fails before any field is compared.
+pub fn check_expected(
+    inspection: &AttestationInspection,
+    expected: &ExpectedAttestation<'_>,
+) -> std::result::Result<(), String> {
+    if !inspection.verified {
+        return Err(format!(
+            "attestation is not verified: {}",
+            inspection
+                .verification_error
+                .as_deref()
+                .unwrap_or("unknown reason")
+        ));
+    }
+    if inspection.attested_serial != Some(expected.serial) {
+        return Err(format!(
+            "attested serial {} does not match the token serial {}",
+            inspection
+                .attested_serial
+                .map_or_else(|| "missing".to_owned(), |serial| serial.to_string()),
+            expected.serial
+        ));
+    }
+    if inspection.attested_slot != Some(expected.slot.byte()) {
+        return Err(format!(
+            "attested slot does not match slot {}",
+            expected.slot
+        ));
+    }
+    let pin = crate::piv::attested_pin_policy(expected.slot, expected.pin_policy)
+        .map_err(|error| error.to_string())?;
+    if inspection.pin_policy != Some(pin) {
+        return Err("attested PIN policy does not match the requested policy".into());
+    }
+    if inspection.touch_policy != Some(crate::piv::attested_touch_policy(expected.touch_policy)) {
+        return Err("attested touch policy does not match the requested policy".into());
+    }
+    if inspection.subject_public_key_info.as_deref() != Some(expected.subject_public_key_info) {
+        return Err("attested key does not match the generated key".into());
+    }
+    Ok(())
 }
