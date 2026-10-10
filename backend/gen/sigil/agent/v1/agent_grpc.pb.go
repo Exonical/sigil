@@ -43,6 +43,8 @@ const (
 	Agent_DeletePivCertificate_FullMethodName        = "/sigil.agent.v1.Agent/DeletePivCertificate"
 	Agent_DeletePivKey_FullMethodName                = "/sigil.agent.v1.Agent/DeletePivKey"
 	Agent_ResetPiv_FullMethodName                    = "/sigil.agent.v1.Agent/ResetPiv"
+	Agent_InitializeManagedPiv_FullMethodName        = "/sigil.agent.v1.Agent/InitializeManagedPiv"
+	Agent_RotateManagedPivSecret_FullMethodName      = "/sigil.agent.v1.Agent/RotateManagedPivSecret"
 )
 
 // AgentClient is the client API for Agent service.
@@ -73,6 +75,8 @@ type AgentClient interface {
 	DeletePivCertificate(ctx context.Context, in *DeletePivCertificateRequest, opts ...grpc.CallOption) (*Empty, error)
 	DeletePivKey(ctx context.Context, in *DeletePivKeyRequest, opts ...grpc.CallOption) (*Empty, error)
 	ResetPiv(ctx context.Context, in *ResetPivRequest, opts ...grpc.CallOption) (*Empty, error)
+	InitializeManagedPiv(ctx context.Context, in *InitializeManagedPivRequest, opts ...grpc.CallOption) (*Empty, error)
+	RotateManagedPivSecret(ctx context.Context, in *RotateManagedPivSecretRequest, opts ...grpc.CallOption) (*Empty, error)
 }
 
 type agentClient struct {
@@ -341,6 +345,26 @@ func (c *agentClient) ResetPiv(ctx context.Context, in *ResetPivRequest, opts ..
 	return out, nil
 }
 
+func (c *agentClient) InitializeManagedPiv(ctx context.Context, in *InitializeManagedPivRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_InitializeManagedPiv_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) RotateManagedPivSecret(ctx context.Context, in *RotateManagedPivSecretRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_RotateManagedPivSecret_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentServer is the server API for Agent service.
 // All implementations must embed UnimplementedAgentServer
 // for forward compatibility.
@@ -369,6 +393,8 @@ type AgentServer interface {
 	DeletePivCertificate(context.Context, *DeletePivCertificateRequest) (*Empty, error)
 	DeletePivKey(context.Context, *DeletePivKeyRequest) (*Empty, error)
 	ResetPiv(context.Context, *ResetPivRequest) (*Empty, error)
+	InitializeManagedPiv(context.Context, *InitializeManagedPivRequest) (*Empty, error)
+	RotateManagedPivSecret(context.Context, *RotateManagedPivSecretRequest) (*Empty, error)
 	mustEmbedUnimplementedAgentServer()
 }
 
@@ -450,6 +476,12 @@ func (UnimplementedAgentServer) DeletePivKey(context.Context, *DeletePivKeyReque
 }
 func (UnimplementedAgentServer) ResetPiv(context.Context, *ResetPivRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResetPiv not implemented")
+}
+func (UnimplementedAgentServer) InitializeManagedPiv(context.Context, *InitializeManagedPivRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method InitializeManagedPiv not implemented")
+}
+func (UnimplementedAgentServer) RotateManagedPivSecret(context.Context, *RotateManagedPivSecretRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RotateManagedPivSecret not implemented")
 }
 func (UnimplementedAgentServer) mustEmbedUnimplementedAgentServer() {}
 func (UnimplementedAgentServer) testEmbeddedByValue()               {}
@@ -890,6 +922,42 @@ func _Agent_ResetPiv_Handler(srv interface{}, ctx context.Context, dec func(inte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Agent_InitializeManagedPiv_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InitializeManagedPivRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).InitializeManagedPiv(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_InitializeManagedPiv_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).InitializeManagedPiv(ctx, req.(*InitializeManagedPivRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_RotateManagedPivSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RotateManagedPivSecretRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).RotateManagedPivSecret(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_RotateManagedPivSecret_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).RotateManagedPivSecret(ctx, req.(*RotateManagedPivSecretRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Agent_ServiceDesc is the grpc.ServiceDesc for Agent service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -984,6 +1052,14 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResetPiv",
 			Handler:    _Agent_ResetPiv_Handler,
+		},
+		{
+			MethodName: "InitializeManagedPiv",
+			Handler:    _Agent_InitializeManagedPiv_Handler,
+		},
+		{
+			MethodName: "RotateManagedPivSecret",
+			Handler:    _Agent_RotateManagedPivSecret_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

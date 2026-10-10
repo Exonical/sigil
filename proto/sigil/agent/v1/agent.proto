@@ -29,6 +29,8 @@ service Agent {
   rpc DeletePivCertificate(DeletePivCertificateRequest) returns (Empty);
   rpc DeletePivKey(DeletePivKeyRequest) returns (Empty);
   rpc ResetPiv(ResetPivRequest) returns (Empty);
+  rpc InitializeManagedPiv(InitializeManagedPivRequest) returns (Empty);
+  rpc RotateManagedPivSecret(RotateManagedPivSecretRequest) returns (Empty);
 }
 
 message Empty {}
@@ -324,6 +326,11 @@ message ChangePivPukRequest {
   string expected_serial = 2;
   bytes old_puk = 3;
   bytes new_puk = 4;
+  ManagedAuthorization managed = 5;
+}
+
+message ManagedAuthorization {
+  string access_token = 1;
 }
 
 message UnblockPivPinRequest {
@@ -331,6 +338,7 @@ message UnblockPivPinRequest {
   string expected_serial = 2;
   bytes puk = 3;
   bytes new_pin = 4;
+  ManagedAuthorization managed = 5;
 }
 
 message ChangePivManagementKeyRequest {
@@ -340,6 +348,7 @@ message ChangePivManagementKeyRequest {
   ManagementKeyAlgorithm current_algorithm = 4;
   ManagementKeyAlgorithm new_algorithm = 5;
   bytes new_management_key = 6;
+  ManagedAuthorization managed = 7;
 }
 
 message GeneratePivKeyRequest {
@@ -351,6 +360,7 @@ message GeneratePivKeyRequest {
   PivKeyGenerationAlgorithm algorithm = 6;
   PinPolicy pin_policy = 7;
   TouchPolicy touch_policy = 8;
+  ManagedAuthorization managed = 9;
 }
 
 message GeneratePivKeyResponse {
@@ -387,6 +397,7 @@ message ImportPivCertificateRequest {
   ManagementKeyAlgorithm management_key_algorithm = 4;
   uint32 slot_byte = 5;
   bytes certificate_der = 6;
+  ManagedAuthorization managed = 7;
 }
 
 message DeletePivCertificateRequest {
@@ -395,6 +406,7 @@ message DeletePivCertificateRequest {
   bytes management_key = 3;
   ManagementKeyAlgorithm management_key_algorithm = 4;
   uint32 slot_byte = 5;
+  ManagedAuthorization managed = 6;
 }
 
 message DeletePivKeyRequest {
@@ -403,11 +415,31 @@ message DeletePivKeyRequest {
   bytes management_key = 3;
   ManagementKeyAlgorithm management_key_algorithm = 4;
   uint32 slot_byte = 5;
+  ManagedAuthorization managed = 6;
 }
 
 message ResetPivRequest {
   string id = 1;
   string confirm_serial = 2;
+}
+
+message InitializeManagedPivRequest {
+  string id = 1;
+  string expected_serial = 2;
+  ManagedAuthorization managed = 3;
+}
+
+enum ManagedSecretKind {
+  MANAGED_SECRET_KIND_UNSPECIFIED = 0;
+  MANAGED_SECRET_KIND_PUK = 1;
+  MANAGED_SECRET_KIND_MANAGEMENT_KEY = 2;
+}
+
+message RotateManagedPivSecretRequest {
+  string id = 1;
+  string expected_serial = 2;
+  ManagedAuthorization managed = 3;
+  ManagedSecretKind kind = 4;
 }
 
 enum ErrorKind {
@@ -439,6 +471,9 @@ enum ErrorKind {
   MANAGEMENT_KEY_INCORRECT = 25;
   DEVICE_MISMATCH = 26;
   PIV_FIPS_NOT_APPROVED = 27;
+  PIV_NOT_FACTORY_DEFAULT = 28;
+  MANAGED_ROTATION_INCOMPLETE = 29;
+  BACKEND_REJECTED = 30;
 }
 
 message AgentError {

@@ -1,11 +1,11 @@
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 
 use futures_util::Stream;
 use sigil_app::CredentialService;
 use sigil_core::{
-    Application, CredentialError, DeviceId, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
-    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, Result as CoreResult, Secret,
-    TouchPolicy,
+    Application, CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
+    ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk,
+    PivSlot, Result as CoreResult, Secret, TouchPolicy,
 };
 use sigil_proto::{status_from_error, v1};
 use tokio::{sync::mpsc, task};
@@ -13,8 +13,12 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
-use crate::caller::{self, CallerIdentity, CallerPolicy};
 use crate::grant::{GrantExpectation, GrantProvider, GrantRequest, GrantVerifier, Unconfigured};
+use crate::{
+    audit_outbox::{AuditOutbox, PendingCompletion},
+    backend::{ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret, token_identity},
+    caller::{self, CallerIdentity, CallerPolicy},
+};
 
 pub type WatchDevicesStream =
     Pin<Box<dyn Stream<Item = std::result::Result<v1::DeviceEvent, Status>> + Send + 'static>>;
@@ -31,6 +35,8 @@ pub struct AgentService {
     policy: CallerPolicy,
     grant_provider: Arc<dyn GrantProvider>,
     grant_verifier: Arc<GrantVerifier>,
+    backend: Option<Arc<dyn ManagedAuthority>>,
+    audit_outbox: Option<Arc<AuditOutbox>>,
 }
 
 impl AgentService {
@@ -41,6 +47,8 @@ impl AgentService {
             policy: CallerPolicy::production(),
             grant_provider: Arc::new(Unconfigured),
             grant_verifier: Arc::new(GrantVerifier::new(HashMap::new())),
+            backend: None,
+            audit_outbox: None,
         }
     }
 
@@ -51,6 +59,16 @@ impl AgentService {
     ) -> Self {
         self.grant_provider = grant_provider;
         self.grant_verifier = grant_verifier;
+        self
+    }
+
+    pub fn with_backend(mut self, backend: Arc<dyn ManagedAuthority>) -> Self {
+        self.backend = Some(backend);
+        self
+    }
+
+    pub fn with_audit_outbox(mut self, audit_outbox: Arc<AuditOutbox>) -> Self {
+        self.audit_outbox = Some(audit_outbox);
         self
     }
 
@@ -261,12 +279,205 @@ impl AgentService {
             grant_id: grant.grant_id,
         })
     }
+
+    async fn authorize_managed(
+        &self,
+        caller: &CallerIdentity,
+        device_id: &str,
+        serial: &str,
+        operation: v1::Operation,
+        slot: Option<u8>,
+        mut managed: v1::ManagedAuthorization,
+    ) -> std::result::Result<(ManagedGrant, String), Status> {
+        let access_token = Zeroizing::new(std::mem::take(&mut managed.access_token));
+        let Some(backend) = &self.backend else {
+            return Err(status_from_error(&CredentialError::BackendUnavailable(
+                "backend is not configured".into(),
+            )));
+        };
+        if access_token.is_empty() {
+            return Err(status_from_error(&CredentialError::BackendRejected(
+                "managed access token is required".into(),
+            )));
+        }
+        if access_token.len() > 16 * 1024 {
+            return Err(Status::invalid_argument(
+                "managed access token exceeds 16 KiB",
+            ));
+        }
+        let id = DeviceId(device_id.to_owned());
+        let credentials = self.credentials.clone();
+        let device = blocking(move || credentials.device(&id)).await?;
+        let Some((vendor, token_serial)) = token_identity(&device) else {
+            return Err(status_from_error(&CredentialError::OperationUnauthorized(
+                "the device vendor or serial number is unavailable".into(),
+            )));
+        };
+        if token_serial != serial {
+            return Err(status_from_error(&CredentialError::DeviceMismatch));
+        }
+        let authorization = backend
+            .authorize(ManagedRequest {
+                access_token,
+                operation,
+                vendor,
+                serial: token_serial.clone(),
+                caller_os_user: caller.os_user.clone(),
+                piv_slot: slot,
+            })
+            .await
+            .map_err(map_backend_status)?;
+        let expected = GrantExpectation {
+            operation,
+            station_id: self.station_id.clone(),
+            token_serial,
+            caller_os_user: Some(caller.os_user.clone()),
+            piv_slot: slot,
+        };
+        let grant_id = match self.grant_verifier.verify(
+            &authorization.signed_grant,
+            &expected,
+            crate::grant::now_unix(),
+        ) {
+            Ok(grant) => grant.grant_id,
+            Err(error) => {
+                if let Some(rotation_id) = authorization.rotation_id.as_deref()
+                    && self.complete_rotation(rotation_id, false).await.is_err()
+                {
+                    tracing::warn!(
+                        target: "sigil::agent",
+                        rotation_id,
+                        "could not abandon an invalid managed grant rotation"
+                    );
+                }
+                return Err(status_from_error(&error));
+            }
+        };
+        Ok((authorization, grant_id))
+    }
+
+    fn missing_managed_authorization_status(&self) -> Status {
+        if self.backend.is_none() {
+            status_from_error(&CredentialError::BackendUnavailable(
+                "backend is not configured".into(),
+            ))
+        } else {
+            status_from_error(&CredentialError::BackendRejected(
+                "managed authorization is required".into(),
+            ))
+        }
+    }
+
+    async fn complete_rotation(
+        &self,
+        rotation_id: &str,
+        applied: bool,
+    ) -> std::result::Result<(), Status> {
+        let Some(backend) = &self.backend else {
+            return Err(status_from_error(&CredentialError::BackendUnavailable(
+                "backend is not configured".into(),
+            )));
+        };
+        let mut last_error = None;
+        for delay in [
+            Duration::ZERO,
+            Duration::from_millis(100),
+            Duration::from_millis(400),
+        ] {
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            match backend.complete_rotation(rotation_id, applied).await {
+                Ok(()) => return Ok(()),
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        tonic::Code::Unavailable
+                            | tonic::Code::DeadlineExceeded
+                            | tonic::Code::Unknown
+                    ) =>
+                {
+                    last_error = Some(error);
+                }
+                Err(error) => return Err(map_backend_status(error)),
+            }
+        }
+        if let Some(outbox) = &self.audit_outbox {
+            outbox
+                .enqueue_completion(PendingCompletion {
+                    rotation_id: rotation_id.to_owned(),
+                    applied,
+                    created_at_unix_ms: crate::backend::current_unix_millis(),
+                })
+                .map_err(|_| {
+                    Status::unavailable("could not persist pending rotation completion")
+                })?;
+            tracing::warn!(
+                target: "sigil::agent",
+                rotation_id,
+                applied,
+                "backend rotation completion will be retried in the background"
+            );
+            return Ok(());
+        }
+        Err(last_error.unwrap_or_else(|| {
+            Status::unavailable("backend rotation completion could not be recorded")
+        }))
+    }
 }
 
 #[allow(dead_code)] // used by escrow-backed agent operations
 struct PivGrantContext {
     serial: String,
     grant_id: String,
+}
+
+fn map_backend_status(status: Status) -> Status {
+    match status.code() {
+        tonic::Code::Unauthenticated
+        | tonic::Code::PermissionDenied
+        | tonic::Code::FailedPrecondition => status_from_error(&CredentialError::BackendRejected(
+            status.message().to_owned(),
+        )),
+        tonic::Code::Unavailable | tonic::Code::DeadlineExceeded | tonic::Code::Unknown => {
+            status_from_error(&CredentialError::BackendUnavailable(
+                "backend connection or request failed".into(),
+            ))
+        }
+        _ => status_from_error(&CredentialError::BackendRejected(
+            status.message().to_owned(),
+        )),
+    }
+}
+
+fn required_secret(
+    secret: Option<ManagedSecret>,
+    detail: &'static str,
+) -> std::result::Result<ManagedSecret, Status> {
+    secret.ok_or_else(|| Status::internal(detail))
+}
+
+fn management_key_from_managed(
+    mut secret: ManagedSecret,
+) -> std::result::Result<ManagementKey, Status> {
+    let algorithm = match secret.algorithm.to_ascii_lowercase().as_str() {
+        "aes128" | "aes-128" => ManagementKeyAlgorithm::Aes128,
+        "aes192" | "aes-192" => ManagementKeyAlgorithm::Aes192,
+        "aes256" | "aes-256" => ManagementKeyAlgorithm::Aes256,
+        _ => {
+            return Err(Status::internal(
+                "backend returned an unsupported management-key algorithm",
+            ));
+        }
+    };
+    let bytes = std::mem::take(&mut *secret.value);
+    ManagementKey::new(algorithm, bytes)
+        .map_err(|_| Status::internal("backend returned an invalid management-key value"))
+}
+
+fn puk_from_managed(mut secret: ManagedSecret) -> std::result::Result<PivPuk, Status> {
+    let bytes = std::mem::take(&mut *secret.value);
+    PivPuk::new(bytes).map_err(|_| Status::internal("backend returned an invalid PUK value"))
 }
 
 async fn blocking<T, F>(operation: F) -> std::result::Result<T, Status>
@@ -278,6 +489,37 @@ where
         .await
         .map_err(|error| Status::internal(format!("blocking agent task failed: {error}")))?
         .map_err(|error| status_from_error(&error))
+}
+
+async fn blocking_core<T, F>(operation: F) -> CoreResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> CoreResult<T> + Send + 'static,
+{
+    task::spawn_blocking(operation).await.map_err(|error| {
+        CredentialError::BackendUnavailable(format!("PIV operation task failed: {error}"))
+    })?
+}
+
+fn card_failure_is_definite(error: &CredentialError) -> bool {
+    matches!(
+        error,
+        CredentialError::DeviceNotFound(_)
+            | CredentialError::InventoryUnavailable
+            | CredentialError::UnsupportedOperation(_)
+            | CredentialError::PcscUnavailable(_)
+            | CredentialError::InvalidSlot(_)
+            | CredentialError::CardStatus(_)
+            | CredentialError::PinIncorrect { .. }
+            | CredentialError::PukIncorrect { .. }
+            | CredentialError::PinBlocked
+            | CredentialError::PukBlocked
+            | CredentialError::ManagementKeyIncorrect
+            | CredentialError::DeviceMismatch
+            | CredentialError::PivUnavailable
+            | CredentialError::PivFipsNotApproved
+            | CredentialError::PivNotFactoryDefault
+    )
 }
 
 fn audit<T>(
@@ -773,6 +1015,175 @@ impl v1::agent_server::Agent for AgentService {
             self.caller_piv(&request, "ChangePivPuk", &device_id, "PIV_CHANGE_PUK", None)?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
+        if let Some(managed) = input.managed.take() {
+            if !input.old_puk.is_empty() || !input.new_puk.is_empty() {
+                let status = Status::invalid_argument(
+                    "old_puk and new_puk must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "ChangePivPuk",
+                    &device_id,
+                    "PIV_CHANGE_PUK",
+                    None,
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "ChangePivPuk",
+                    &device_id,
+                    "PIV_CHANGE_PUK",
+                    None,
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivChangePuk,
+                    None,
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "ChangePivPuk",
+                        &device_id,
+                        "PIV_CHANGE_PUK",
+                        None,
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let rotation_id = authorization.rotation_id.clone().unwrap_or_default();
+            if rotation_id.is_empty() {
+                let status = Status::internal("backend omitted the PUK rotation ID");
+                audit_managed::<()>(
+                    &caller,
+                    "ChangePivPuk",
+                    &device_id,
+                    "PIV_CHANGE_PUK",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let current_puk =
+                match required_secret(authorization.current_puk, "backend omitted the current PUK")
+                    .and_then(puk_from_managed)
+                {
+                    Ok(puk) => puk,
+                    Err(status) => {
+                        let _ = self.complete_rotation(&rotation_id, false).await;
+                        audit_managed::<()>(
+                            &caller,
+                            "ChangePivPuk",
+                            &device_id,
+                            "PIV_CHANGE_PUK",
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            Some(&rotation_id),
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                };
+            let new_puk =
+                match required_secret(authorization.new_puk, "backend omitted the new PUK")
+                    .and_then(puk_from_managed)
+                {
+                    Ok(puk) => puk,
+                    Err(status) => {
+                        let _ = self.complete_rotation(&rotation_id, false).await;
+                        audit_managed::<()>(
+                            &caller,
+                            "ChangePivPuk",
+                            &device_id,
+                            "PIV_CHANGE_PUK",
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            Some(&rotation_id),
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                };
+            let credentials = self.credentials.clone();
+            let id = DeviceId(device_id.clone());
+            let expected_serial = serial.clone();
+            let card_result = blocking_core(move || {
+                credentials.change_puk(&id, &expected_serial, &current_puk, &new_puk)
+            })
+            .await;
+            match card_result {
+                Ok(()) => {
+                    let completion = self.complete_rotation(&rotation_id, true).await;
+                    let result = completion.map(|()| Response::new(v1::Empty {}));
+                    audit_managed(
+                        &caller,
+                        "ChangePivPuk",
+                        &device_id,
+                        "PIV_CHANGE_PUK",
+                        None,
+                        &serial,
+                        Some(&grant_id),
+                        Some(&rotation_id),
+                        &result,
+                    );
+                    return result;
+                }
+                Err(error) if card_failure_is_definite(&error) => {
+                    let _ = self.complete_rotation(&rotation_id, false).await;
+                    let status = status_from_error(&error);
+                    audit_managed::<()>(
+                        &caller,
+                        "ChangePivPuk",
+                        &device_id,
+                        "PIV_CHANGE_PUK",
+                        None,
+                        &serial,
+                        Some(&grant_id),
+                        Some(&rotation_id),
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+                Err(_) => {
+                    audit_rotation_unknown(
+                        &caller,
+                        "ChangePivPuk",
+                        &device_id,
+                        "PIV_CHANGE_PUK",
+                        &serial,
+                        Some(&grant_id),
+                        &rotation_id,
+                    );
+                    return Err(status_from_error(
+                        &CredentialError::ManagedRotationIncomplete(rotation_id),
+                    ));
+                }
+            }
+        }
         let old_puk = match PivPuk::new(std::mem::take(&mut input.old_puk)) {
             Ok(puk) => puk,
             Err(error) => {
@@ -846,6 +1257,115 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
+        if let Some(managed) = input.managed.take() {
+            if !input.puk.is_empty() {
+                let status = Status::invalid_argument(
+                    "puk must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "UnblockPivPin",
+                    &device_id,
+                    "PIV_UNBLOCK_PIN",
+                    None,
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let new_pin = match PivPin::new(std::mem::take(&mut input.new_pin)) {
+                Ok(pin) => pin,
+                Err(error) => {
+                    return Err(audit_piv_error(
+                        &caller,
+                        "UnblockPivPin",
+                        &device_id,
+                        "PIV_UNBLOCK_PIN",
+                        None,
+                        &serial_hint,
+                        None,
+                        error,
+                    ));
+                }
+            };
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "UnblockPivPin",
+                    &device_id,
+                    "PIV_UNBLOCK_PIN",
+                    None,
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivUnblockPin,
+                    None,
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "UnblockPivPin",
+                        &device_id,
+                        "PIV_UNBLOCK_PIN",
+                        None,
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let puk =
+                match required_secret(authorization.current_puk, "backend omitted the current PUK")
+                    .and_then(puk_from_managed)
+                {
+                    Ok(puk) => puk,
+                    Err(status) => {
+                        audit_managed::<()>(
+                            &caller,
+                            "UnblockPivPin",
+                            &device_id,
+                            "PIV_UNBLOCK_PIN",
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            None,
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                };
+            let id = DeviceId(device_id.clone());
+            let credentials = self.credentials.clone();
+            let expected_serial = serial.clone();
+            let result =
+                blocking(move || credentials.unblock_pin(&id, &expected_serial, &puk, &new_pin))
+                    .await;
+            audit_managed(
+                &caller,
+                "UnblockPivPin",
+                &device_id,
+                "PIV_UNBLOCK_PIN",
+                None,
+                &serial,
+                Some(&grant_id),
+                None,
+                &result,
+            );
+            return result.map(|_| Response::new(v1::Empty {}));
+        }
         let puk = match PivPuk::new(std::mem::take(&mut input.puk)) {
             Ok(puk) => puk,
             Err(error) => {
@@ -918,6 +1438,183 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
+        if let Some(managed) = input.managed.take() {
+            if !input.current_management_key.is_empty()
+                || !input.new_management_key.is_empty()
+                || input.current_algorithm != v1::ManagementKeyAlgorithm::Unspecified as i32
+                || input.new_algorithm != v1::ManagementKeyAlgorithm::Unspecified as i32
+            {
+                let status = Status::invalid_argument(
+                    "management-key fields and algorithms must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivChangeManagementKey,
+                    None,
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "ChangePivManagementKey",
+                        &device_id,
+                        "PIV_CHANGE_MANAGEMENT_KEY",
+                        None,
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let rotation_id = authorization.rotation_id.clone().unwrap_or_default();
+            if rotation_id.is_empty() {
+                let status = Status::internal("backend omitted the management-key rotation ID");
+                audit_managed::<()>(
+                    &caller,
+                    "ChangePivManagementKey",
+                    &device_id,
+                    "PIV_CHANGE_MANAGEMENT_KEY",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let current = match required_secret(
+                authorization.current_management_key,
+                "backend omitted the current management key",
+            )
+            .and_then(management_key_from_managed)
+            {
+                Ok(key) => key,
+                Err(status) => {
+                    let _ = self.complete_rotation(&rotation_id, false).await;
+                    audit_managed::<()>(
+                        &caller,
+                        "ChangePivManagementKey",
+                        &device_id,
+                        "PIV_CHANGE_MANAGEMENT_KEY",
+                        None,
+                        &serial,
+                        Some(&grant_id),
+                        Some(&rotation_id),
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let new_key = match required_secret(
+                authorization.new_management_key,
+                "backend omitted the new management key",
+            )
+            .and_then(management_key_from_managed)
+            {
+                Ok(key) => key,
+                Err(status) => {
+                    let _ = self.complete_rotation(&rotation_id, false).await;
+                    audit_managed::<()>(
+                        &caller,
+                        "ChangePivManagementKey",
+                        &device_id,
+                        "PIV_CHANGE_MANAGEMENT_KEY",
+                        None,
+                        &serial,
+                        Some(&grant_id),
+                        Some(&rotation_id),
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let id = DeviceId(device_id.clone());
+            let credentials = self.credentials.clone();
+            let expected_serial = serial.clone();
+            let card_result = blocking_core(move || {
+                credentials.change_management_key(&id, &expected_serial, &current, &new_key)
+            })
+            .await;
+            match card_result {
+                Ok(()) => {
+                    let completion = self.complete_rotation(&rotation_id, true).await;
+                    let result = completion.map(|()| Response::new(v1::Empty {}));
+                    audit_managed(
+                        &caller,
+                        "ChangePivManagementKey",
+                        &device_id,
+                        "PIV_CHANGE_MANAGEMENT_KEY",
+                        None,
+                        &serial,
+                        Some(&grant_id),
+                        Some(&rotation_id),
+                        &result,
+                    );
+                    return result;
+                }
+                Err(error) if card_failure_is_definite(&error) => {
+                    let _ = self.complete_rotation(&rotation_id, false).await;
+                    let status = status_from_error(&error);
+                    audit_managed::<()>(
+                        &caller,
+                        "ChangePivManagementKey",
+                        &device_id,
+                        "PIV_CHANGE_MANAGEMENT_KEY",
+                        None,
+                        &serial,
+                        Some(&grant_id),
+                        Some(&rotation_id),
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+                Err(_) => {
+                    audit_rotation_unknown(
+                        &caller,
+                        "ChangePivManagementKey",
+                        &device_id,
+                        "PIV_CHANGE_MANAGEMENT_KEY",
+                        &serial,
+                        Some(&grant_id),
+                        &rotation_id,
+                    );
+                    return Err(status_from_error(
+                        &CredentialError::ManagedRotationIncomplete(rotation_id),
+                    ));
+                }
+            }
+        }
         let current_algorithm = match management_key_algorithm(input.current_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
@@ -1089,6 +1786,119 @@ impl v1::agent_server::Agent for AgentService {
                 ));
             }
         };
+        if let Some(managed) = input.managed.take() {
+            if !input.management_key.is_empty()
+                || input.management_key_algorithm != v1::ManagementKeyAlgorithm::Unspecified as i32
+            {
+                let status = Status::invalid_argument(
+                    "management_key and management_key_algorithm must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let id = DeviceId(device_id.clone());
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "GeneratePivKey",
+                    &device_id,
+                    "PIV_GENERATE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivGenerateKey,
+                    Some(slot.byte()),
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "GeneratePivKey",
+                        &device_id,
+                        "PIV_GENERATE_KEY",
+                        Some(slot.byte()),
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let management_key = match required_secret(
+                authorization.current_management_key,
+                "backend omitted the current management key",
+            )
+            .and_then(management_key_from_managed)
+            {
+                Ok(key) => key,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "GeneratePivKey",
+                        &device_id,
+                        "PIV_GENERATE_KEY",
+                        Some(slot.byte()),
+                        &serial,
+                        Some(&grant_id),
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let credentials = self.credentials.clone();
+            let expected_serial = serial.clone();
+            let result = blocking(move || {
+                credentials.generate_key(
+                    &id,
+                    &expected_serial,
+                    &management_key,
+                    PivKeyConfiguration {
+                        slot,
+                        algorithm: key_algorithm,
+                        pin_policy,
+                        touch_policy,
+                    },
+                )
+            })
+            .await;
+            audit_managed(
+                &caller,
+                "GeneratePivKey",
+                &device_id,
+                "PIV_GENERATE_KEY",
+                Some(slot.byte()),
+                &serial,
+                Some(&grant_id),
+                None,
+                &result,
+            );
+            return result.map(|subject_public_key_info| {
+                Response::new(v1::GeneratePivKeyResponse {
+                    subject_public_key_info,
+                })
+            });
+        }
         let management_algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
@@ -1323,6 +2133,112 @@ impl v1::agent_server::Agent for AgentService {
                 ));
             }
         };
+        if let Some(managed) = input.managed.take() {
+            if !input.management_key.is_empty()
+                || input.management_key_algorithm != v1::ManagementKeyAlgorithm::Unspecified as i32
+            {
+                let status = Status::invalid_argument(
+                    "management_key and management_key_algorithm must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "ImportPivCertificate",
+                    &device_id,
+                    "PIV_IMPORT_CERTIFICATE",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let certificate_der = std::mem::take(&mut input.certificate_der);
+            let id = DeviceId(device_id.clone());
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "ImportPivCertificate",
+                    &device_id,
+                    "PIV_IMPORT_CERTIFICATE",
+                    Some(slot.byte()),
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivImportCertificate,
+                    Some(slot.byte()),
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "ImportPivCertificate",
+                        &device_id,
+                        "PIV_IMPORT_CERTIFICATE",
+                        Some(slot.byte()),
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let management_key = match required_secret(
+                authorization.current_management_key,
+                "backend omitted the current management key",
+            )
+            .and_then(management_key_from_managed)
+            {
+                Ok(key) => key,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "ImportPivCertificate",
+                        &device_id,
+                        "PIV_IMPORT_CERTIFICATE",
+                        Some(slot.byte()),
+                        &serial,
+                        Some(&grant_id),
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let credentials = self.credentials.clone();
+            let expected_serial = serial.clone();
+            let result = blocking(move || {
+                credentials.import_certificate(
+                    &id,
+                    &expected_serial,
+                    &management_key,
+                    slot,
+                    &certificate_der,
+                )
+            })
+            .await;
+            audit_managed(
+                &caller,
+                "ImportPivCertificate",
+                &device_id,
+                "PIV_IMPORT_CERTIFICATE",
+                Some(slot.byte()),
+                &serial,
+                Some(&grant_id),
+                None,
+                &result,
+            );
+            return result.map(|_| Response::new(v1::Empty {}));
+        }
         let algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
@@ -1421,6 +2337,105 @@ impl v1::agent_server::Agent for AgentService {
                 ));
             }
         };
+        if let Some(managed) = input.managed.take() {
+            if !input.management_key.is_empty()
+                || input.management_key_algorithm != v1::ManagementKeyAlgorithm::Unspecified as i32
+            {
+                let status = Status::invalid_argument(
+                    "management_key and management_key_algorithm must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "DeletePivCertificate",
+                    &device_id,
+                    "PIV_DELETE_CERTIFICATE",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let id = DeviceId(device_id.clone());
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "DeletePivCertificate",
+                    &device_id,
+                    "PIV_DELETE_CERTIFICATE",
+                    Some(slot.byte()),
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivDeleteCertificate,
+                    Some(slot.byte()),
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "DeletePivCertificate",
+                        &device_id,
+                        "PIV_DELETE_CERTIFICATE",
+                        Some(slot.byte()),
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let management_key = match required_secret(
+                authorization.current_management_key,
+                "backend omitted the current management key",
+            )
+            .and_then(management_key_from_managed)
+            {
+                Ok(key) => key,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "DeletePivCertificate",
+                        &device_id,
+                        "PIV_DELETE_CERTIFICATE",
+                        Some(slot.byte()),
+                        &serial,
+                        Some(&grant_id),
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let credentials = self.credentials.clone();
+            let expected_serial = serial.clone();
+            let result = blocking(move || {
+                credentials.delete_certificate(&id, &expected_serial, &management_key, slot)
+            })
+            .await;
+            audit_managed(
+                &caller,
+                "DeletePivCertificate",
+                &device_id,
+                "PIV_DELETE_CERTIFICATE",
+                Some(slot.byte()),
+                &serial,
+                Some(&grant_id),
+                None,
+                &result,
+            );
+            return result.map(|_| Response::new(v1::Empty {}));
+        }
         let algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
@@ -1512,6 +2527,105 @@ impl v1::agent_server::Agent for AgentService {
                 ));
             }
         };
+        if let Some(managed) = input.managed.take() {
+            if !input.management_key.is_empty()
+                || input.management_key_algorithm != v1::ManagementKeyAlgorithm::Unspecified as i32
+            {
+                let status = Status::invalid_argument(
+                    "management_key and management_key_algorithm must be empty when managed authorization is supplied",
+                );
+                audit_managed::<()>(
+                    &caller,
+                    "DeletePivKey",
+                    &device_id,
+                    "PIV_DELETE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            let id = DeviceId(device_id.clone());
+            let serial = self
+                .preflight_piv_serial(
+                    &caller,
+                    "DeletePivKey",
+                    &device_id,
+                    "PIV_DELETE_KEY",
+                    Some(slot.byte()),
+                    &serial_hint,
+                )
+                .await?;
+            let (authorization, grant_id) = match self
+                .authorize_managed(
+                    &caller,
+                    &device_id,
+                    &serial,
+                    v1::Operation::PivDeleteKey,
+                    Some(slot.byte()),
+                    managed,
+                )
+                .await
+            {
+                Ok(value) => value,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "DeletePivKey",
+                        &device_id,
+                        "PIV_DELETE_KEY",
+                        Some(slot.byte()),
+                        &serial,
+                        None,
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let management_key = match required_secret(
+                authorization.current_management_key,
+                "backend omitted the current management key",
+            )
+            .and_then(management_key_from_managed)
+            {
+                Ok(key) => key,
+                Err(status) => {
+                    audit_managed::<()>(
+                        &caller,
+                        "DeletePivKey",
+                        &device_id,
+                        "PIV_DELETE_KEY",
+                        Some(slot.byte()),
+                        &serial,
+                        Some(&grant_id),
+                        None,
+                        &Err(status.clone()),
+                    );
+                    return Err(status);
+                }
+            };
+            let credentials = self.credentials.clone();
+            let expected_serial = serial.clone();
+            let result = blocking(move || {
+                credentials.delete_key(&id, &expected_serial, &management_key, slot)
+            })
+            .await;
+            audit_managed(
+                &caller,
+                "DeletePivKey",
+                &device_id,
+                "PIV_DELETE_KEY",
+                Some(slot.byte()),
+                &serial,
+                Some(&grant_id),
+                None,
+                &result,
+            );
+            return result.map(|_| Response::new(v1::Empty {}));
+        }
         let algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
@@ -1602,6 +2716,544 @@ impl v1::agent_server::Agent for AgentService {
         );
         result.map(|_| Response::new(v1::Empty {}))
     }
+
+    async fn initialize_managed_piv(
+        &self,
+        request: Request<v1::InitializeManagedPivRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller_piv(
+            &request,
+            "InitializeManagedPiv",
+            &device_id,
+            "PIV_MANAGED_INITIALIZE",
+            None,
+        )?;
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let Some(managed) = input.managed.take() else {
+            let status = self.missing_managed_authorization_status();
+            audit_managed::<()>(
+                &caller,
+                "InitializeManagedPiv",
+                &device_id,
+                "PIV_MANAGED_INITIALIZE",
+                None,
+                &serial_hint,
+                None,
+                None,
+                &Err(status.clone()),
+            );
+            return Err(status);
+        };
+        let serial = self
+            .preflight_piv_serial(
+                &caller,
+                "InitializeManagedPiv",
+                &device_id,
+                "PIV_MANAGED_INITIALIZE",
+                None,
+                &serial_hint,
+            )
+            .await?;
+        let (authorization, grant_id) = match self
+            .authorize_managed(
+                &caller,
+                &device_id,
+                &serial,
+                v1::Operation::PivManagedInitialize,
+                None,
+                managed,
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(status) => {
+                audit_managed::<()>(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+        };
+        let rotation_id = authorization.rotation_id.clone().unwrap_or_default();
+        if rotation_id.is_empty() {
+            let status = Status::internal("backend omitted the managed-initialize rotation ID");
+            audit_managed::<()>(
+                &caller,
+                "InitializeManagedPiv",
+                &device_id,
+                "PIV_MANAGED_INITIALIZE",
+                None,
+                &serial,
+                Some(&grant_id),
+                None,
+                &Err(status.clone()),
+            );
+            return Err(status);
+        }
+        if authorization.current_management_key.is_some() || authorization.current_puk.is_some() {
+            let _ = self.complete_rotation(&rotation_id, false).await;
+            let status =
+                Status::internal("backend returned unexpected current secrets for initialization");
+            audit_managed::<()>(
+                &caller,
+                "InitializeManagedPiv",
+                &device_id,
+                "PIV_MANAGED_INITIALIZE",
+                None,
+                &serial,
+                Some(&grant_id),
+                Some(&rotation_id),
+                &Err(status.clone()),
+            );
+            return Err(status);
+        }
+        let new_management_key = match required_secret(
+            authorization.new_management_key,
+            "backend omitted the new management key",
+        )
+        .and_then(management_key_from_managed)
+        {
+            Ok(key) if key.algorithm() == ManagementKeyAlgorithm::Aes256 => key,
+            Ok(_) => {
+                let _ = self.complete_rotation(&rotation_id, false).await;
+                let status = Status::internal("backend returned a non-AES-256 initialization key");
+                audit_managed::<()>(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+            Err(status) => {
+                let _ = self.complete_rotation(&rotation_id, false).await;
+                audit_managed::<()>(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+        };
+        let new_puk = match required_secret(authorization.new_puk, "backend omitted the new PUK")
+            .and_then(puk_from_managed)
+        {
+            Ok(puk) => puk,
+            Err(status) => {
+                let _ = self.complete_rotation(&rotation_id, false).await;
+                audit_managed::<()>(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+        };
+        let credentials = self.credentials.clone();
+        let id = DeviceId(device_id.clone());
+        let expected_serial = serial.clone();
+        let card_result = blocking_core(move || {
+            credentials.managed_initialize(&id, &expected_serial, &new_management_key, &new_puk)
+        })
+        .await;
+        match card_result {
+            Ok(ManagedPivInitializationOutcome::Applied) => {
+                let result = self
+                    .complete_rotation(&rotation_id, true)
+                    .await
+                    .map(|()| Response::new(v1::Empty {}));
+                audit_managed(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &result,
+                );
+                result
+            }
+            Ok(ManagedPivInitializationOutcome::NotApplied) => {
+                let completion = self.complete_rotation(&rotation_id, false).await;
+                let status = completion.err().unwrap_or_else(|| {
+                    Status::failed_precondition("managed PIV initialization was not applied")
+                });
+                audit_managed::<()>(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &Err(status.clone()),
+                );
+                Err(status)
+            }
+            Ok(ManagedPivInitializationOutcome::Partial) => {
+                audit_rotation_unknown(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    &serial,
+                    Some(&grant_id),
+                    &rotation_id,
+                );
+                Err(status_from_error(
+                    &CredentialError::ManagedRotationIncomplete(rotation_id),
+                ))
+            }
+            Err(error) if card_failure_is_definite(&error) => {
+                let completion = self.complete_rotation(&rotation_id, false).await;
+                let status = completion
+                    .err()
+                    .unwrap_or_else(|| status_from_error(&error));
+                audit_managed::<()>(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &Err(status.clone()),
+                );
+                Err(status)
+            }
+            Err(_) => {
+                audit_rotation_unknown(
+                    &caller,
+                    "InitializeManagedPiv",
+                    &device_id,
+                    "PIV_MANAGED_INITIALIZE",
+                    &serial,
+                    Some(&grant_id),
+                    &rotation_id,
+                );
+                Err(status_from_error(
+                    &CredentialError::ManagedRotationIncomplete(rotation_id),
+                ))
+            }
+        }
+    }
+
+    async fn rotate_managed_piv_secret(
+        &self,
+        request: Request<v1::RotateManagedPivSecretRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let device_id = request.get_ref().id.clone();
+        let caller = self.caller(&request, "RotateManagedPivSecret", &device_id)?;
+        let kind = match v1::ManagedSecretKind::try_from(request.get_ref().kind) {
+            Ok(kind) => kind,
+            Err(_) => {
+                let status = Status::invalid_argument("managed secret kind is invalid");
+                audit_managed::<()>(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    "PIV_ROTATE_SECRET",
+                    None,
+                    &request.get_ref().expected_serial,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+        };
+        let (operation, operation_name) = match kind {
+            v1::ManagedSecretKind::Puk => (v1::Operation::PivChangePuk, "PIV_CHANGE_PUK"),
+            v1::ManagedSecretKind::ManagementKey => (
+                v1::Operation::PivChangeManagementKey,
+                "PIV_CHANGE_MANAGEMENT_KEY",
+            ),
+            v1::ManagedSecretKind::Unspecified => {
+                let status = Status::invalid_argument("managed secret kind is required");
+                audit_managed::<()>(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    "PIV_ROTATE_SECRET",
+                    None,
+                    &request.get_ref().expected_serial,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+        };
+        let mut input = request.into_inner();
+        let serial_hint = input.expected_serial.clone();
+        let Some(managed) = input.managed.take() else {
+            let status = self.missing_managed_authorization_status();
+            audit_managed::<()>(
+                &caller,
+                "RotateManagedPivSecret",
+                &device_id,
+                operation_name,
+                None,
+                &serial_hint,
+                None,
+                None,
+                &Err(status.clone()),
+            );
+            return Err(status);
+        };
+        let serial = self
+            .preflight_piv_serial(
+                &caller,
+                "RotateManagedPivSecret",
+                &device_id,
+                operation_name,
+                None,
+                &serial_hint,
+            )
+            .await?;
+        let (authorization, grant_id) = match self
+            .authorize_managed(&caller, &device_id, &serial, operation, None, managed)
+            .await
+        {
+            Ok(value) => value,
+            Err(status) => {
+                audit_managed::<()>(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    operation_name,
+                    None,
+                    &serial,
+                    None,
+                    None,
+                    &Err(status.clone()),
+                );
+                return Err(status);
+            }
+        };
+        let rotation_id = authorization.rotation_id.clone().unwrap_or_default();
+        if rotation_id.is_empty() {
+            let status = Status::internal("backend omitted the secret rotation ID");
+            audit_managed::<()>(
+                &caller,
+                "RotateManagedPivSecret",
+                &device_id,
+                operation_name,
+                None,
+                &serial,
+                Some(&grant_id),
+                None,
+                &Err(status.clone()),
+            );
+            return Err(status);
+        }
+        let id = DeviceId(device_id.clone());
+        let credentials = self.credentials.clone();
+        let expected_serial = serial.clone();
+        let card_result = match kind {
+            v1::ManagedSecretKind::Puk => {
+                let current = match required_secret(
+                    authorization.current_puk,
+                    "backend omitted the current PUK",
+                )
+                .and_then(puk_from_managed)
+                {
+                    Ok(value) => value,
+                    Err(status) => {
+                        let _ = self.complete_rotation(&rotation_id, false).await;
+                        audit_managed::<()>(
+                            &caller,
+                            "RotateManagedPivSecret",
+                            &device_id,
+                            operation_name,
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            Some(&rotation_id),
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                };
+                let new =
+                    match required_secret(authorization.new_puk, "backend omitted the new PUK")
+                        .and_then(puk_from_managed)
+                    {
+                        Ok(value) => value,
+                        Err(status) => {
+                            let _ = self.complete_rotation(&rotation_id, false).await;
+                            audit_managed::<()>(
+                                &caller,
+                                "RotateManagedPivSecret",
+                                &device_id,
+                                operation_name,
+                                None,
+                                &serial,
+                                Some(&grant_id),
+                                Some(&rotation_id),
+                                &Err(status.clone()),
+                            );
+                            return Err(status);
+                        }
+                    };
+                blocking_core(move || credentials.change_puk(&id, &expected_serial, &current, &new))
+                    .await
+            }
+            v1::ManagedSecretKind::ManagementKey => {
+                let current = match required_secret(
+                    authorization.current_management_key,
+                    "backend omitted the current management key",
+                )
+                .and_then(management_key_from_managed)
+                {
+                    Ok(value) => value,
+                    Err(status) => {
+                        let _ = self.complete_rotation(&rotation_id, false).await;
+                        audit_managed::<()>(
+                            &caller,
+                            "RotateManagedPivSecret",
+                            &device_id,
+                            operation_name,
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            Some(&rotation_id),
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                };
+                let new = match required_secret(
+                    authorization.new_management_key,
+                    "backend omitted the new management key",
+                )
+                .and_then(management_key_from_managed)
+                {
+                    Ok(value) if value.algorithm() == ManagementKeyAlgorithm::Aes256 => value,
+                    Ok(_) => {
+                        let _ = self.complete_rotation(&rotation_id, false).await;
+                        let status = Status::internal(
+                            "backend returned a non-AES-256 rotation management key",
+                        );
+                        audit_managed::<()>(
+                            &caller,
+                            "RotateManagedPivSecret",
+                            &device_id,
+                            operation_name,
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            Some(&rotation_id),
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                    Err(status) => {
+                        let _ = self.complete_rotation(&rotation_id, false).await;
+                        audit_managed::<()>(
+                            &caller,
+                            "RotateManagedPivSecret",
+                            &device_id,
+                            operation_name,
+                            None,
+                            &serial,
+                            Some(&grant_id),
+                            Some(&rotation_id),
+                            &Err(status.clone()),
+                        );
+                        return Err(status);
+                    }
+                };
+                blocking_core(move || {
+                    credentials.change_management_key(&id, &expected_serial, &current, &new)
+                })
+                .await
+            }
+            v1::ManagedSecretKind::Unspecified => unreachable!("validated above"),
+        };
+        match card_result {
+            Ok(()) => {
+                let result = self
+                    .complete_rotation(&rotation_id, true)
+                    .await
+                    .map(|()| Response::new(v1::Empty {}));
+                audit_managed(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    operation_name,
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &result,
+                );
+                result
+            }
+            Err(error) if card_failure_is_definite(&error) => {
+                let completion = self.complete_rotation(&rotation_id, false).await;
+                let status = completion
+                    .err()
+                    .unwrap_or_else(|| status_from_error(&error));
+                audit_managed::<()>(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    operation_name,
+                    None,
+                    &serial,
+                    Some(&grant_id),
+                    Some(&rotation_id),
+                    &Err(status.clone()),
+                );
+                Err(status)
+            }
+            Err(_) => {
+                audit_rotation_unknown(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    operation_name,
+                    &serial,
+                    Some(&grant_id),
+                    &rotation_id,
+                );
+                Err(status_from_error(
+                    &CredentialError::ManagedRotationIncomplete(rotation_id),
+                ))
+            }
+        }
+    }
 }
 
 fn audit_static(
@@ -1654,6 +3306,68 @@ fn audit_piv<T>(
         grant_id = grant_id.unwrap_or_default(),
         outcome,
         code = ?code
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn audit_managed<T>(
+    caller: &CallerIdentity,
+    rpc: &'static str,
+    device_id: &str,
+    operation: &'static str,
+    slot: Option<u8>,
+    serial: &str,
+    grant_id: Option<&str>,
+    rotation_id: Option<&str>,
+    result: &std::result::Result<T, Status>,
+) {
+    let (outcome, code) = match result {
+        Ok(_) => ("success", None),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => {
+            ("denied", Some(status.code()))
+        }
+        Err(status) => ("error", Some(status.code())),
+    };
+    tracing::info!(
+        target: "sigil::audit",
+        caller_os_user = %caller.os_user,
+        session_id = ?caller.session_id,
+        pid = caller.pid,
+        rpc,
+        device_id,
+        operation,
+        piv_slot = slot.unwrap_or_default(),
+        serial,
+        grant_id = grant_id.unwrap_or_default(),
+        rotation_id = rotation_id.unwrap_or_default(),
+        outcome,
+        code = ?code
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn audit_rotation_unknown(
+    caller: &CallerIdentity,
+    rpc: &'static str,
+    device_id: &str,
+    operation: &'static str,
+    serial: &str,
+    grant_id: Option<&str>,
+    rotation_id: &str,
+) {
+    tracing::error!(
+        target: "sigil::audit",
+        caller_os_user = %caller.os_user,
+        session_id = ?caller.session_id,
+        pid = caller.pid,
+        rpc,
+        device_id,
+        operation,
+        serial,
+        grant_id = grant_id.unwrap_or_default(),
+        rotation_id,
+        outcome = "rotation_outcome_unknown",
+        code = "rotation_outcome_unknown"
     );
 }
 
@@ -1812,5 +3526,63 @@ fn touch_policy(value: i32) -> CoreResult<TouchPolicy> {
         v1::TouchPolicy::Unspecified => Err(CredentialError::UnsupportedOperation(
             "PIV touch policy is required".into(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    use std::sync::Arc;
+
+    use tracing_subscriber::prelude::*;
+
+    use super::*;
+    use crate::audit_outbox::{AuditOutbox, AuditOutboxLayer};
+
+    #[test]
+    fn managed_audit_outbox_contains_ids_but_not_tokens_or_secret_values() {
+        let directory = tempfile::tempdir().expect("audit directory");
+        let outbox = Arc::new(AuditOutbox::open(directory.path()).expect("open outbox"));
+        let subscriber = tracing::Dispatch::new(
+            tracing_subscriber::registry().with(AuditOutboxLayer::new(Arc::clone(&outbox))),
+        );
+        let caller = CallerIdentity {
+            os_user: "test-user".into(),
+            session_id: Some(7),
+            pid: 1,
+        };
+        let result: std::result::Result<(), Status> = Ok(());
+        tracing::dispatcher::with_default(&subscriber, || {
+            audit_managed(
+                &caller,
+                "InitializeManagedPiv",
+                "mock-device",
+                "PIV_MANAGED_INITIALIZE",
+                None,
+                "12345678",
+                Some("grant-id"),
+                Some("rotation-id"),
+                &result,
+            );
+        });
+        let events = outbox.batch(1).expect("read managed audit event");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].grant_id, "grant-id");
+        assert_eq!(events[0].rotation_id, "rotation-id");
+        let fields = [
+            events[0].rpc.as_str(),
+            events[0].operation.as_str(),
+            events[0].device_id.as_str(),
+            events[0].token_serial.as_str(),
+            events[0].caller_os_user.as_str(),
+            events[0].outcome.as_str(),
+            events[0].code.as_str(),
+            events[0].grant_id.as_str(),
+            events[0].rotation_id.as_str(),
+        ];
+        for field in fields {
+            assert!(!field.contains("test-access-token-not-for-logs"));
+            assert!(!field.contains("87654321"));
+            assert!(!field.contains("[66, 66, 66"));
+        }
     }
 }

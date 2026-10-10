@@ -470,6 +470,8 @@ func (s *Server) ReportAudit(
 			"caller_os_user":      event.CallerOsUser,
 			"caller_session_id":   event.CallerSessionId,
 			"code":                event.Code,
+			"grant_id":            event.GrantId,
+			"rotation_id":         event.RotationId,
 		}
 		if err := appendAudit(ctx, tx, "station", station.ID, "Agent."+rpcName, "token", event.TokenSerial, agentAuditOutcome(event.Outcome), detail); err != nil {
 			s.logger.Error("append agent audit event failed", "sequence", event.Sequence, "error", err)

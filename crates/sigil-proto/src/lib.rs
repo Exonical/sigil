@@ -4,8 +4,18 @@ use prost::Message;
 use sigil_core as core;
 use tonic::{Code, Status};
 
-pub mod v1 {
-    tonic::include_proto!("sigil.agent.v1");
+pub mod agent {
+    pub mod v1 {
+        tonic::include_proto!("sigil.agent.v1");
+    }
+}
+
+pub use agent::v1;
+
+pub mod backend {
+    pub mod v1 {
+        tonic::include_proto!("sigil.backend.v1");
+    }
 }
 
 fn invalid_proto(detail: impl std::fmt::Display) -> core::CredentialError {
@@ -676,6 +686,9 @@ fn agent_error(value: &core::CredentialError) -> v1::AgentError {
         core::CredentialError::ManagementKeyIncorrect => (25, String::new()),
         core::CredentialError::DeviceMismatch => (26, String::new()),
         core::CredentialError::PivFipsNotApproved => (27, String::new()),
+        core::CredentialError::PivNotFactoryDefault => (28, String::new()),
+        core::CredentialError::ManagedRotationIncomplete(detail) => (29, detail.clone()),
+        core::CredentialError::BackendRejected(detail) => (30, detail.clone()),
     };
     v1::AgentError { kind, detail }
 }
@@ -721,6 +734,9 @@ fn credential_error(value: v1::AgentError) -> core::CredentialError {
         25 => core::CredentialError::ManagementKeyIncorrect,
         26 => core::CredentialError::DeviceMismatch,
         27 => core::CredentialError::PivFipsNotApproved,
+        28 => core::CredentialError::PivNotFactoryDefault,
+        29 => core::CredentialError::ManagedRotationIncomplete(value.detail),
+        30 => core::CredentialError::BackendRejected(value.detail),
         _ => core::CredentialError::AgentUnavailable("agent returned an unknown error".into()),
     }
 }
@@ -750,7 +766,10 @@ fn status_code(value: &core::CredentialError) -> Code {
         | core::CredentialError::PukBlocked
         | core::CredentialError::ManagementKeyIncorrect
         | core::CredentialError::DeviceMismatch
-        | core::CredentialError::PivFipsNotApproved => Code::FailedPrecondition,
+        | core::CredentialError::PivFipsNotApproved
+        | core::CredentialError::PivNotFactoryDefault
+        | core::CredentialError::ManagedRotationIncomplete(_) => Code::FailedPrecondition,
+        core::CredentialError::BackendRejected(_) => Code::PermissionDenied,
         core::CredentialError::InvalidSlot(_) => Code::InvalidArgument,
         core::CredentialError::CertificateParse(_) => Code::DataLoss,
         core::CredentialError::ProtocolMismatch { .. } => Code::FailedPrecondition,
@@ -939,6 +958,9 @@ mod tests {
             core::CredentialError::ManagementKeyIncorrect,
             core::CredentialError::DeviceMismatch,
             core::CredentialError::PivFipsNotApproved,
+            core::CredentialError::PivNotFactoryDefault,
+            core::CredentialError::ManagedRotationIncomplete("rotation".into()),
+            core::CredentialError::BackendRejected("denied by backend".into()),
         ];
         for error in errors {
             let status = status_from_error(&error);
@@ -956,6 +978,8 @@ mod tests {
                     | core::CredentialError::ManagementKeyIncorrect
                     | core::CredentialError::DeviceMismatch
                     | core::CredentialError::PivFipsNotApproved
+                    | core::CredentialError::PivNotFactoryDefault
+                    | core::CredentialError::ManagedRotationIncomplete(_)
             ) {
                 assert_eq!(status.code(), Code::FailedPrecondition);
             }

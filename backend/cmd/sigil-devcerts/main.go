@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -198,8 +199,16 @@ func validateAuthentikLocalhostIdentity(certPath, keyPath string, now time.Time)
 		return errors.New("private key cannot be parsed")
 	}
 	privateKey, ok := key.(*ecdsa.PrivateKey)
-	if !ok || privateKey.Curve.Params().Name != elliptic.P256().Params().Name ||
-		!privateKey.Curve.IsOnCurve(privateKey.X, privateKey.Y) {
+	if !ok || privateKey.Curve == nil || privateKey.Curve.Params().Name != elliptic.P256().Params().Name ||
+		privateKey.X == nil || privateKey.Y == nil || privateKey.X.Sign() < 0 || privateKey.Y.Sign() < 0 ||
+		privateKey.X.BitLen() > 256 || privateKey.Y.BitLen() > 256 {
+		return errors.New("private key is not an ECDSA P-256 key")
+	}
+	publicPoint := make([]byte, 1+2*32)
+	publicPoint[0] = 4
+	privateKey.X.FillBytes(publicPoint[1:33])
+	privateKey.Y.FillBytes(publicPoint[33:])
+	if _, err := ecdh.P256().NewPublicKey(publicPoint); err != nil {
 		return errors.New("private key is not an ECDSA P-256 key")
 	}
 	certificatePublicKey, err := x509.MarshalPKIXPublicKey(certificate.PublicKey)

@@ -5,8 +5,9 @@ use sigil_core::CredentialError;
 use sigil_core::{
     Application, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DeviceManagement,
     DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint, FingerprintProgress,
-    ManagementKey, PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyConfiguration,
-    PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
+    ManagedPivInitializationOutcome, ManagementKey, PivAttestation, PivCertificate, PivInfo,
+    PivInspection, PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo,
+    Result, Secret,
 };
 use std::sync::mpsc::Receiver;
 #[cfg(any(target_os = "windows", test))]
@@ -274,6 +275,24 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, current, new);
+            Err(CredentialError::UnsupportedOperation(
+                "native PIV mutations are not implemented on this platform".into(),
+            ))
+        }
+    }
+
+    fn managed_initialize(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        new_management_key: &ManagementKey,
+        new_puk: &PivPuk,
+    ) -> Result<ManagedPivInitializationOutcome> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::managed_initialize(id, expected_serial, new_management_key, new_puk);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, new_management_key, new_puk);
             Err(CredentialError::UnsupportedOperation(
                 "native PIV mutations are not implemented on this platform".into(),
             ))

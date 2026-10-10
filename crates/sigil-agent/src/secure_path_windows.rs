@@ -26,7 +26,8 @@ use windows_sys::Win32::{
     Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, CreateDirectoryW, FILE_ATTRIBUTE_DIRECTORY,
         FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT, GetFileAttributesW,
-        GetFileInformationByHandle, INVALID_FILE_ATTRIBUTES,
+        GetFileInformationByHandle, INVALID_FILE_ATTRIBUTES, MOVEFILE_REPLACE_EXISTING,
+        MOVEFILE_WRITE_THROUGH, MoveFileExW,
     },
     System::SystemServices::{
         ACCESS_ALLOWED_ACE_TYPE, ACCESS_ALLOWED_CALLBACK_ACE_TYPE,
@@ -34,6 +35,8 @@ use windows_sys::Win32::{
         ACCESS_ALLOWED_OBJECT_ACE_TYPE,
     },
 };
+
+use crate::secure_path::ProtectedFileMode;
 
 const PROTECTED_SDDL: &str = "O:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FRFX;;;BU)";
 const TRUSTED_INSTALLER_SID: &str =
@@ -304,35 +307,92 @@ unsafe fn sid_string(sid: PSID) -> Option<String> {
     Some(String::from_utf16_lossy(slice))
 }
 
-pub(super) fn open_service_log(path: &Path) -> Result<File> {
+pub(super) fn open_protected_file(path: &Path, mode: ProtectedFileMode) -> Result<File> {
     let mut options = OpenOptions::new();
-    options
-        .create(true)
-        .append(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    match mode {
+        ProtectedFileMode::Read => {
+            options.read(true);
+        }
+        ProtectedFileMode::Append => {
+            options.create(true).append(true);
+        }
+        ProtectedFileMode::Truncate => {
+            options.create(true).write(true).truncate(true);
+        }
+        ProtectedFileMode::CreateNew => {
+            options.create_new(true).write(true);
+        }
+    }
     let file = options
         .open(path)
-        .with_context(|| format!("could not open service log {}", path.display()))?;
+        .with_context(|| format!("could not safely open {}", path.display()))?;
+    validate_open_file(&file, path)?;
+    Ok(file)
+}
+
+fn validate_open_file(file: &File, path: &Path) -> Result<()> {
     let mut information = BY_HANDLE_FILE_INFORMATION::default();
     // SAFETY: file is open and information is a writable output buffer.
     if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut information) } == 0 {
         return Err(std::io::Error::last_os_error())
-            .with_context(|| format!("could not inspect service log {}", path.display()));
+            .with_context(|| format!("could not inspect protected file {}", path.display()));
     }
     if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         bail!(
-            "refusing service log {} because it is a reparse point",
+            "refusing protected file {} because it is a reparse point",
+            path.display()
+        );
+    }
+    if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        bail!(
+            "refusing protected file {} because it is a directory",
             path.display()
         );
     }
     if information.nNumberOfLinks > 1 {
         bail!(
-            "refusing service log {} because it has {} hard links",
+            "refusing protected file {} because it has {} hard links",
             path.display(),
             information.nNumberOfLinks
         );
     }
-    Ok(file)
+    Ok(())
+}
+
+pub(super) fn replace_protected_file(source: &Path, destination: &Path) -> Result<()> {
+    let source_file = open_protected_file(source, ProtectedFileMode::Read)?;
+    validate_open_file(&source_file, source)?;
+    match std::fs::symlink_metadata(destination) {
+        Ok(_) => {
+            let destination_file = open_protected_file(destination, ProtectedFileMode::Read)?;
+            validate_open_file(&destination_file, destination)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not safely inspect {}", destination.display()));
+        }
+    }
+    let source_wide = path_wide(source);
+    let destination_wide = path_wide(destination);
+    // SAFETY: both paths are NUL-terminated and valid for the synchronous call.
+    if unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    } == 0
+    {
+        return Err(std::io::Error::last_os_error()).with_context(|| {
+            format!(
+                "could not atomically replace protected file {}",
+                destination.display()
+            )
+        });
+    }
+    Ok(())
 }
 
 fn path_wide(path: &Path) -> Vec<u16> {

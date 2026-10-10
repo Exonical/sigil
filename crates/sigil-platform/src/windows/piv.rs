@@ -3,9 +3,9 @@ use std::ffi::CString;
 use pcsc::{Card, Error as PcscError, Transaction};
 use sha2::{Digest, Sha256, Sha384};
 use sigil_core::{
-    Application, CredentialError, DeviceId, ManagementKey, PinPolicy, PivAttestation,
-    PivCertificate, PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot,
-    PivSlotInfo, Result, Secret,
+    Application, CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
+    ManagementKeyAlgorithm, PinPolicy, PivAlgorithm, PivAttestation, PivCertificate, PivInfo,
+    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
 };
 use sigil_piv::CardTransport;
 use sigil_yubikey::{management as yubikey_management, piv as yubikey_piv};
@@ -264,6 +264,81 @@ pub(crate) fn change_management_key(
     with_transport_expected(id, expected_serial, |transport| {
         yubikey_piv::change_management_key(transport, current, new_key)
     })
+}
+
+pub(crate) fn managed_initialize(
+    id: &DeviceId,
+    expected_serial: &str,
+    new_management_key: &ManagementKey,
+    new_puk: &PivPuk,
+) -> Result<ManagedPivInitializationOutcome> {
+    if new_management_key.algorithm() != ManagementKeyAlgorithm::Aes256 {
+        return Err(CredentialError::UnsupportedOperation(
+            "managed initialization requires a new AES-256 management key".into(),
+        ));
+    }
+    validate_fips_code(device_is_fips(id)?, new_puk.as_bytes())?;
+    with_transport_and_serial(id, expected_serial, |transport, _| {
+        let info =
+            yubikey_piv::read_info(transport).map_err(|_| CredentialError::PivNotFactoryDefault)?;
+        if !info
+            .puk
+            .as_ref()
+            .is_some_and(|status| status.default_value == Some(true))
+            || !info
+                .management_key
+                .as_ref()
+                .is_some_and(|status| status.default_value == Some(true))
+        {
+            return Err(CredentialError::PivNotFactoryDefault);
+        }
+        let management_status = info
+            .management_key
+            .as_ref()
+            .ok_or(CredentialError::PivNotFactoryDefault)?;
+        let factory_management_key = factory_default_management_key(management_status.algorithm)?;
+        let factory_puk = PivPuk::new(b"12345678".to_vec())?;
+
+        yubikey_piv::change_management_key(transport, &factory_management_key, new_management_key)?;
+        if let Err(puk_error) = sigil_piv::management::change_puk(transport, &factory_puk, new_puk)
+        {
+            if !matches!(
+                puk_error,
+                CredentialError::PukIncorrect { .. }
+                    | CredentialError::CardStatus(_)
+                    | CredentialError::PivFipsNotApproved
+            ) {
+                return Err(puk_error);
+            }
+            return if yubikey_piv::change_management_key(
+                transport,
+                new_management_key,
+                &factory_management_key,
+            )
+            .is_ok()
+            {
+                Ok(ManagedPivInitializationOutcome::NotApplied)
+            } else {
+                Ok(ManagedPivInitializationOutcome::Partial)
+            };
+        }
+        Ok(ManagedPivInitializationOutcome::Applied)
+    })
+}
+
+fn factory_default_management_key(algorithm: PivAlgorithm) -> Result<ManagementKey> {
+    let (algorithm, copies) = match algorithm {
+        PivAlgorithm::Aes128 => (ManagementKeyAlgorithm::Aes128, 2),
+        PivAlgorithm::Aes192 => (ManagementKeyAlgorithm::Aes192, 3),
+        PivAlgorithm::Aes256 => (ManagementKeyAlgorithm::Aes256, 4),
+        _ => return Err(CredentialError::PivNotFactoryDefault),
+    };
+    let key = [1, 2, 3, 4, 5, 6, 7, 8]
+        .into_iter()
+        .cycle()
+        .take(copies * 8)
+        .collect();
+    ManagementKey::new(algorithm, key)
 }
 
 pub(crate) fn generate_key(

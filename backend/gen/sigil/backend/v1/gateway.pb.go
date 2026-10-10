@@ -470,6 +470,8 @@ type AgentAuditEvent struct {
 	CallerSessionId  uint32                 `protobuf:"varint,8,opt,name=caller_session_id,json=callerSessionId,proto3" json:"caller_session_id,omitempty"`
 	Outcome          string                 `protobuf:"bytes,9,opt,name=outcome,proto3" json:"outcome,omitempty"`
 	Code             string                 `protobuf:"bytes,10,opt,name=code,proto3" json:"code,omitempty"`
+	GrantId          string                 `protobuf:"bytes,11,opt,name=grant_id,json=grantId,proto3" json:"grant_id,omitempty"`
+	RotationId       string                 `protobuf:"bytes,12,opt,name=rotation_id,json=rotationId,proto3" json:"rotation_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -570,6 +572,20 @@ func (x *AgentAuditEvent) GetOutcome() string {
 func (x *AgentAuditEvent) GetCode() string {
 	if x != nil {
 		return x.Code
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetGrantId() string {
+	if x != nil {
+		return x.GrantId
+	}
+	return ""
+}
+
+func (x *AgentAuditEvent) GetRotationId() string {
+	if x != nil {
+		return x.RotationId
 	}
 	return ""
 }
@@ -863,7 +879,7 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\vrotation_id\x18\x01 \x01(\tR\n" +
 	"rotationId\x12\x18\n" +
 	"\aapplied\x18\x02 \x01(\bR\aapplied\"\x1a\n" +
-	"\x18CompleteRotationResponse\"\xcc\x02\n" +
+	"\x18CompleteRotationResponse\"\x88\x03\n" +
 	"\x0fAgentAuditEvent\x12\x1a\n" +
 	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12-\n" +
 	"\x13occurred_at_unix_ms\x18\x02 \x01(\x03R\x10occurredAtUnixMs\x12\x10\n" +
@@ -875,7 +891,10 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\x11caller_session_id\x18\b \x01(\rR\x0fcallerSessionId\x12\x18\n" +
 	"\aoutcome\x18\t \x01(\tR\aoutcome\x12\x12\n" +
 	"\x04code\x18\n" +
-	" \x01(\tR\x04code\"O\n" +
+	" \x01(\tR\x04code\x12\x19\n" +
+	"\bgrant_id\x18\v \x01(\tR\agrantId\x12\x1f\n" +
+	"\vrotation_id\x18\f \x01(\tR\n" +
+	"rotationId\"O\n" +
 	"\x12ReportAuditRequest\x129\n" +
 	"\x06events\x18\x01 \x03(\v2!.sigil.backend.v1.AgentAuditEventR\x06events\"@\n" +
 	"\x13ReportAuditResponse\x12)\n" +

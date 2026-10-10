@@ -176,8 +176,12 @@ pub enum CredentialError {
     PinBlocked,
     #[error("PIV PUK is blocked")]
     PukBlocked,
+    #[error("managed setup requires the factory-default PUK and management key; reset PIV first")]
+    PivNotFactoryDefault,
     #[error("PIV management key is incorrect")]
     ManagementKeyIncorrect,
+    #[error("managed PIV rotation {0} is incomplete and requires administrator recovery")]
+    ManagedRotationIncomplete(String),
     #[error("device identity does not match")]
     DeviceMismatch,
     #[error(
@@ -190,6 +194,8 @@ pub enum CredentialError {
     CertificateNotFound(String),
     #[error("operation unauthorized: {0}")]
     OperationUnauthorized(String),
+    #[error("backend rejected the operation: {0}")]
+    BackendRejected(String),
     #[error("caller rejected: {0}")]
     CallerRejected(String),
     #[error("Sigil agent is unavailable: {0}")]
@@ -246,6 +252,13 @@ pub trait PivInspection: Send + Sync {
     fn piv_certificate(&self, id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>>;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagedPivInitializationOutcome {
+    Applied,
+    NotApplied,
+    Partial,
+}
+
 pub trait PivManagement: Send + Sync {
     fn change_pin(
         &self,
@@ -278,6 +291,19 @@ pub trait PivManagement: Send + Sync {
         current: &ManagementKey,
         new: &ManagementKey,
     ) -> Result<()>;
+
+    fn managed_initialize(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        new_management_key: &ManagementKey,
+        new_puk: &PivPuk,
+    ) -> Result<ManagedPivInitializationOutcome> {
+        let _ = (id, expected_serial, new_management_key, new_puk);
+        Err(CredentialError::UnsupportedOperation(
+            "managed PIV initialization is not implemented".into(),
+        ))
+    }
 
     fn generate_key(
         &self,

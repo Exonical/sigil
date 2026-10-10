@@ -1,9 +1,21 @@
-use std::path::PathBuf;
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use sigil_agent::{
+    audit_outbox::{AuditOutbox, AuditOutboxLayer},
+    backend::{GrpcBackend, ManagedAuthority, observed_token},
+};
 use sigil_agent::{caller::CallerPolicy, config::AgentConfig};
+use sigil_app::CredentialService;
+use sigil_core::{DeviceDiscovery, DeviceManagement, PivManagement};
+use sigil_proto::backend::v1::AgentAuditEvent;
 use tokio::{runtime::Builder, sync::oneshot};
+use tracing_subscriber::prelude::*;
 
 #[derive(Parser)]
 #[command(name = "sigil-agent", about = "Privileged local Sigil hardware agent")]
@@ -32,6 +44,15 @@ enum Command {
         allow_unprotected_path: bool,
     },
     Uninstall,
+    Backend {
+        #[command(subcommand)]
+        command: BackendCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum BackendCommand {
+    Check,
 }
 
 fn main() {
@@ -75,6 +96,9 @@ fn run() -> Result<()> {
             #[cfg(not(windows))]
             anyhow::bail!("service removal is only available on Windows")
         }
+        Command::Backend {
+            command: BackendCommand::Check,
+        } => backend_check(config_path),
     }
 }
 
@@ -84,7 +108,6 @@ fn run_agent_mode(
     endpoint: Option<String>,
     allow_insecure_paths: bool,
 ) -> Result<()> {
-    init_stderr_logging()?;
     #[cfg(debug_assertions)]
     let config = if allow_insecure_paths {
         AgentConfig::load_development(config_path)?
@@ -96,13 +119,20 @@ fn run_agent_mode(
         let _ = allow_insecure_paths;
         AgentConfig::load(config_path)?
     };
+    let outbox = create_audit_outbox(&config);
+    init_stderr_logging(outbox.clone())?;
     let endpoint = endpoint
         .or_else(|| std::env::var("SIGIL_AGENT_ENDPOINT").ok())
         .unwrap_or_else(|| sigil_agent::DEFAULT_ENDPOINT.to_owned());
-    run_foreground(config, endpoint, mock)
+    run_foreground(config, endpoint, mock, outbox)
 }
 
-fn run_foreground(config: AgentConfig, endpoint: String, mock: bool) -> Result<()> {
+fn run_foreground(
+    config: AgentConfig,
+    endpoint: String,
+    mock: bool,
+    outbox: Option<Arc<AuditOutbox>>,
+) -> Result<()> {
     let runtime = Builder::new_multi_thread().enable_all().build()?;
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     runtime.block_on(async move {
@@ -113,6 +143,7 @@ fn run_foreground(config: AgentConfig, endpoint: String, mock: bool) -> Result<(
             CallerPolicy::production(),
             None,
             shutdown_rx,
+            outbox,
         ));
         tokio::select! {
             result = &mut server => result.context("agent server task panicked")??,
@@ -147,24 +178,110 @@ fn log_filter() -> tracing_subscriber::EnvFilter {
         .add_directive("sigil::audit=info".parse().expect("valid audit filter"))
 }
 
-fn init_stderr_logging() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(log_filter())
-        .with_writer(std::io::stderr)
-        .try_init()
-        .map_err(|error| anyhow::anyhow!("could not initialize agent logging: {error}"))
+fn create_audit_outbox(config: &AgentConfig) -> Option<Arc<AuditOutbox>> {
+    config.backend.as_ref()?;
+    match AuditOutbox::open(config.audit_dir()) {
+        Ok(outbox) => Some(Arc::new(outbox)),
+        Err(error) => {
+            eprintln!("agent audit forwarding is unavailable: {error:#}");
+            None
+        }
+    }
+}
+
+fn init_stderr_logging(outbox: Option<Arc<AuditOutbox>>) -> Result<()> {
+    let filter = log_filter();
+    let formatting = tracing_subscriber::fmt::layer().with_writer(std::io::stderr);
+    let result = if let Some(outbox) = outbox {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(formatting)
+            .with(AuditOutboxLayer::new(outbox))
+            .try_init()
+    } else {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(formatting)
+            .try_init()
+    };
+    result.map_err(|error| anyhow::anyhow!("could not initialize agent logging: {error}"))
+}
+
+fn backend_check(config_path: Option<PathBuf>) -> Result<()> {
+    let config = AgentConfig::load(config_path)?;
+    let backend = GrpcBackend::from_agent_config(&config)?
+        .ok_or_else(|| anyhow::anyhow!("backend is not configured"))?;
+    let identity = backend.selected_identity_info()?;
+    println!("Client certificate:");
+    println!("  Subject: {}", identity.subject);
+    println!("  Thumbprint: {}", identity.thumbprint);
+    println!("  DNS SANs: {}", identity.dns_sans.join(", "));
+    println!("  Not after: {}", identity.not_after);
+
+    let discovery: Arc<dyn DeviceDiscovery> = Arc::new(sigil_platform::NativeDiscovery);
+    let piv_management: Arc<dyn PivManagement> = Arc::new(sigil_platform::NativeDiscovery);
+    let device_management: Arc<dyn DeviceManagement> = Arc::new(sigil_platform::NativeDiscovery);
+    let credentials =
+        CredentialService::new_with_device_management(discovery, piv_management, device_management);
+    let tokens = credentials
+        .devices()?
+        .iter()
+        .filter_map(observed_token)
+        .collect::<Vec<_>>();
+    let sequence = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros().min(u64::MAX as u128) as u64)
+        .unwrap_or(1);
+    let audit = AgentAuditEvent {
+        sequence,
+        occurred_at_unix_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or_default(),
+        rpc: "BackendCheck".into(),
+        operation: String::new(),
+        device_id: String::new(),
+        token_serial: String::new(),
+        caller_os_user: std::env::var("USERNAME").unwrap_or_default(),
+        caller_session_id: 0,
+        outcome: "success".into(),
+        code: String::new(),
+        grant_id: String::new(),
+        rotation_id: String::new(),
+    };
+    let runtime = Builder::new_multi_thread().enable_all().build()?;
+    runtime.block_on(async {
+        let token_count = tokens.len();
+        backend.report_tokens(tokens).await?;
+        let accepted_through = backend.report_audit(vec![audit]).await?;
+        println!("Backend mTLS connection: successful");
+        println!("Reported tokens: {token_count}");
+        println!("Accepted audit sequence through: {accepted_through}");
+        Ok::<_, tonic::Status>(())
+    })?;
+    Ok(())
 }
 
 #[cfg(windows)]
 mod windows_service {
-    use std::{ffi::OsString, path::Path, sync::Mutex, time::Duration};
+    use std::{
+        ffi::OsString,
+        path::Path,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
 
     use anyhow::{Context, Result, anyhow};
-    use sigil_agent::{caller::CallerPolicy, config::AgentConfig};
+    use sigil_agent::{
+        audit_outbox::{AuditOutbox, AuditOutboxLayer},
+        caller::CallerPolicy,
+        config::AgentConfig,
+    };
     use tokio::{
         runtime::Builder,
         sync::{oneshot, watch},
     };
+    use tracing_subscriber::prelude::*;
     use windows_service::{
         define_windows_service,
         service::{
@@ -225,8 +342,9 @@ mod windows_service {
             .map_err(|_| anyhow!("service config lock poisoned"))?
             .clone();
         let paths = sigil_agent::secure_path::prepare_agent_paths(config_path.as_deref())?;
-        init_file_logging(&paths.log_file)?;
         let config = AgentConfig::load(Some(paths.config_file))?;
+        let outbox = super::create_audit_outbox(&config);
+        init_file_logging(&paths.log_file, outbox.clone())?;
         let endpoint = std::env::var("SIGIL_AGENT_ENDPOINT")
             .unwrap_or_else(|_| sigil_agent::DEFAULT_ENDPOINT.to_owned());
 
@@ -240,6 +358,7 @@ mod windows_service {
             CallerPolicy::production(),
             Some(ready_sender),
             shutdown_receiver,
+            outbox,
         ));
         let server_result = runtime.block_on(async {
             tokio::select! {
@@ -344,13 +463,24 @@ mod windows_service {
         Ok(())
     }
 
-    fn init_file_logging(path: &Path) -> Result<()> {
+    fn init_file_logging(path: &Path, outbox: Option<Arc<AuditOutbox>>) -> Result<()> {
         let file = sigil_agent::secure_path::open_service_log(path)?;
-        tracing_subscriber::fmt()
-            .with_env_filter(super::log_filter())
+        let filter = super::log_filter();
+        let formatting = tracing_subscriber::fmt::layer()
             .with_ansi(false)
-            .with_writer(move || file.try_clone().expect("agent log writer clone"))
-            .try_init()
-            .map_err(|error| anyhow!("could not initialize service log: {error}"))
+            .with_writer(move || file.try_clone().expect("agent log writer clone"));
+        let result = if let Some(outbox) = outbox {
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(formatting)
+                .with(AuditOutboxLayer::new(outbox))
+                .try_init()
+        } else {
+            tracing_subscriber::registry()
+                .with(filter)
+                .with(formatting)
+                .try_init()
+        };
+        result.map_err(|error| anyhow!("could not initialize service log: {error}"))
     }
 }

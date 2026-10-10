@@ -12,17 +12,34 @@ mod platform;
 #[derive(Debug, Clone)]
 pub struct AgentPaths {
     pub config_file: PathBuf,
+    pub audit_dir: PathBuf,
     #[cfg(windows)]
     pub log_file: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ProtectedFileMode {
+    Read,
+    Append,
+    Truncate,
+    CreateNew,
 }
 
 pub fn ensure_protected_dir(path: &Path) -> Result<()> {
     platform::ensure_protected_dir(path)
 }
 
+pub fn open_protected_file(path: &Path, mode: ProtectedFileMode) -> Result<std::fs::File> {
+    platform::open_protected_file(path, mode)
+}
+
+pub fn replace_protected_file(source: &Path, destination: &Path) -> Result<()> {
+    platform::replace_protected_file(source, destination)
+}
+
 #[cfg(windows)]
 pub fn open_service_log(path: &Path) -> Result<std::fs::File> {
-    platform::open_service_log(path)
+    open_protected_file(path, ProtectedFileMode::Append)
 }
 
 pub fn prepare_agent_paths(config_override: Option<&Path>) -> Result<AgentPaths> {
@@ -65,16 +82,34 @@ fn prepare_agent_paths_inner(
         ensure_protected_dir(&data_dir)?;
         #[cfg(windows)]
         ensure_protected_dir(&data_dir.join("logs"))?;
+        ensure_protected_dir(&data_dir.join("audit"))?;
         ensure_protected_dir(config_dir)?;
     }
+
+    let audit_dir = if allow_insecure {
+        let directory = config_dir.join("audit");
+        std::fs::create_dir_all(&directory).with_context(|| {
+            format!(
+                "could not create development audit directory {}",
+                directory.display()
+            )
+        })?;
+        directory
+    } else {
+        data_dir.join("audit")
+    };
 
     #[cfg(windows)]
     let paths = AgentPaths {
         config_file,
+        audit_dir,
         log_file: data_dir.join("logs").join("agent.log"),
     };
     #[cfg(unix)]
-    let paths = AgentPaths { config_file };
+    let paths = AgentPaths {
+        config_file,
+        audit_dir,
+    };
     Ok(paths)
 }
 

@@ -68,6 +68,8 @@ message AgentAuditEvent {
   uint32 caller_session_id = 8;
   string outcome = 9;
   string code = 10;
+  string grant_id = 11;
+  string rotation_id = 12;
 }
 
 message ReportAuditRequest {

@@ -11,11 +11,11 @@ use std::{
 use sigil_core::{
     Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
     DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
-    FingerprintProgress, FirmwareVersion, KeyOrigin, KeyStatus, ManagementKey,
-    ManagementKeyAlgorithm, ManagementKeyStatus, MetadataAccess, PinPolicy, PivAlgorithm,
-    PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyAlgorithm, PivKeyMetadata,
-    PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, RetryStatus, Secret, TouchPolicy,
-    Transport,
+    FingerprintProgress, FirmwareVersion, KeyOrigin, KeyStatus, ManagedPivInitializationOutcome,
+    ManagementKey, ManagementKeyAlgorithm, ManagementKeyStatus, MetadataAccess, PinPolicy,
+    PivAlgorithm, PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyAlgorithm,
+    PivKeyMetadata, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, RetryStatus,
+    Secret, TouchPolicy, Transport,
 };
 
 struct MockPivSlot {
@@ -189,6 +189,13 @@ pub struct MockDiscovery {
     devices: Mutex<Vec<DeviceInfo>>,
     listeners: Mutex<Vec<Sender<DeviceEvent>>>,
     piv_states: Mutex<HashMap<DeviceId, MockPivState>>,
+    managed_initialization_fault: Mutex<ManagedInitializationFault>,
+}
+
+#[derive(Default)]
+struct ManagedInitializationFault {
+    fail_puk_change: bool,
+    fail_rollback: bool,
 }
 
 impl MockDiscovery {
@@ -294,7 +301,20 @@ impl MockDiscovery {
             devices: Mutex::new(devices),
             listeners: Mutex::new(Vec::new()),
             piv_states: Mutex::new(piv_states),
+            managed_initialization_fault: Mutex::new(ManagedInitializationFault::default()),
         }
+    }
+
+    pub fn inject_managed_initialize_puk_failure(&self, rollback_fails: bool) {
+        if let Ok(mut fault) = self.managed_initialization_fault.lock() {
+            fault.fail_puk_change = true;
+            fault.fail_rollback = rollback_fails;
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn has_key_in_slot(&self, id: &DeviceId, slot: PivSlot) -> Result<bool> {
+        self.with_piv_state(id, |state| Ok(state.slots.contains_key(&slot)))
     }
 
     pub fn connect(&self, mut device: DeviceInfo) -> Result<()> {
@@ -495,6 +515,60 @@ impl PivManagement for MockDiscovery {
             verify_mock_management_key(state, current)?;
             state.management_key = ManagementKey::new(new.algorithm(), new.as_bytes().to_vec())?;
             Ok(())
+        })
+    }
+
+    fn managed_initialize(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        new_management_key: &ManagementKey,
+        new_puk: &PivPuk,
+    ) -> Result<ManagedPivInitializationOutcome> {
+        self.verify_expected_serial(id, expected_serial)?;
+        let fault = {
+            let mut fault = self
+                .managed_initialization_fault
+                .lock()
+                .map_err(|_| CredentialError::InventoryUnavailable)?;
+            std::mem::take(&mut *fault)
+        };
+        self.with_piv_state(id, |state| {
+            let info = state.info();
+            if !info
+                .puk
+                .as_ref()
+                .is_some_and(|status| status.default_value == Some(true))
+                || !info
+                    .management_key
+                    .as_ref()
+                    .is_some_and(|status| status.default_value == Some(true))
+            {
+                return Err(CredentialError::PivNotFactoryDefault);
+            }
+            if new_management_key.algorithm() != ManagementKeyAlgorithm::Aes256 {
+                return Err(CredentialError::UnsupportedOperation(
+                    "managed initialization requires a new AES-256 management key".into(),
+                ));
+            }
+            let previous_key = ManagementKey::new(
+                state.management_key.algorithm(),
+                state.management_key.as_bytes().to_vec(),
+            )?;
+            state.management_key = ManagementKey::new(
+                new_management_key.algorithm(),
+                new_management_key.as_bytes().to_vec(),
+            )?;
+            if fault.fail_puk_change {
+                if fault.fail_rollback {
+                    return Ok(ManagedPivInitializationOutcome::Partial);
+                }
+                state.management_key = previous_key;
+                return Ok(ManagedPivInitializationOutcome::NotApplied);
+            }
+            state.puk = PivPuk::new(new_puk.as_bytes().to_vec())?;
+            state.puk_retries = 3;
+            Ok(ManagedPivInitializationOutcome::Applied)
         })
     }
 

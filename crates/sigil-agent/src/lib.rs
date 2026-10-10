@@ -1,5 +1,7 @@
 //! Privileged local agent for Sigil hardware operations.
 
+pub mod audit_outbox;
+pub mod backend;
 pub mod caller;
 pub mod config;
 pub mod grant;
@@ -7,13 +9,30 @@ pub mod ipc;
 pub mod secure_path;
 pub mod server;
 
-use std::sync::Arc;
+use std::time::Duration;
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
+};
 
 use sigil_app::CredentialService;
 use sigil_core::{DeviceDiscovery, PivManagement};
-use tokio::sync::oneshot;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::{MissedTickBehavior, interval, sleep},
+};
 
-use crate::{caller::CallerPolicy, config::AgentConfig, server::AgentService};
+use crate::{
+    audit_outbox::AuditOutbox,
+    backend::{GrpcBackend, ManagedAuthority, observed_token},
+    caller::CallerPolicy,
+    config::AgentConfig,
+    server::AgentService,
+};
 
 #[cfg(windows)]
 pub const DEFAULT_ENDPOINT: &str = r"\\.\pipe\sigil-agent";
@@ -29,6 +48,7 @@ pub async fn run(
     policy: CallerPolicy,
     ready: Option<oneshot::Sender<()>>,
     shutdown: oneshot::Receiver<()>,
+    audit_outbox: Option<Arc<AuditOutbox>>,
 ) -> anyhow::Result<()> {
     let (discovery, piv_management, device_management): (
         Arc<dyn DeviceDiscovery>,
@@ -45,9 +65,281 @@ pub async fn run(
         CredentialService::new_with_device_management(discovery, piv_management, device_management);
     let station_id = config.station_id();
     let (grant_provider, grant_verifier) = config.authorization()?;
-    let service = AgentService::new(credentials, station_id)
+    let backend = match GrpcBackend::from_agent_config(&config) {
+        Ok(backend) => backend.map(|backend| Arc::new(backend) as Arc<dyn ManagedAuthority>),
+        Err(error) => {
+            tracing::warn!(%error, "backend configuration could not be loaded; managed operations are unavailable");
+            None
+        }
+    };
+    let mut service = AgentService::new(credentials.clone(), station_id)
         .with_authorization(grant_provider, grant_verifier);
-    ipc::serve(service, endpoint, policy, ready, shutdown).await?;
+    if let Some(backend) = &backend {
+        service = service.with_backend(Arc::clone(backend));
+    }
+    if let Some(outbox) = &audit_outbox {
+        service = service.with_audit_outbox(Arc::clone(outbox));
+    }
+    let mut background_tasks = Vec::new();
+    let mut token_watch_stop = None;
+    if let Some(backend) = backend {
+        let (token_reporter, stop) =
+            spawn_token_reporter(credentials.clone(), Arc::clone(&backend));
+        background_tasks.push(token_reporter);
+        token_watch_stop = Some(stop);
+        if let Some(outbox) = audit_outbox {
+            background_tasks.push(spawn_audit_reporter(
+                Arc::clone(&backend),
+                Arc::clone(&outbox),
+            ));
+            background_tasks.push(spawn_completion_reporter(backend, outbox));
+        }
+    }
+    let result = ipc::serve(service, endpoint, policy, ready, shutdown).await;
+    if let Some(stop) = token_watch_stop {
+        stop.store(true, Ordering::SeqCst);
+    }
+    for task in background_tasks {
+        task.abort();
+    }
+    result?;
+    Ok(())
+}
+
+fn spawn_token_reporter(
+    credentials: CredentialService,
+    backend: Arc<dyn ManagedAuthority>,
+) -> (tokio::task::JoinHandle<()>, Arc<AtomicBool>) {
+    let (notifications, mut received) = mpsc::channel(1);
+    let watch_stop = Arc::new(AtomicBool::new(false));
+    match credentials.watch_devices() {
+        Ok(receiver) => {
+            let stop = Arc::clone(&watch_stop);
+            tokio::task::spawn_blocking(move || {
+                while !stop.load(Ordering::SeqCst) {
+                    match receiver.recv_timeout(Duration::from_millis(200)) {
+                        Ok(_) => {
+                            let _ = notifications.try_send(());
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            });
+        }
+        Err(error) => {
+            tracing::warn!(%error, "device-event reporting is unavailable");
+            drop(notifications);
+        }
+    }
+    let task = tokio::spawn(async move {
+        let mut schedule = interval(Duration::from_secs(15 * 60));
+        schedule.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut watch_open = true;
+        let mut backoff = Duration::from_secs(5);
+        let mut retry_now = false;
+        loop {
+            let changed = if retry_now {
+                retry_now = false;
+                true
+            } else if watch_open {
+                tokio::select! {
+                    _ = schedule.tick() => false,
+                    notification = received.recv() => {
+                        if notification.is_none() {
+                            watch_open = false;
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                }
+            } else {
+                schedule.tick().await;
+                false
+            };
+            if changed {
+                sleep(Duration::from_secs(2)).await;
+                while received.try_recv().is_ok() {}
+            }
+            let inventory = credentials.clone();
+            let devices = match tokio::task::spawn_blocking(move || inventory.devices()).await {
+                Ok(Ok(devices)) => devices,
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "could not enumerate tokens for backend reporting");
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "token reporting task failed");
+                    continue;
+                }
+            };
+            let tokens = devices.iter().filter_map(observed_token).collect();
+            match backend.report_tokens(tokens).await {
+                Ok(()) => backoff = Duration::from_secs(5),
+                Err(error) => {
+                    tracing::warn!(
+                        code = ?error.code(),
+                        message = %error.message(),
+                        "backend token report failed"
+                    );
+                    sleep(backoff).await;
+                    backoff = backoff.saturating_mul(2).min(Duration::from_secs(5 * 60));
+                    retry_now = true;
+                }
+            }
+        }
+    });
+    (task, watch_stop)
+}
+
+fn spawn_audit_reporter(
+    backend: Arc<dyn ManagedAuthority>,
+    outbox: Arc<AuditOutbox>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut schedule = interval(Duration::from_secs(10));
+        schedule.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut backoff = Duration::from_secs(5);
+        let mut retry_now = false;
+        loop {
+            if retry_now {
+                retry_now = false;
+            } else {
+                schedule.tick().await;
+            }
+            let events = match outbox.batch(200) {
+                Ok(events) => events,
+                Err(_) => {
+                    tracing::warn!(target: "sigil::agent", "could not read agent audit outbox");
+                    continue;
+                }
+            };
+            if events.is_empty() {
+                continue;
+            }
+            match backend.report_audit(events).await {
+                Ok(accepted_through) => match outbox.ack(accepted_through) {
+                    Ok(()) => backoff = Duration::from_secs(5),
+                    Err(_) => {
+                        tracing::warn!(target: "sigil::agent", "could not compact agent audit outbox");
+                    }
+                },
+                Err(error) => {
+                    tracing::warn!(
+                        code = ?error.code(),
+                        message = %error.message(),
+                        "backend audit report failed"
+                    );
+                    sleep(backoff).await;
+                    backoff = backoff.saturating_mul(2).min(Duration::from_secs(5 * 60));
+                    retry_now = true;
+                }
+            }
+        }
+    })
+}
+
+fn spawn_completion_reporter(
+    backend: Arc<dyn ManagedAuthority>,
+    outbox: Arc<AuditOutbox>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut schedule = interval(Duration::from_secs(10));
+        schedule.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        let mut retry_schedule: HashMap<String, (Instant, Duration)> = HashMap::new();
+        loop {
+            schedule.tick().await;
+            let completions = match outbox.pending_completions() {
+                Ok(completions) => completions,
+                Err(_) => {
+                    tracing::warn!(target: "sigil::agent", "could not read pending rotation completions");
+                    continue;
+                }
+            };
+            for completion in completions {
+                if retry_schedule
+                    .get(&completion.rotation_id)
+                    .is_some_and(|(next_retry, _)| *next_retry > Instant::now())
+                {
+                    continue;
+                }
+                if crate::backend::current_unix_millis()
+                    .saturating_sub(completion.created_at_unix_ms)
+                    > 14 * 60 * 1000
+                {
+                    let _ = outbox.remove_completion(&completion.rotation_id);
+                    retry_schedule.remove(&completion.rotation_id);
+                    tracing::error!(
+                        target: "sigil::audit",
+                        rpc = "CompleteRotation",
+                        operation = "rotation_completion",
+                        rotation_id = %completion.rotation_id,
+                        outcome = "error",
+                        code = "completion_expired",
+                        "pending rotation completion expired before backend confirmation"
+                    );
+                    continue;
+                }
+                match backend
+                    .complete_rotation(&completion.rotation_id, completion.applied)
+                    .await
+                {
+                    Ok(()) => {
+                        retry_schedule.remove(&completion.rotation_id);
+                        if outbox.remove_completion(&completion.rotation_id).is_err() {
+                            tracing::warn!(
+                                target: "sigil::agent",
+                                "could not remove acknowledged rotation completion"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            code = ?error.code(),
+                            message = %error.message(),
+                            "backend rotation completion retry failed"
+                        );
+                        let retry = retry_schedule
+                            .entry(completion.rotation_id.clone())
+                            .or_insert((Instant::now(), Duration::from_secs(5)));
+                        retry.0 = Instant::now() + retry.1;
+                        retry.1 = retry.1.saturating_mul(2).min(Duration::from_secs(60));
+                    }
+                }
+            }
+        }
+    })
+}
+
+pub async fn retry_pending_completions_once(
+    backend: &dyn ManagedAuthority,
+    outbox: &AuditOutbox,
+) -> anyhow::Result<()> {
+    for completion in outbox.pending_completions()? {
+        if crate::backend::current_unix_millis().saturating_sub(completion.created_at_unix_ms)
+            > 14 * 60 * 1000
+        {
+            outbox.remove_completion(&completion.rotation_id)?;
+            tracing::error!(
+                target: "sigil::audit",
+                rpc = "CompleteRotation",
+                operation = "rotation_completion",
+                rotation_id = %completion.rotation_id,
+                outcome = "error",
+                code = "completion_expired",
+                "pending rotation completion expired before backend confirmation"
+            );
+            continue;
+        }
+        if backend
+            .complete_rotation(&completion.rotation_id, completion.applied)
+            .await
+            .is_ok()
+        {
+            outbox.remove_completion(&completion.rotation_id)?;
+        }
+    }
     Ok(())
 }
 

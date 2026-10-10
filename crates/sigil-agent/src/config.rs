@@ -16,27 +16,89 @@ use crate::grant::{GrantProvider, GrantVerifier, Unconfigured};
 pub struct AgentConfig {
     pub station_id: Option<String>,
     pub grant_keys: HashMap<String, PathBuf>,
+    pub backend: Option<BackendConfig>,
     #[serde(skip)]
     config_dir: PathBuf,
     #[serde(skip)]
     allow_insecure_paths: bool,
+    #[serde(skip)]
+    audit_dir: PathBuf,
     #[cfg(feature = "dev-grants")]
     pub dev_signer_key: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct BackendConfig {
+    pub url: String,
+    pub server_ca_file: Option<PathBuf>,
+    pub client_certificate: BackendClientCertificate,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct BackendClientCertificate {
+    pub store: BackendCertificateStore,
+    pub thumbprint: Option<String>,
+    pub issuer: Option<String>,
+    #[cfg(debug_assertions)]
+    pub expected_dns_name: Option<String>,
+    #[cfg(any(debug_assertions, test))]
+    pub cert_file: Option<PathBuf>,
+    #[cfg(any(debug_assertions, test))]
+    pub key_file: Option<PathBuf>,
+}
+
+impl Default for BackendClientCertificate {
+    fn default() -> Self {
+        Self {
+            store: BackendCertificateStore::LocalMachine,
+            thumbprint: None,
+            issuer: None,
+            #[cfg(debug_assertions)]
+            expected_dns_name: None,
+            #[cfg(any(debug_assertions, test))]
+            cert_file: None,
+            #[cfg(any(debug_assertions, test))]
+            key_file: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum BackendCertificateStore {
+    #[default]
+    LocalMachine,
+    CurrentUser,
+}
+
+impl BackendConfig {
+    pub fn trusted_server_ca(&self, config: &AgentConfig) -> anyhow::Result<Option<PathBuf>> {
+        self.server_ca_file
+            .as_deref()
+            .map(|path| config.key_path(path))
+            .transpose()
+    }
 }
 
 impl AgentConfig {
     pub fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let paths = crate::secure_path::prepare_agent_paths(path.as_deref())?;
-        Self::load_from_path(paths.config_file, false)
+        Self::load_from_path(paths.config_file, paths.audit_dir, false)
     }
 
     #[cfg(debug_assertions)]
     pub fn load_development(path: Option<PathBuf>) -> anyhow::Result<Self> {
         let paths = crate::secure_path::prepare_agent_paths_insecure(path.as_deref())?;
-        Self::load_from_path(paths.config_file, true)
+        Self::load_from_path(paths.config_file, paths.audit_dir, true)
     }
 
-    fn load_from_path(path: PathBuf, allow_insecure_paths: bool) -> anyhow::Result<Self> {
+    fn load_from_path(
+        path: PathBuf,
+        audit_dir: PathBuf,
+        allow_insecure_paths: bool,
+    ) -> anyhow::Result<Self> {
         let raw_parent = path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
@@ -95,6 +157,32 @@ impl AgentConfig {
         };
         config.config_dir = config_dir;
         config.allow_insecure_paths = allow_insecure_paths;
+        config.audit_dir = audit_dir;
+        if let Some(backend) = &config.backend {
+            if backend.url.trim().is_empty() || !backend.url.starts_with("https://") {
+                anyhow::bail!("backend.url must be an HTTPS URL");
+            }
+            #[cfg(not(debug_assertions))]
+            if backend.client_certificate.store == BackendCertificateStore::CurrentUser {
+                anyhow::bail!("release builds only support LocalMachine\\My backend certificates");
+            }
+            #[cfg(any(debug_assertions, test))]
+            if backend.client_certificate.cert_file.is_some()
+                != backend.client_certificate.key_file.is_some()
+            {
+                anyhow::bail!(
+                    "backend.client_certificate.cert_file and key_file must be set together"
+                );
+            }
+            #[cfg(any(debug_assertions, test))]
+            if let (Some(cert_file), Some(key_file)) = (
+                backend.client_certificate.cert_file.as_deref(),
+                backend.client_certificate.key_file.as_deref(),
+            ) {
+                config.key_path(cert_file)?;
+                config.key_path(key_file)?;
+            }
+        }
         Ok(config)
     }
 
@@ -102,12 +190,27 @@ impl AgentConfig {
         crate::secure_path::trusted_key_path(&self.config_dir, path, self.allow_insecure_paths)
     }
 
+    pub(crate) fn trusted_path(&self, path: &Path) -> anyhow::Result<PathBuf> {
+        self.key_path(path)
+    }
+
+    pub fn audit_dir(&self) -> &Path {
+        &self.audit_dir
+    }
+
     pub fn station_id(&self) -> String {
         self.station_id
             .as_deref()
             .filter(|value| !value.is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(hostname)
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| hostname().to_ascii_lowercase())
+    }
+
+    pub fn backend(&self) -> anyhow::Result<Option<(BackendConfig, Option<PathBuf>)>> {
+        self.backend
+            .as_ref()
+            .map(|backend| Ok((backend.clone(), backend.trusted_server_ca(self)?)))
+            .transpose()
     }
 
     pub fn authorization(&self) -> anyhow::Result<(Arc<dyn GrantProvider>, Arc<GrantVerifier>)> {

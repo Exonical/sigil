@@ -612,6 +612,7 @@ func TestManagedEscrowRotationsAndStationAuditCursor(t *testing.T) {
 			Sequence: 2, OccurredAtUnixMs: time.Now().UnixMilli(), Rpc: "GeneratePivKey",
 			Operation: "PIV_GENERATE_KEY", DeviceId: "windows-pcsc:reader", TokenSerial: managedTestSerial,
 			CallerOsUser: "S-1-5-21-test", CallerSessionId: 1, Outcome: "error", Code: "CARD_STATUS",
+			GrantId: "audit-test-grant-id", RotationId: "audit-test-rotation-id",
 		},
 	}
 	reported, err := adminClient.ReportAudit(ctx, &backendv1.ReportAuditRequest{Events: auditEvents})
@@ -638,6 +639,7 @@ func TestManagedEscrowRotationsAndStationAuditCursor(t *testing.T) {
 	if err := audit.Verify(ctx, store.Pool); err != nil {
 		t.Fatal(err)
 	}
+	var managedAuditHasIds bool
 
 	var details []string
 	rows, err := store.Pool.Query(ctx, `SELECT detail::text FROM audit_events`)
@@ -665,11 +667,17 @@ func TestManagedEscrowRotationsAndStationAuditCursor(t *testing.T) {
 		newPending.NewManagementKey.Value, pukRotation.NewPuk.Value,
 	}
 	for _, detail := range details {
+		if strings.Contains(detail, "audit-test-grant-id") && strings.Contains(detail, "audit-test-rotation-id") {
+			managedAuditHasIds = true
+		}
 		for _, secret := range secretValues {
 			if bytes.Contains([]byte(detail), secret) {
 				t.Fatal("audit details contain a secret value")
 			}
 		}
+	}
+	if !managedAuditHasIds {
+		t.Fatal("reported managed audit event is missing its grant and rotation IDs")
 	}
 	for _, secret := range secretValues {
 		if bytes.Contains(logOutput.Bytes(), secret) {

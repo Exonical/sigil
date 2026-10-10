@@ -5,8 +5,8 @@ use std::sync::{Arc, mpsc::Receiver};
 use sigil_core::{
     CertificateFormat, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
     DeviceManagement, DiscoverableCredential, FidoStatus, Fingerprint, FingerprintProgress,
-    ManagementKey, PivAttestation, PivCertificate, PivInfo, PivKeyConfiguration, PivManagement,
-    PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
+    ManagedPivInitializationOutcome, ManagementKey, PivAttestation, PivCertificate, PivInfo,
+    PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
 };
 
 #[derive(Clone)]
@@ -206,6 +206,23 @@ impl CredentialService {
                 )
             })?
             .change_management_key(id, expected_serial, current, new)
+    }
+
+    pub fn managed_initialize(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        new_management_key: &ManagementKey,
+        new_puk: &PivPuk,
+    ) -> Result<ManagedPivInitializationOutcome> {
+        self.piv_management
+            .as_ref()
+            .ok_or_else(|| {
+                CredentialError::UnsupportedOperation(
+                    "PIV mutation is unavailable through this credential service".into(),
+                )
+            })?
+            .managed_initialize(id, expected_serial, new_management_key, new_puk)
     }
 
     pub fn generate_management_key(

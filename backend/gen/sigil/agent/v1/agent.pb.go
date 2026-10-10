@@ -537,6 +537,55 @@ func (PivKeyGenerationAlgorithm) EnumDescriptor() ([]byte, []int) {
 	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
+type ManagedSecretKind int32
+
+const (
+	ManagedSecretKind_MANAGED_SECRET_KIND_UNSPECIFIED    ManagedSecretKind = 0
+	ManagedSecretKind_MANAGED_SECRET_KIND_PUK            ManagedSecretKind = 1
+	ManagedSecretKind_MANAGED_SECRET_KIND_MANAGEMENT_KEY ManagedSecretKind = 2
+)
+
+// Enum value maps for ManagedSecretKind.
+var (
+	ManagedSecretKind_name = map[int32]string{
+		0: "MANAGED_SECRET_KIND_UNSPECIFIED",
+		1: "MANAGED_SECRET_KIND_PUK",
+		2: "MANAGED_SECRET_KIND_MANAGEMENT_KEY",
+	}
+	ManagedSecretKind_value = map[string]int32{
+		"MANAGED_SECRET_KIND_UNSPECIFIED":    0,
+		"MANAGED_SECRET_KIND_PUK":            1,
+		"MANAGED_SECRET_KIND_MANAGEMENT_KEY": 2,
+	}
+)
+
+func (x ManagedSecretKind) Enum() *ManagedSecretKind {
+	p := new(ManagedSecretKind)
+	*p = x
+	return p
+}
+
+func (x ManagedSecretKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ManagedSecretKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_sigil_agent_v1_agent_proto_enumTypes[9].Descriptor()
+}
+
+func (ManagedSecretKind) Type() protoreflect.EnumType {
+	return &file_sigil_agent_v1_agent_proto_enumTypes[9]
+}
+
+func (x ManagedSecretKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ManagedSecretKind.Descriptor instead.
+func (ManagedSecretKind) EnumDescriptor() ([]byte, []int) {
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+}
+
 type ErrorKind int32
 
 const (
@@ -568,6 +617,9 @@ const (
 	ErrorKind_MANAGEMENT_KEY_INCORRECT     ErrorKind = 25
 	ErrorKind_DEVICE_MISMATCH              ErrorKind = 26
 	ErrorKind_PIV_FIPS_NOT_APPROVED        ErrorKind = 27
+	ErrorKind_PIV_NOT_FACTORY_DEFAULT      ErrorKind = 28
+	ErrorKind_MANAGED_ROTATION_INCOMPLETE  ErrorKind = 29
+	ErrorKind_BACKEND_REJECTED             ErrorKind = 30
 )
 
 // Enum value maps for ErrorKind.
@@ -601,6 +653,9 @@ var (
 		25: "MANAGEMENT_KEY_INCORRECT",
 		26: "DEVICE_MISMATCH",
 		27: "PIV_FIPS_NOT_APPROVED",
+		28: "PIV_NOT_FACTORY_DEFAULT",
+		29: "MANAGED_ROTATION_INCOMPLETE",
+		30: "BACKEND_REJECTED",
 	}
 	ErrorKind_value = map[string]int32{
 		"ERROR_KIND_UNSPECIFIED":       0,
@@ -631,6 +686,9 @@ var (
 		"MANAGEMENT_KEY_INCORRECT":     25,
 		"DEVICE_MISMATCH":              26,
 		"PIV_FIPS_NOT_APPROVED":        27,
+		"PIV_NOT_FACTORY_DEFAULT":      28,
+		"MANAGED_ROTATION_INCOMPLETE":  29,
+		"BACKEND_REJECTED":             30,
 	}
 )
 
@@ -645,11 +703,11 @@ func (x ErrorKind) String() string {
 }
 
 func (ErrorKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_sigil_agent_v1_agent_proto_enumTypes[9].Descriptor()
+	return file_sigil_agent_v1_agent_proto_enumTypes[10].Descriptor()
 }
 
 func (ErrorKind) Type() protoreflect.EnumType {
-	return &file_sigil_agent_v1_agent_proto_enumTypes[9]
+	return &file_sigil_agent_v1_agent_proto_enumTypes[10]
 }
 
 func (x ErrorKind) Number() protoreflect.EnumNumber {
@@ -658,7 +716,7 @@ func (x ErrorKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use ErrorKind.Descriptor instead.
 func (ErrorKind) EnumDescriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 type Empty struct {
@@ -2789,6 +2847,7 @@ type ChangePivPukRequest struct {
 	ExpectedSerial string                 `protobuf:"bytes,2,opt,name=expected_serial,json=expectedSerial,proto3" json:"expected_serial,omitempty"`
 	OldPuk         []byte                 `protobuf:"bytes,3,opt,name=old_puk,json=oldPuk,proto3" json:"old_puk,omitempty"`
 	NewPuk         []byte                 `protobuf:"bytes,4,opt,name=new_puk,json=newPuk,proto3" json:"new_puk,omitempty"`
+	Managed        *ManagedAuthorization  `protobuf:"bytes,5,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2851,19 +2910,71 @@ func (x *ChangePivPukRequest) GetNewPuk() []byte {
 	return nil
 }
 
+func (x *ChangePivPukRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
+type ManagedAuthorization struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ManagedAuthorization) Reset() {
+	*x = ManagedAuthorization{}
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ManagedAuthorization) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ManagedAuthorization) ProtoMessage() {}
+
+func (x *ManagedAuthorization) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ManagedAuthorization.ProtoReflect.Descriptor instead.
+func (*ManagedAuthorization) Descriptor() ([]byte, []int) {
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *ManagedAuthorization) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
 type UnblockPivPinRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	ExpectedSerial string                 `protobuf:"bytes,2,opt,name=expected_serial,json=expectedSerial,proto3" json:"expected_serial,omitempty"`
 	Puk            []byte                 `protobuf:"bytes,3,opt,name=puk,proto3" json:"puk,omitempty"`
 	NewPin         []byte                 `protobuf:"bytes,4,opt,name=new_pin,json=newPin,proto3" json:"new_pin,omitempty"`
+	Managed        *ManagedAuthorization  `protobuf:"bytes,5,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
 func (x *UnblockPivPinRequest) Reset() {
 	*x = UnblockPivPinRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2875,7 +2986,7 @@ func (x *UnblockPivPinRequest) String() string {
 func (*UnblockPivPinRequest) ProtoMessage() {}
 
 func (x *UnblockPivPinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2888,7 +2999,7 @@ func (x *UnblockPivPinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnblockPivPinRequest.ProtoReflect.Descriptor instead.
 func (*UnblockPivPinRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{33}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *UnblockPivPinRequest) GetId() string {
@@ -2919,6 +3030,13 @@ func (x *UnblockPivPinRequest) GetNewPin() []byte {
 	return nil
 }
 
+func (x *UnblockPivPinRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
 type ChangePivManagementKeyRequest struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	Id                   string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -2927,13 +3045,14 @@ type ChangePivManagementKeyRequest struct {
 	CurrentAlgorithm     ManagementKeyAlgorithm `protobuf:"varint,4,opt,name=current_algorithm,json=currentAlgorithm,proto3,enum=sigil.agent.v1.ManagementKeyAlgorithm" json:"current_algorithm,omitempty"`
 	NewAlgorithm         ManagementKeyAlgorithm `protobuf:"varint,5,opt,name=new_algorithm,json=newAlgorithm,proto3,enum=sigil.agent.v1.ManagementKeyAlgorithm" json:"new_algorithm,omitempty"`
 	NewManagementKey     []byte                 `protobuf:"bytes,6,opt,name=new_management_key,json=newManagementKey,proto3" json:"new_management_key,omitempty"`
+	Managed              *ManagedAuthorization  `protobuf:"bytes,7,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ChangePivManagementKeyRequest) Reset() {
 	*x = ChangePivManagementKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2945,7 +3064,7 @@ func (x *ChangePivManagementKeyRequest) String() string {
 func (*ChangePivManagementKeyRequest) ProtoMessage() {}
 
 func (x *ChangePivManagementKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2958,7 +3077,7 @@ func (x *ChangePivManagementKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePivManagementKeyRequest.ProtoReflect.Descriptor instead.
 func (*ChangePivManagementKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{34}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ChangePivManagementKeyRequest) GetId() string {
@@ -3003,6 +3122,13 @@ func (x *ChangePivManagementKeyRequest) GetNewManagementKey() []byte {
 	return nil
 }
 
+func (x *ChangePivManagementKeyRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
 type GeneratePivKeyRequest struct {
 	state                  protoimpl.MessageState    `protogen:"open.v1"`
 	Id                     string                    `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -3013,13 +3139,14 @@ type GeneratePivKeyRequest struct {
 	Algorithm              PivKeyGenerationAlgorithm `protobuf:"varint,6,opt,name=algorithm,proto3,enum=sigil.agent.v1.PivKeyGenerationAlgorithm" json:"algorithm,omitempty"`
 	PinPolicy              PinPolicy                 `protobuf:"varint,7,opt,name=pin_policy,json=pinPolicy,proto3,enum=sigil.agent.v1.PinPolicy" json:"pin_policy,omitempty"`
 	TouchPolicy            TouchPolicy               `protobuf:"varint,8,opt,name=touch_policy,json=touchPolicy,proto3,enum=sigil.agent.v1.TouchPolicy" json:"touch_policy,omitempty"`
+	Managed                *ManagedAuthorization     `protobuf:"bytes,9,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
 
 func (x *GeneratePivKeyRequest) Reset() {
 	*x = GeneratePivKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3031,7 +3158,7 @@ func (x *GeneratePivKeyRequest) String() string {
 func (*GeneratePivKeyRequest) ProtoMessage() {}
 
 func (x *GeneratePivKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3044,7 +3171,7 @@ func (x *GeneratePivKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePivKeyRequest.ProtoReflect.Descriptor instead.
 func (*GeneratePivKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{35}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GeneratePivKeyRequest) GetId() string {
@@ -3103,6 +3230,13 @@ func (x *GeneratePivKeyRequest) GetTouchPolicy() TouchPolicy {
 	return TouchPolicy_TOUCH_POLICY_UNSPECIFIED
 }
 
+func (x *GeneratePivKeyRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
 type GeneratePivKeyResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	SubjectPublicKeyInfo []byte                 `protobuf:"bytes,1,opt,name=subject_public_key_info,json=subjectPublicKeyInfo,proto3" json:"subject_public_key_info,omitempty"`
@@ -3112,7 +3246,7 @@ type GeneratePivKeyResponse struct {
 
 func (x *GeneratePivKeyResponse) Reset() {
 	*x = GeneratePivKeyResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3124,7 +3258,7 @@ func (x *GeneratePivKeyResponse) String() string {
 func (*GeneratePivKeyResponse) ProtoMessage() {}
 
 func (x *GeneratePivKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3137,7 +3271,7 @@ func (x *GeneratePivKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePivKeyResponse.ProtoReflect.Descriptor instead.
 func (*GeneratePivKeyResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{36}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *GeneratePivKeyResponse) GetSubjectPublicKeyInfo() []byte {
@@ -3158,7 +3292,7 @@ type AttestPivKeyRequest struct {
 
 func (x *AttestPivKeyRequest) Reset() {
 	*x = AttestPivKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3170,7 +3304,7 @@ func (x *AttestPivKeyRequest) String() string {
 func (*AttestPivKeyRequest) ProtoMessage() {}
 
 func (x *AttestPivKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3183,7 +3317,7 @@ func (x *AttestPivKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttestPivKeyRequest.ProtoReflect.Descriptor instead.
 func (*AttestPivKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{37}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *AttestPivKeyRequest) GetId() string {
@@ -3217,7 +3351,7 @@ type AttestPivKeyResponse struct {
 
 func (x *AttestPivKeyResponse) Reset() {
 	*x = AttestPivKeyResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3229,7 +3363,7 @@ func (x *AttestPivKeyResponse) String() string {
 func (*AttestPivKeyResponse) ProtoMessage() {}
 
 func (x *AttestPivKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3242,7 +3376,7 @@ func (x *AttestPivKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttestPivKeyResponse.ProtoReflect.Descriptor instead.
 func (*AttestPivKeyResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{38}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *AttestPivKeyResponse) GetAttestationDer() []byte {
@@ -3272,7 +3406,7 @@ type SignPivCsrRequest struct {
 
 func (x *SignPivCsrRequest) Reset() {
 	*x = SignPivCsrRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3284,7 +3418,7 @@ func (x *SignPivCsrRequest) String() string {
 func (*SignPivCsrRequest) ProtoMessage() {}
 
 func (x *SignPivCsrRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3297,7 +3431,7 @@ func (x *SignPivCsrRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignPivCsrRequest.ProtoReflect.Descriptor instead.
 func (*SignPivCsrRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{39}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *SignPivCsrRequest) GetId() string {
@@ -3344,7 +3478,7 @@ type SignPivCsrResponse struct {
 
 func (x *SignPivCsrResponse) Reset() {
 	*x = SignPivCsrResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3356,7 +3490,7 @@ func (x *SignPivCsrResponse) String() string {
 func (*SignPivCsrResponse) ProtoMessage() {}
 
 func (x *SignPivCsrResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3369,7 +3503,7 @@ func (x *SignPivCsrResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignPivCsrResponse.ProtoReflect.Descriptor instead.
 func (*SignPivCsrResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{40}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *SignPivCsrResponse) GetCsrDer() []byte {
@@ -3387,13 +3521,14 @@ type ImportPivCertificateRequest struct {
 	ManagementKeyAlgorithm ManagementKeyAlgorithm `protobuf:"varint,4,opt,name=management_key_algorithm,json=managementKeyAlgorithm,proto3,enum=sigil.agent.v1.ManagementKeyAlgorithm" json:"management_key_algorithm,omitempty"`
 	SlotByte               uint32                 `protobuf:"varint,5,opt,name=slot_byte,json=slotByte,proto3" json:"slot_byte,omitempty"`
 	CertificateDer         []byte                 `protobuf:"bytes,6,opt,name=certificate_der,json=certificateDer,proto3" json:"certificate_der,omitempty"`
+	Managed                *ManagedAuthorization  `protobuf:"bytes,7,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
 
 func (x *ImportPivCertificateRequest) Reset() {
 	*x = ImportPivCertificateRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3405,7 +3540,7 @@ func (x *ImportPivCertificateRequest) String() string {
 func (*ImportPivCertificateRequest) ProtoMessage() {}
 
 func (x *ImportPivCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3418,7 +3553,7 @@ func (x *ImportPivCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportPivCertificateRequest.ProtoReflect.Descriptor instead.
 func (*ImportPivCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{41}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ImportPivCertificateRequest) GetId() string {
@@ -3463,6 +3598,13 @@ func (x *ImportPivCertificateRequest) GetCertificateDer() []byte {
 	return nil
 }
 
+func (x *ImportPivCertificateRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
 type DeletePivCertificateRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	Id                     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -3470,13 +3612,14 @@ type DeletePivCertificateRequest struct {
 	ManagementKey          []byte                 `protobuf:"bytes,3,opt,name=management_key,json=managementKey,proto3" json:"management_key,omitempty"`
 	ManagementKeyAlgorithm ManagementKeyAlgorithm `protobuf:"varint,4,opt,name=management_key_algorithm,json=managementKeyAlgorithm,proto3,enum=sigil.agent.v1.ManagementKeyAlgorithm" json:"management_key_algorithm,omitempty"`
 	SlotByte               uint32                 `protobuf:"varint,5,opt,name=slot_byte,json=slotByte,proto3" json:"slot_byte,omitempty"`
+	Managed                *ManagedAuthorization  `protobuf:"bytes,6,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
 
 func (x *DeletePivCertificateRequest) Reset() {
 	*x = DeletePivCertificateRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3488,7 +3631,7 @@ func (x *DeletePivCertificateRequest) String() string {
 func (*DeletePivCertificateRequest) ProtoMessage() {}
 
 func (x *DeletePivCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3501,7 +3644,7 @@ func (x *DeletePivCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePivCertificateRequest.ProtoReflect.Descriptor instead.
 func (*DeletePivCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{42}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *DeletePivCertificateRequest) GetId() string {
@@ -3539,6 +3682,13 @@ func (x *DeletePivCertificateRequest) GetSlotByte() uint32 {
 	return 0
 }
 
+func (x *DeletePivCertificateRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
 type DeletePivKeyRequest struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	Id                     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -3546,13 +3696,14 @@ type DeletePivKeyRequest struct {
 	ManagementKey          []byte                 `protobuf:"bytes,3,opt,name=management_key,json=managementKey,proto3" json:"management_key,omitempty"`
 	ManagementKeyAlgorithm ManagementKeyAlgorithm `protobuf:"varint,4,opt,name=management_key_algorithm,json=managementKeyAlgorithm,proto3,enum=sigil.agent.v1.ManagementKeyAlgorithm" json:"management_key_algorithm,omitempty"`
 	SlotByte               uint32                 `protobuf:"varint,5,opt,name=slot_byte,json=slotByte,proto3" json:"slot_byte,omitempty"`
+	Managed                *ManagedAuthorization  `protobuf:"bytes,6,opt,name=managed,proto3" json:"managed,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
 
 func (x *DeletePivKeyRequest) Reset() {
 	*x = DeletePivKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3564,7 +3715,7 @@ func (x *DeletePivKeyRequest) String() string {
 func (*DeletePivKeyRequest) ProtoMessage() {}
 
 func (x *DeletePivKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3577,7 +3728,7 @@ func (x *DeletePivKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePivKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeletePivKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{43}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *DeletePivKeyRequest) GetId() string {
@@ -3615,6 +3766,13 @@ func (x *DeletePivKeyRequest) GetSlotByte() uint32 {
 	return 0
 }
 
+func (x *DeletePivKeyRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
 type ResetPivRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -3625,7 +3783,7 @@ type ResetPivRequest struct {
 
 func (x *ResetPivRequest) Reset() {
 	*x = ResetPivRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3637,7 +3795,7 @@ func (x *ResetPivRequest) String() string {
 func (*ResetPivRequest) ProtoMessage() {}
 
 func (x *ResetPivRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3650,7 +3808,7 @@ func (x *ResetPivRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetPivRequest.ProtoReflect.Descriptor instead.
 func (*ResetPivRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{44}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ResetPivRequest) GetId() string {
@@ -3667,6 +3825,134 @@ func (x *ResetPivRequest) GetConfirmSerial() string {
 	return ""
 }
 
+type InitializeManagedPivRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ExpectedSerial string                 `protobuf:"bytes,2,opt,name=expected_serial,json=expectedSerial,proto3" json:"expected_serial,omitempty"`
+	Managed        *ManagedAuthorization  `protobuf:"bytes,3,opt,name=managed,proto3" json:"managed,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *InitializeManagedPivRequest) Reset() {
+	*x = InitializeManagedPivRequest{}
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InitializeManagedPivRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InitializeManagedPivRequest) ProtoMessage() {}
+
+func (x *InitializeManagedPivRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InitializeManagedPivRequest.ProtoReflect.Descriptor instead.
+func (*InitializeManagedPivRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *InitializeManagedPivRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *InitializeManagedPivRequest) GetExpectedSerial() string {
+	if x != nil {
+		return x.ExpectedSerial
+	}
+	return ""
+}
+
+func (x *InitializeManagedPivRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
+type RotateManagedPivSecretRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ExpectedSerial string                 `protobuf:"bytes,2,opt,name=expected_serial,json=expectedSerial,proto3" json:"expected_serial,omitempty"`
+	Managed        *ManagedAuthorization  `protobuf:"bytes,3,opt,name=managed,proto3" json:"managed,omitempty"`
+	Kind           ManagedSecretKind      `protobuf:"varint,4,opt,name=kind,proto3,enum=sigil.agent.v1.ManagedSecretKind" json:"kind,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *RotateManagedPivSecretRequest) Reset() {
+	*x = RotateManagedPivSecretRequest{}
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RotateManagedPivSecretRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RotateManagedPivSecretRequest) ProtoMessage() {}
+
+func (x *RotateManagedPivSecretRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RotateManagedPivSecretRequest.ProtoReflect.Descriptor instead.
+func (*RotateManagedPivSecretRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *RotateManagedPivSecretRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *RotateManagedPivSecretRequest) GetExpectedSerial() string {
+	if x != nil {
+		return x.ExpectedSerial
+	}
+	return ""
+}
+
+func (x *RotateManagedPivSecretRequest) GetManaged() *ManagedAuthorization {
+	if x != nil {
+		return x.Managed
+	}
+	return nil
+}
+
+func (x *RotateManagedPivSecretRequest) GetKind() ManagedSecretKind {
+	if x != nil {
+		return x.Kind
+	}
+	return ManagedSecretKind_MANAGED_SECRET_KIND_UNSPECIFIED
+}
+
 type AgentError struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Kind          ErrorKind              `protobuf:"varint,1,opt,name=kind,proto3,enum=sigil.agent.v1.ErrorKind" json:"kind,omitempty"`
@@ -3677,7 +3963,7 @@ type AgentError struct {
 
 func (x *AgentError) Reset() {
 	*x = AgentError{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[45]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3689,7 +3975,7 @@ func (x *AgentError) String() string {
 func (*AgentError) ProtoMessage() {}
 
 func (x *AgentError) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[45]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3702,7 +3988,7 @@ func (x *AgentError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentError.ProtoReflect.Descriptor instead.
 func (*AgentError) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{45}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *AgentError) GetKind() ErrorKind {
@@ -3911,24 +4197,29 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12\x17\n" +
 	"\aold_pin\x18\x03 \x01(\fR\x06oldPin\x12\x17\n" +
-	"\anew_pin\x18\x04 \x01(\fR\x06newPin\"\x80\x01\n" +
+	"\anew_pin\x18\x04 \x01(\fR\x06newPin\"\xc0\x01\n" +
 	"\x13ChangePivPukRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12\x17\n" +
 	"\aold_puk\x18\x03 \x01(\fR\x06oldPuk\x12\x17\n" +
-	"\anew_puk\x18\x04 \x01(\fR\x06newPuk\"z\n" +
+	"\anew_puk\x18\x04 \x01(\fR\x06newPuk\x12>\n" +
+	"\amanaged\x18\x05 \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"9\n" +
+	"\x14ManagedAuthorization\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\"\xba\x01\n" +
 	"\x14UnblockPivPinRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12\x10\n" +
 	"\x03puk\x18\x03 \x01(\fR\x03puk\x12\x17\n" +
-	"\anew_pin\x18\x04 \x01(\fR\x06newPin\"\xde\x02\n" +
+	"\anew_pin\x18\x04 \x01(\fR\x06newPin\x12>\n" +
+	"\amanaged\x18\x05 \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"\x9e\x03\n" +
 	"\x1dChangePivManagementKeyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x124\n" +
 	"\x16current_management_key\x18\x03 \x01(\fR\x14currentManagementKey\x12S\n" +
 	"\x11current_algorithm\x18\x04 \x01(\x0e2&.sigil.agent.v1.ManagementKeyAlgorithmR\x10currentAlgorithm\x12K\n" +
 	"\rnew_algorithm\x18\x05 \x01(\x0e2&.sigil.agent.v1.ManagementKeyAlgorithmR\fnewAlgorithm\x12,\n" +
-	"\x12new_management_key\x18\x06 \x01(\fR\x10newManagementKey\"\xb9\x03\n" +
+	"\x12new_management_key\x18\x06 \x01(\fR\x10newManagementKey\x12>\n" +
+	"\amanaged\x18\a \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"\xf9\x03\n" +
 	"\x15GeneratePivKeyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12%\n" +
@@ -3938,7 +4229,8 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\talgorithm\x18\x06 \x01(\x0e2).sigil.agent.v1.PivKeyGenerationAlgorithmR\talgorithm\x128\n" +
 	"\n" +
 	"pin_policy\x18\a \x01(\x0e2\x19.sigil.agent.v1.PinPolicyR\tpinPolicy\x12>\n" +
-	"\ftouch_policy\x18\b \x01(\x0e2\x1b.sigil.agent.v1.TouchPolicyR\vtouchPolicy\"O\n" +
+	"\ftouch_policy\x18\b \x01(\x0e2\x1b.sigil.agent.v1.TouchPolicyR\vtouchPolicy\x12>\n" +
+	"\amanaged\x18\t \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"O\n" +
 	"\x16GeneratePivKeyResponse\x125\n" +
 	"\x17subject_public_key_info\x18\x01 \x01(\fR\x14subjectPublicKeyInfo\"k\n" +
 	"\x13AttestPivKeyRequest\x12\x0e\n" +
@@ -3956,29 +4248,41 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\n" +
 	"subject_dn\x18\x05 \x01(\tR\tsubjectDn\"-\n" +
 	"\x12SignPivCsrResponse\x12\x17\n" +
-	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"\xa5\x02\n" +
+	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"\xe5\x02\n" +
 	"\x1bImportPivCertificateRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12%\n" +
 	"\x0emanagement_key\x18\x03 \x01(\fR\rmanagementKey\x12`\n" +
 	"\x18management_key_algorithm\x18\x04 \x01(\x0e2&.sigil.agent.v1.ManagementKeyAlgorithmR\x16managementKeyAlgorithm\x12\x1b\n" +
 	"\tslot_byte\x18\x05 \x01(\rR\bslotByte\x12'\n" +
-	"\x0fcertificate_der\x18\x06 \x01(\fR\x0ecertificateDer\"\xfc\x01\n" +
+	"\x0fcertificate_der\x18\x06 \x01(\fR\x0ecertificateDer\x12>\n" +
+	"\amanaged\x18\a \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"\xbc\x02\n" +
 	"\x1bDeletePivCertificateRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12%\n" +
 	"\x0emanagement_key\x18\x03 \x01(\fR\rmanagementKey\x12`\n" +
 	"\x18management_key_algorithm\x18\x04 \x01(\x0e2&.sigil.agent.v1.ManagementKeyAlgorithmR\x16managementKeyAlgorithm\x12\x1b\n" +
-	"\tslot_byte\x18\x05 \x01(\rR\bslotByte\"\xf4\x01\n" +
+	"\tslot_byte\x18\x05 \x01(\rR\bslotByte\x12>\n" +
+	"\amanaged\x18\x06 \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"\xb4\x02\n" +
 	"\x13DeletePivKeyRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
 	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12%\n" +
 	"\x0emanagement_key\x18\x03 \x01(\fR\rmanagementKey\x12`\n" +
 	"\x18management_key_algorithm\x18\x04 \x01(\x0e2&.sigil.agent.v1.ManagementKeyAlgorithmR\x16managementKeyAlgorithm\x12\x1b\n" +
-	"\tslot_byte\x18\x05 \x01(\rR\bslotByte\"H\n" +
+	"\tslot_byte\x18\x05 \x01(\rR\bslotByte\x12>\n" +
+	"\amanaged\x18\x06 \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"H\n" +
 	"\x0fResetPivRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12%\n" +
-	"\x0econfirm_serial\x18\x02 \x01(\tR\rconfirmSerial\"S\n" +
+	"\x0econfirm_serial\x18\x02 \x01(\tR\rconfirmSerial\"\x96\x01\n" +
+	"\x1bInitializeManagedPivRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
+	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12>\n" +
+	"\amanaged\x18\x03 \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\"\xcf\x01\n" +
+	"\x1dRotateManagedPivSecretRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
+	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12>\n" +
+	"\amanaged\x18\x03 \x01(\v2$.sigil.agent.v1.ManagedAuthorizationR\amanaged\x125\n" +
+	"\x04kind\x18\x04 \x01(\x0e2!.sigil.agent.v1.ManagedSecretKindR\x04kind\"S\n" +
 	"\n" +
 	"AgentError\x12-\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x19.sigil.agent.v1.ErrorKindR\x04kind\x12\x16\n" +
@@ -4044,7 +4348,11 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x19PivKeyGenerationAlgorithm\x12,\n" +
 	"(PIV_KEY_GENERATION_ALGORITHM_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bPIV_KEY_GENERATION_ECC_P256\x10\x01\x12\x1f\n" +
-	"\x1bPIV_KEY_GENERATION_ECC_P384\x10\x02*\xde\x05\n" +
+	"\x1bPIV_KEY_GENERATION_ECC_P384\x10\x02*}\n" +
+	"\x11ManagedSecretKind\x12#\n" +
+	"\x1fMANAGED_SECRET_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17MANAGED_SECRET_KIND_PUK\x10\x01\x12&\n" +
+	"\"MANAGED_SECRET_KIND_MANAGEMENT_KEY\x10\x02*\xb2\x06\n" +
 	"\tErrorKind\x12\x1a\n" +
 	"\x16ERROR_KIND_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16ERROR_DEVICE_NOT_FOUND\x10\x01\x12\x18\n" +
@@ -4074,7 +4382,10 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\vPUK_BLOCKED\x10\x18\x12\x1c\n" +
 	"\x18MANAGEMENT_KEY_INCORRECT\x10\x19\x12\x13\n" +
 	"\x0fDEVICE_MISMATCH\x10\x1a\x12\x19\n" +
-	"\x15PIV_FIPS_NOT_APPROVED\x10\x1b2\xf2\x0f\n" +
+	"\x15PIV_FIPS_NOT_APPROVED\x10\x1b\x12\x1b\n" +
+	"\x17PIV_NOT_FACTORY_DEFAULT\x10\x1c\x12\x1f\n" +
+	"\x1bMANAGED_ROTATION_INCOMPLETE\x10\x1d\x12\x14\n" +
+	"\x10BACKEND_REJECTED\x10\x1e2\xae\x11\n" +
 	"\x05Agent\x12K\n" +
 	"\fGetAgentInfo\x12\x15.sigil.agent.v1.Empty\x1a$.sigil.agent.v1.GetAgentInfoResponse\x12I\n" +
 	"\vListDevices\x12\x15.sigil.agent.v1.Empty\x1a#.sigil.agent.v1.ListDevicesResponse\x12I\n" +
@@ -4101,7 +4412,9 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x14ImportPivCertificate\x12+.sigil.agent.v1.ImportPivCertificateRequest\x1a\x15.sigil.agent.v1.Empty\x12Z\n" +
 	"\x14DeletePivCertificate\x12+.sigil.agent.v1.DeletePivCertificateRequest\x1a\x15.sigil.agent.v1.Empty\x12J\n" +
 	"\fDeletePivKey\x12#.sigil.agent.v1.DeletePivKeyRequest\x1a\x15.sigil.agent.v1.Empty\x12B\n" +
-	"\bResetPiv\x12\x1f.sigil.agent.v1.ResetPivRequest\x1a\x15.sigil.agent.v1.EmptyB>Z<github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1b\x06proto3"
+	"\bResetPiv\x12\x1f.sigil.agent.v1.ResetPivRequest\x1a\x15.sigil.agent.v1.Empty\x12Z\n" +
+	"\x14InitializeManagedPiv\x12+.sigil.agent.v1.InitializeManagedPivRequest\x1a\x15.sigil.agent.v1.Empty\x12^\n" +
+	"\x16RotateManagedPivSecret\x12-.sigil.agent.v1.RotateManagedPivSecretRequest\x1a\x15.sigil.agent.v1.EmptyB>Z<github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_sigil_agent_v1_agent_proto_rawDescOnce sync.Once
@@ -4115,8 +4428,8 @@ func file_sigil_agent_v1_agent_proto_rawDescGZIP() []byte {
 	return file_sigil_agent_v1_agent_proto_rawDescData
 }
 
-var file_sigil_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_sigil_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
+var file_sigil_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
+var file_sigil_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
 var file_sigil_agent_v1_agent_proto_goTypes = []any{
 	(Transport)(0),                        // 0: sigil.agent.v1.Transport
 	(Application)(0),                      // 1: sigil.agent.v1.Application
@@ -4127,57 +4440,61 @@ var file_sigil_agent_v1_agent_proto_goTypes = []any{
 	(KeyOrigin)(0),                        // 6: sigil.agent.v1.KeyOrigin
 	(ManagementKeyAlgorithm)(0),           // 7: sigil.agent.v1.ManagementKeyAlgorithm
 	(PivKeyGenerationAlgorithm)(0),        // 8: sigil.agent.v1.PivKeyGenerationAlgorithm
-	(ErrorKind)(0),                        // 9: sigil.agent.v1.ErrorKind
-	(*Empty)(nil),                         // 10: sigil.agent.v1.Empty
-	(*Caller)(nil),                        // 11: sigil.agent.v1.Caller
-	(*GetAgentInfoResponse)(nil),          // 12: sigil.agent.v1.GetAgentInfoResponse
-	(*FirmwareVersion)(nil),               // 13: sigil.agent.v1.FirmwareVersion
-	(*DeviceInfo)(nil),                    // 14: sigil.agent.v1.DeviceInfo
-	(*DeviceRequest)(nil),                 // 15: sigil.agent.v1.DeviceRequest
-	(*SetEnabledApplicationsRequest)(nil), // 16: sigil.agent.v1.SetEnabledApplicationsRequest
-	(*GetDeviceRequest)(nil),              // 17: sigil.agent.v1.GetDeviceRequest
-	(*ListDevicesResponse)(nil),           // 18: sigil.agent.v1.ListDevicesResponse
-	(*DeviceEvent)(nil),                   // 19: sigil.agent.v1.DeviceEvent
-	(*FidoStatus)(nil),                    // 20: sigil.agent.v1.FidoStatus
-	(*PinRequest)(nil),                    // 21: sigil.agent.v1.PinRequest
-	(*DiscoverableCredential)(nil),        // 22: sigil.agent.v1.DiscoverableCredential
-	(*DiscoverableCredentialList)(nil),    // 23: sigil.agent.v1.DiscoverableCredentialList
-	(*Fingerprint)(nil),                   // 24: sigil.agent.v1.Fingerprint
-	(*FingerprintList)(nil),               // 25: sigil.agent.v1.FingerprintList
-	(*EnrollFingerprintRequest)(nil),      // 26: sigil.agent.v1.EnrollFingerprintRequest
-	(*FingerprintProgress)(nil),           // 27: sigil.agent.v1.FingerprintProgress
-	(*EnrollFingerprintEvent)(nil),        // 28: sigil.agent.v1.EnrollFingerprintEvent
-	(*RemoveFingerprintRequest)(nil),      // 29: sigil.agent.v1.RemoveFingerprintRequest
-	(*PivAlgorithm)(nil),                  // 30: sigil.agent.v1.PivAlgorithm
-	(*PivKeyMetadata)(nil),                // 31: sigil.agent.v1.PivKeyMetadata
-	(*KeyStatus)(nil),                     // 32: sigil.agent.v1.KeyStatus
-	(*CertificateSummary)(nil),            // 33: sigil.agent.v1.CertificateSummary
-	(*PivSlotInfo)(nil),                   // 34: sigil.agent.v1.PivSlotInfo
-	(*PivSlotInfoList)(nil),               // 35: sigil.agent.v1.PivSlotInfoList
-	(*RetryStatus)(nil),                   // 36: sigil.agent.v1.RetryStatus
-	(*ManagementKeyStatus)(nil),           // 37: sigil.agent.v1.ManagementKeyStatus
-	(*PivInfo)(nil),                       // 38: sigil.agent.v1.PivInfo
-	(*GetPivCertificateRequest)(nil),      // 39: sigil.agent.v1.GetPivCertificateRequest
-	(*GetPivCertificateResponse)(nil),     // 40: sigil.agent.v1.GetPivCertificateResponse
-	(*ChangePivPinRequest)(nil),           // 41: sigil.agent.v1.ChangePivPinRequest
-	(*ChangePivPukRequest)(nil),           // 42: sigil.agent.v1.ChangePivPukRequest
-	(*UnblockPivPinRequest)(nil),          // 43: sigil.agent.v1.UnblockPivPinRequest
-	(*ChangePivManagementKeyRequest)(nil), // 44: sigil.agent.v1.ChangePivManagementKeyRequest
-	(*GeneratePivKeyRequest)(nil),         // 45: sigil.agent.v1.GeneratePivKeyRequest
-	(*GeneratePivKeyResponse)(nil),        // 46: sigil.agent.v1.GeneratePivKeyResponse
-	(*AttestPivKeyRequest)(nil),           // 47: sigil.agent.v1.AttestPivKeyRequest
-	(*AttestPivKeyResponse)(nil),          // 48: sigil.agent.v1.AttestPivKeyResponse
-	(*SignPivCsrRequest)(nil),             // 49: sigil.agent.v1.SignPivCsrRequest
-	(*SignPivCsrResponse)(nil),            // 50: sigil.agent.v1.SignPivCsrResponse
-	(*ImportPivCertificateRequest)(nil),   // 51: sigil.agent.v1.ImportPivCertificateRequest
-	(*DeletePivCertificateRequest)(nil),   // 52: sigil.agent.v1.DeletePivCertificateRequest
-	(*DeletePivKeyRequest)(nil),           // 53: sigil.agent.v1.DeletePivKeyRequest
-	(*ResetPivRequest)(nil),               // 54: sigil.agent.v1.ResetPivRequest
-	(*AgentError)(nil),                    // 55: sigil.agent.v1.AgentError
+	(ManagedSecretKind)(0),                // 9: sigil.agent.v1.ManagedSecretKind
+	(ErrorKind)(0),                        // 10: sigil.agent.v1.ErrorKind
+	(*Empty)(nil),                         // 11: sigil.agent.v1.Empty
+	(*Caller)(nil),                        // 12: sigil.agent.v1.Caller
+	(*GetAgentInfoResponse)(nil),          // 13: sigil.agent.v1.GetAgentInfoResponse
+	(*FirmwareVersion)(nil),               // 14: sigil.agent.v1.FirmwareVersion
+	(*DeviceInfo)(nil),                    // 15: sigil.agent.v1.DeviceInfo
+	(*DeviceRequest)(nil),                 // 16: sigil.agent.v1.DeviceRequest
+	(*SetEnabledApplicationsRequest)(nil), // 17: sigil.agent.v1.SetEnabledApplicationsRequest
+	(*GetDeviceRequest)(nil),              // 18: sigil.agent.v1.GetDeviceRequest
+	(*ListDevicesResponse)(nil),           // 19: sigil.agent.v1.ListDevicesResponse
+	(*DeviceEvent)(nil),                   // 20: sigil.agent.v1.DeviceEvent
+	(*FidoStatus)(nil),                    // 21: sigil.agent.v1.FidoStatus
+	(*PinRequest)(nil),                    // 22: sigil.agent.v1.PinRequest
+	(*DiscoverableCredential)(nil),        // 23: sigil.agent.v1.DiscoverableCredential
+	(*DiscoverableCredentialList)(nil),    // 24: sigil.agent.v1.DiscoverableCredentialList
+	(*Fingerprint)(nil),                   // 25: sigil.agent.v1.Fingerprint
+	(*FingerprintList)(nil),               // 26: sigil.agent.v1.FingerprintList
+	(*EnrollFingerprintRequest)(nil),      // 27: sigil.agent.v1.EnrollFingerprintRequest
+	(*FingerprintProgress)(nil),           // 28: sigil.agent.v1.FingerprintProgress
+	(*EnrollFingerprintEvent)(nil),        // 29: sigil.agent.v1.EnrollFingerprintEvent
+	(*RemoveFingerprintRequest)(nil),      // 30: sigil.agent.v1.RemoveFingerprintRequest
+	(*PivAlgorithm)(nil),                  // 31: sigil.agent.v1.PivAlgorithm
+	(*PivKeyMetadata)(nil),                // 32: sigil.agent.v1.PivKeyMetadata
+	(*KeyStatus)(nil),                     // 33: sigil.agent.v1.KeyStatus
+	(*CertificateSummary)(nil),            // 34: sigil.agent.v1.CertificateSummary
+	(*PivSlotInfo)(nil),                   // 35: sigil.agent.v1.PivSlotInfo
+	(*PivSlotInfoList)(nil),               // 36: sigil.agent.v1.PivSlotInfoList
+	(*RetryStatus)(nil),                   // 37: sigil.agent.v1.RetryStatus
+	(*ManagementKeyStatus)(nil),           // 38: sigil.agent.v1.ManagementKeyStatus
+	(*PivInfo)(nil),                       // 39: sigil.agent.v1.PivInfo
+	(*GetPivCertificateRequest)(nil),      // 40: sigil.agent.v1.GetPivCertificateRequest
+	(*GetPivCertificateResponse)(nil),     // 41: sigil.agent.v1.GetPivCertificateResponse
+	(*ChangePivPinRequest)(nil),           // 42: sigil.agent.v1.ChangePivPinRequest
+	(*ChangePivPukRequest)(nil),           // 43: sigil.agent.v1.ChangePivPukRequest
+	(*ManagedAuthorization)(nil),          // 44: sigil.agent.v1.ManagedAuthorization
+	(*UnblockPivPinRequest)(nil),          // 45: sigil.agent.v1.UnblockPivPinRequest
+	(*ChangePivManagementKeyRequest)(nil), // 46: sigil.agent.v1.ChangePivManagementKeyRequest
+	(*GeneratePivKeyRequest)(nil),         // 47: sigil.agent.v1.GeneratePivKeyRequest
+	(*GeneratePivKeyResponse)(nil),        // 48: sigil.agent.v1.GeneratePivKeyResponse
+	(*AttestPivKeyRequest)(nil),           // 49: sigil.agent.v1.AttestPivKeyRequest
+	(*AttestPivKeyResponse)(nil),          // 50: sigil.agent.v1.AttestPivKeyResponse
+	(*SignPivCsrRequest)(nil),             // 51: sigil.agent.v1.SignPivCsrRequest
+	(*SignPivCsrResponse)(nil),            // 52: sigil.agent.v1.SignPivCsrResponse
+	(*ImportPivCertificateRequest)(nil),   // 53: sigil.agent.v1.ImportPivCertificateRequest
+	(*DeletePivCertificateRequest)(nil),   // 54: sigil.agent.v1.DeletePivCertificateRequest
+	(*DeletePivKeyRequest)(nil),           // 55: sigil.agent.v1.DeletePivKeyRequest
+	(*ResetPivRequest)(nil),               // 56: sigil.agent.v1.ResetPivRequest
+	(*InitializeManagedPivRequest)(nil),   // 57: sigil.agent.v1.InitializeManagedPivRequest
+	(*RotateManagedPivSecretRequest)(nil), // 58: sigil.agent.v1.RotateManagedPivSecretRequest
+	(*AgentError)(nil),                    // 59: sigil.agent.v1.AgentError
 }
 var file_sigil_agent_v1_agent_proto_depIdxs = []int32{
-	11, // 0: sigil.agent.v1.GetAgentInfoResponse.caller:type_name -> sigil.agent.v1.Caller
-	13, // 1: sigil.agent.v1.DeviceInfo.firmware:type_name -> sigil.agent.v1.FirmwareVersion
+	12, // 0: sigil.agent.v1.GetAgentInfoResponse.caller:type_name -> sigil.agent.v1.Caller
+	14, // 1: sigil.agent.v1.DeviceInfo.firmware:type_name -> sigil.agent.v1.FirmwareVersion
 	0,  // 2: sigil.agent.v1.DeviceInfo.connection:type_name -> sigil.agent.v1.Transport
 	0,  // 3: sigil.agent.v1.DeviceInfo.transports:type_name -> sigil.agent.v1.Transport
 	1,  // 4: sigil.agent.v1.DeviceInfo.applications:type_name -> sigil.agent.v1.Application
@@ -4190,93 +4507,107 @@ var file_sigil_agent_v1_agent_proto_depIdxs = []int32{
 	1,  // 11: sigil.agent.v1.DeviceInfo.fips_approved:type_name -> sigil.agent.v1.Application
 	1,  // 12: sigil.agent.v1.SetEnabledApplicationsRequest.usb_enabled:type_name -> sigil.agent.v1.Application
 	1,  // 13: sigil.agent.v1.SetEnabledApplicationsRequest.nfc_enabled:type_name -> sigil.agent.v1.Application
-	14, // 14: sigil.agent.v1.ListDevicesResponse.devices:type_name -> sigil.agent.v1.DeviceInfo
-	14, // 15: sigil.agent.v1.DeviceEvent.connected:type_name -> sigil.agent.v1.DeviceInfo
-	14, // 16: sigil.agent.v1.DeviceEvent.updated:type_name -> sigil.agent.v1.DeviceInfo
-	22, // 17: sigil.agent.v1.DiscoverableCredentialList.credentials:type_name -> sigil.agent.v1.DiscoverableCredential
-	24, // 18: sigil.agent.v1.FingerprintList.fingerprints:type_name -> sigil.agent.v1.Fingerprint
-	27, // 19: sigil.agent.v1.EnrollFingerprintEvent.progress:type_name -> sigil.agent.v1.FingerprintProgress
-	24, // 20: sigil.agent.v1.EnrollFingerprintEvent.result:type_name -> sigil.agent.v1.Fingerprint
+	15, // 14: sigil.agent.v1.ListDevicesResponse.devices:type_name -> sigil.agent.v1.DeviceInfo
+	15, // 15: sigil.agent.v1.DeviceEvent.connected:type_name -> sigil.agent.v1.DeviceInfo
+	15, // 16: sigil.agent.v1.DeviceEvent.updated:type_name -> sigil.agent.v1.DeviceInfo
+	23, // 17: sigil.agent.v1.DiscoverableCredentialList.credentials:type_name -> sigil.agent.v1.DiscoverableCredential
+	25, // 18: sigil.agent.v1.FingerprintList.fingerprints:type_name -> sigil.agent.v1.Fingerprint
+	28, // 19: sigil.agent.v1.EnrollFingerprintEvent.progress:type_name -> sigil.agent.v1.FingerprintProgress
+	25, // 20: sigil.agent.v1.EnrollFingerprintEvent.result:type_name -> sigil.agent.v1.Fingerprint
 	3,  // 21: sigil.agent.v1.PivAlgorithm.kind:type_name -> sigil.agent.v1.PivAlgorithmKind
-	30, // 22: sigil.agent.v1.PivKeyMetadata.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
+	31, // 22: sigil.agent.v1.PivKeyMetadata.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
 	4,  // 23: sigil.agent.v1.PivKeyMetadata.pin_policy:type_name -> sigil.agent.v1.PinPolicy
 	5,  // 24: sigil.agent.v1.PivKeyMetadata.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
 	6,  // 25: sigil.agent.v1.PivKeyMetadata.origin:type_name -> sigil.agent.v1.KeyOrigin
-	31, // 26: sigil.agent.v1.KeyStatus.present:type_name -> sigil.agent.v1.PivKeyMetadata
-	30, // 27: sigil.agent.v1.CertificateSummary.public_key_algorithm:type_name -> sigil.agent.v1.PivAlgorithm
-	33, // 28: sigil.agent.v1.PivSlotInfo.certificate:type_name -> sigil.agent.v1.CertificateSummary
-	32, // 29: sigil.agent.v1.PivSlotInfo.key:type_name -> sigil.agent.v1.KeyStatus
-	34, // 30: sigil.agent.v1.PivSlotInfoList.slots:type_name -> sigil.agent.v1.PivSlotInfo
-	30, // 31: sigil.agent.v1.ManagementKeyStatus.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
+	32, // 26: sigil.agent.v1.KeyStatus.present:type_name -> sigil.agent.v1.PivKeyMetadata
+	31, // 27: sigil.agent.v1.CertificateSummary.public_key_algorithm:type_name -> sigil.agent.v1.PivAlgorithm
+	34, // 28: sigil.agent.v1.PivSlotInfo.certificate:type_name -> sigil.agent.v1.CertificateSummary
+	33, // 29: sigil.agent.v1.PivSlotInfo.key:type_name -> sigil.agent.v1.KeyStatus
+	35, // 30: sigil.agent.v1.PivSlotInfoList.slots:type_name -> sigil.agent.v1.PivSlotInfo
+	31, // 31: sigil.agent.v1.ManagementKeyStatus.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
 	5,  // 32: sigil.agent.v1.ManagementKeyStatus.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
-	13, // 33: sigil.agent.v1.PivInfo.version:type_name -> sigil.agent.v1.FirmwareVersion
-	36, // 34: sigil.agent.v1.PivInfo.pin:type_name -> sigil.agent.v1.RetryStatus
-	36, // 35: sigil.agent.v1.PivInfo.puk:type_name -> sigil.agent.v1.RetryStatus
-	37, // 36: sigil.agent.v1.PivInfo.management_key:type_name -> sigil.agent.v1.ManagementKeyStatus
-	33, // 37: sigil.agent.v1.GetPivCertificateResponse.summary:type_name -> sigil.agent.v1.CertificateSummary
-	7,  // 38: sigil.agent.v1.ChangePivManagementKeyRequest.current_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 39: sigil.agent.v1.ChangePivManagementKeyRequest.new_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 40: sigil.agent.v1.GeneratePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	8,  // 41: sigil.agent.v1.GeneratePivKeyRequest.algorithm:type_name -> sigil.agent.v1.PivKeyGenerationAlgorithm
-	4,  // 42: sigil.agent.v1.GeneratePivKeyRequest.pin_policy:type_name -> sigil.agent.v1.PinPolicy
-	5,  // 43: sigil.agent.v1.GeneratePivKeyRequest.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
-	7,  // 44: sigil.agent.v1.ImportPivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 45: sigil.agent.v1.DeletePivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 46: sigil.agent.v1.DeletePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	9,  // 47: sigil.agent.v1.AgentError.kind:type_name -> sigil.agent.v1.ErrorKind
-	10, // 48: sigil.agent.v1.Agent.GetAgentInfo:input_type -> sigil.agent.v1.Empty
-	10, // 49: sigil.agent.v1.Agent.ListDevices:input_type -> sigil.agent.v1.Empty
-	17, // 50: sigil.agent.v1.Agent.GetDevice:input_type -> sigil.agent.v1.GetDeviceRequest
-	16, // 51: sigil.agent.v1.Agent.SetEnabledApplications:input_type -> sigil.agent.v1.SetEnabledApplicationsRequest
-	10, // 52: sigil.agent.v1.Agent.WatchDevices:input_type -> sigil.agent.v1.Empty
-	15, // 53: sigil.agent.v1.Agent.GetFidoStatus:input_type -> sigil.agent.v1.DeviceRequest
-	21, // 54: sigil.agent.v1.Agent.ListDiscoverableCredentials:input_type -> sigil.agent.v1.PinRequest
-	21, // 55: sigil.agent.v1.Agent.ListFingerprints:input_type -> sigil.agent.v1.PinRequest
-	26, // 56: sigil.agent.v1.Agent.EnrollFingerprint:input_type -> sigil.agent.v1.EnrollFingerprintRequest
-	29, // 57: sigil.agent.v1.Agent.RemoveFingerprint:input_type -> sigil.agent.v1.RemoveFingerprintRequest
-	15, // 58: sigil.agent.v1.Agent.GetPivInfo:input_type -> sigil.agent.v1.DeviceRequest
-	15, // 59: sigil.agent.v1.Agent.ListPivSlots:input_type -> sigil.agent.v1.DeviceRequest
-	39, // 60: sigil.agent.v1.Agent.GetPivCertificate:input_type -> sigil.agent.v1.GetPivCertificateRequest
-	41, // 61: sigil.agent.v1.Agent.ChangePivPin:input_type -> sigil.agent.v1.ChangePivPinRequest
-	42, // 62: sigil.agent.v1.Agent.ChangePivPuk:input_type -> sigil.agent.v1.ChangePivPukRequest
-	43, // 63: sigil.agent.v1.Agent.UnblockPivPin:input_type -> sigil.agent.v1.UnblockPivPinRequest
-	44, // 64: sigil.agent.v1.Agent.ChangePivManagementKey:input_type -> sigil.agent.v1.ChangePivManagementKeyRequest
-	45, // 65: sigil.agent.v1.Agent.GeneratePivKey:input_type -> sigil.agent.v1.GeneratePivKeyRequest
-	47, // 66: sigil.agent.v1.Agent.AttestPivKey:input_type -> sigil.agent.v1.AttestPivKeyRequest
-	49, // 67: sigil.agent.v1.Agent.SignPivCsr:input_type -> sigil.agent.v1.SignPivCsrRequest
-	51, // 68: sigil.agent.v1.Agent.ImportPivCertificate:input_type -> sigil.agent.v1.ImportPivCertificateRequest
-	52, // 69: sigil.agent.v1.Agent.DeletePivCertificate:input_type -> sigil.agent.v1.DeletePivCertificateRequest
-	53, // 70: sigil.agent.v1.Agent.DeletePivKey:input_type -> sigil.agent.v1.DeletePivKeyRequest
-	54, // 71: sigil.agent.v1.Agent.ResetPiv:input_type -> sigil.agent.v1.ResetPivRequest
-	12, // 72: sigil.agent.v1.Agent.GetAgentInfo:output_type -> sigil.agent.v1.GetAgentInfoResponse
-	18, // 73: sigil.agent.v1.Agent.ListDevices:output_type -> sigil.agent.v1.ListDevicesResponse
-	14, // 74: sigil.agent.v1.Agent.GetDevice:output_type -> sigil.agent.v1.DeviceInfo
-	10, // 75: sigil.agent.v1.Agent.SetEnabledApplications:output_type -> sigil.agent.v1.Empty
-	19, // 76: sigil.agent.v1.Agent.WatchDevices:output_type -> sigil.agent.v1.DeviceEvent
-	20, // 77: sigil.agent.v1.Agent.GetFidoStatus:output_type -> sigil.agent.v1.FidoStatus
-	23, // 78: sigil.agent.v1.Agent.ListDiscoverableCredentials:output_type -> sigil.agent.v1.DiscoverableCredentialList
-	25, // 79: sigil.agent.v1.Agent.ListFingerprints:output_type -> sigil.agent.v1.FingerprintList
-	28, // 80: sigil.agent.v1.Agent.EnrollFingerprint:output_type -> sigil.agent.v1.EnrollFingerprintEvent
-	10, // 81: sigil.agent.v1.Agent.RemoveFingerprint:output_type -> sigil.agent.v1.Empty
-	38, // 82: sigil.agent.v1.Agent.GetPivInfo:output_type -> sigil.agent.v1.PivInfo
-	35, // 83: sigil.agent.v1.Agent.ListPivSlots:output_type -> sigil.agent.v1.PivSlotInfoList
-	40, // 84: sigil.agent.v1.Agent.GetPivCertificate:output_type -> sigil.agent.v1.GetPivCertificateResponse
-	10, // 85: sigil.agent.v1.Agent.ChangePivPin:output_type -> sigil.agent.v1.Empty
-	10, // 86: sigil.agent.v1.Agent.ChangePivPuk:output_type -> sigil.agent.v1.Empty
-	10, // 87: sigil.agent.v1.Agent.UnblockPivPin:output_type -> sigil.agent.v1.Empty
-	10, // 88: sigil.agent.v1.Agent.ChangePivManagementKey:output_type -> sigil.agent.v1.Empty
-	46, // 89: sigil.agent.v1.Agent.GeneratePivKey:output_type -> sigil.agent.v1.GeneratePivKeyResponse
-	48, // 90: sigil.agent.v1.Agent.AttestPivKey:output_type -> sigil.agent.v1.AttestPivKeyResponse
-	50, // 91: sigil.agent.v1.Agent.SignPivCsr:output_type -> sigil.agent.v1.SignPivCsrResponse
-	10, // 92: sigil.agent.v1.Agent.ImportPivCertificate:output_type -> sigil.agent.v1.Empty
-	10, // 93: sigil.agent.v1.Agent.DeletePivCertificate:output_type -> sigil.agent.v1.Empty
-	10, // 94: sigil.agent.v1.Agent.DeletePivKey:output_type -> sigil.agent.v1.Empty
-	10, // 95: sigil.agent.v1.Agent.ResetPiv:output_type -> sigil.agent.v1.Empty
-	72, // [72:96] is the sub-list for method output_type
-	48, // [48:72] is the sub-list for method input_type
-	48, // [48:48] is the sub-list for extension type_name
-	48, // [48:48] is the sub-list for extension extendee
-	0,  // [0:48] is the sub-list for field type_name
+	14, // 33: sigil.agent.v1.PivInfo.version:type_name -> sigil.agent.v1.FirmwareVersion
+	37, // 34: sigil.agent.v1.PivInfo.pin:type_name -> sigil.agent.v1.RetryStatus
+	37, // 35: sigil.agent.v1.PivInfo.puk:type_name -> sigil.agent.v1.RetryStatus
+	38, // 36: sigil.agent.v1.PivInfo.management_key:type_name -> sigil.agent.v1.ManagementKeyStatus
+	34, // 37: sigil.agent.v1.GetPivCertificateResponse.summary:type_name -> sigil.agent.v1.CertificateSummary
+	44, // 38: sigil.agent.v1.ChangePivPukRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	44, // 39: sigil.agent.v1.UnblockPivPinRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	7,  // 40: sigil.agent.v1.ChangePivManagementKeyRequest.current_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	7,  // 41: sigil.agent.v1.ChangePivManagementKeyRequest.new_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	44, // 42: sigil.agent.v1.ChangePivManagementKeyRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	7,  // 43: sigil.agent.v1.GeneratePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	8,  // 44: sigil.agent.v1.GeneratePivKeyRequest.algorithm:type_name -> sigil.agent.v1.PivKeyGenerationAlgorithm
+	4,  // 45: sigil.agent.v1.GeneratePivKeyRequest.pin_policy:type_name -> sigil.agent.v1.PinPolicy
+	5,  // 46: sigil.agent.v1.GeneratePivKeyRequest.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
+	44, // 47: sigil.agent.v1.GeneratePivKeyRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	7,  // 48: sigil.agent.v1.ImportPivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	44, // 49: sigil.agent.v1.ImportPivCertificateRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	7,  // 50: sigil.agent.v1.DeletePivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	44, // 51: sigil.agent.v1.DeletePivCertificateRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	7,  // 52: sigil.agent.v1.DeletePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	44, // 53: sigil.agent.v1.DeletePivKeyRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	44, // 54: sigil.agent.v1.InitializeManagedPivRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	44, // 55: sigil.agent.v1.RotateManagedPivSecretRequest.managed:type_name -> sigil.agent.v1.ManagedAuthorization
+	9,  // 56: sigil.agent.v1.RotateManagedPivSecretRequest.kind:type_name -> sigil.agent.v1.ManagedSecretKind
+	10, // 57: sigil.agent.v1.AgentError.kind:type_name -> sigil.agent.v1.ErrorKind
+	11, // 58: sigil.agent.v1.Agent.GetAgentInfo:input_type -> sigil.agent.v1.Empty
+	11, // 59: sigil.agent.v1.Agent.ListDevices:input_type -> sigil.agent.v1.Empty
+	18, // 60: sigil.agent.v1.Agent.GetDevice:input_type -> sigil.agent.v1.GetDeviceRequest
+	17, // 61: sigil.agent.v1.Agent.SetEnabledApplications:input_type -> sigil.agent.v1.SetEnabledApplicationsRequest
+	11, // 62: sigil.agent.v1.Agent.WatchDevices:input_type -> sigil.agent.v1.Empty
+	16, // 63: sigil.agent.v1.Agent.GetFidoStatus:input_type -> sigil.agent.v1.DeviceRequest
+	22, // 64: sigil.agent.v1.Agent.ListDiscoverableCredentials:input_type -> sigil.agent.v1.PinRequest
+	22, // 65: sigil.agent.v1.Agent.ListFingerprints:input_type -> sigil.agent.v1.PinRequest
+	27, // 66: sigil.agent.v1.Agent.EnrollFingerprint:input_type -> sigil.agent.v1.EnrollFingerprintRequest
+	30, // 67: sigil.agent.v1.Agent.RemoveFingerprint:input_type -> sigil.agent.v1.RemoveFingerprintRequest
+	16, // 68: sigil.agent.v1.Agent.GetPivInfo:input_type -> sigil.agent.v1.DeviceRequest
+	16, // 69: sigil.agent.v1.Agent.ListPivSlots:input_type -> sigil.agent.v1.DeviceRequest
+	40, // 70: sigil.agent.v1.Agent.GetPivCertificate:input_type -> sigil.agent.v1.GetPivCertificateRequest
+	42, // 71: sigil.agent.v1.Agent.ChangePivPin:input_type -> sigil.agent.v1.ChangePivPinRequest
+	43, // 72: sigil.agent.v1.Agent.ChangePivPuk:input_type -> sigil.agent.v1.ChangePivPukRequest
+	45, // 73: sigil.agent.v1.Agent.UnblockPivPin:input_type -> sigil.agent.v1.UnblockPivPinRequest
+	46, // 74: sigil.agent.v1.Agent.ChangePivManagementKey:input_type -> sigil.agent.v1.ChangePivManagementKeyRequest
+	47, // 75: sigil.agent.v1.Agent.GeneratePivKey:input_type -> sigil.agent.v1.GeneratePivKeyRequest
+	49, // 76: sigil.agent.v1.Agent.AttestPivKey:input_type -> sigil.agent.v1.AttestPivKeyRequest
+	51, // 77: sigil.agent.v1.Agent.SignPivCsr:input_type -> sigil.agent.v1.SignPivCsrRequest
+	53, // 78: sigil.agent.v1.Agent.ImportPivCertificate:input_type -> sigil.agent.v1.ImportPivCertificateRequest
+	54, // 79: sigil.agent.v1.Agent.DeletePivCertificate:input_type -> sigil.agent.v1.DeletePivCertificateRequest
+	55, // 80: sigil.agent.v1.Agent.DeletePivKey:input_type -> sigil.agent.v1.DeletePivKeyRequest
+	56, // 81: sigil.agent.v1.Agent.ResetPiv:input_type -> sigil.agent.v1.ResetPivRequest
+	57, // 82: sigil.agent.v1.Agent.InitializeManagedPiv:input_type -> sigil.agent.v1.InitializeManagedPivRequest
+	58, // 83: sigil.agent.v1.Agent.RotateManagedPivSecret:input_type -> sigil.agent.v1.RotateManagedPivSecretRequest
+	13, // 84: sigil.agent.v1.Agent.GetAgentInfo:output_type -> sigil.agent.v1.GetAgentInfoResponse
+	19, // 85: sigil.agent.v1.Agent.ListDevices:output_type -> sigil.agent.v1.ListDevicesResponse
+	15, // 86: sigil.agent.v1.Agent.GetDevice:output_type -> sigil.agent.v1.DeviceInfo
+	11, // 87: sigil.agent.v1.Agent.SetEnabledApplications:output_type -> sigil.agent.v1.Empty
+	20, // 88: sigil.agent.v1.Agent.WatchDevices:output_type -> sigil.agent.v1.DeviceEvent
+	21, // 89: sigil.agent.v1.Agent.GetFidoStatus:output_type -> sigil.agent.v1.FidoStatus
+	24, // 90: sigil.agent.v1.Agent.ListDiscoverableCredentials:output_type -> sigil.agent.v1.DiscoverableCredentialList
+	26, // 91: sigil.agent.v1.Agent.ListFingerprints:output_type -> sigil.agent.v1.FingerprintList
+	29, // 92: sigil.agent.v1.Agent.EnrollFingerprint:output_type -> sigil.agent.v1.EnrollFingerprintEvent
+	11, // 93: sigil.agent.v1.Agent.RemoveFingerprint:output_type -> sigil.agent.v1.Empty
+	39, // 94: sigil.agent.v1.Agent.GetPivInfo:output_type -> sigil.agent.v1.PivInfo
+	36, // 95: sigil.agent.v1.Agent.ListPivSlots:output_type -> sigil.agent.v1.PivSlotInfoList
+	41, // 96: sigil.agent.v1.Agent.GetPivCertificate:output_type -> sigil.agent.v1.GetPivCertificateResponse
+	11, // 97: sigil.agent.v1.Agent.ChangePivPin:output_type -> sigil.agent.v1.Empty
+	11, // 98: sigil.agent.v1.Agent.ChangePivPuk:output_type -> sigil.agent.v1.Empty
+	11, // 99: sigil.agent.v1.Agent.UnblockPivPin:output_type -> sigil.agent.v1.Empty
+	11, // 100: sigil.agent.v1.Agent.ChangePivManagementKey:output_type -> sigil.agent.v1.Empty
+	48, // 101: sigil.agent.v1.Agent.GeneratePivKey:output_type -> sigil.agent.v1.GeneratePivKeyResponse
+	50, // 102: sigil.agent.v1.Agent.AttestPivKey:output_type -> sigil.agent.v1.AttestPivKeyResponse
+	52, // 103: sigil.agent.v1.Agent.SignPivCsr:output_type -> sigil.agent.v1.SignPivCsrResponse
+	11, // 104: sigil.agent.v1.Agent.ImportPivCertificate:output_type -> sigil.agent.v1.Empty
+	11, // 105: sigil.agent.v1.Agent.DeletePivCertificate:output_type -> sigil.agent.v1.Empty
+	11, // 106: sigil.agent.v1.Agent.DeletePivKey:output_type -> sigil.agent.v1.Empty
+	11, // 107: sigil.agent.v1.Agent.ResetPiv:output_type -> sigil.agent.v1.Empty
+	11, // 108: sigil.agent.v1.Agent.InitializeManagedPiv:output_type -> sigil.agent.v1.Empty
+	11, // 109: sigil.agent.v1.Agent.RotateManagedPivSecret:output_type -> sigil.agent.v1.Empty
+	84, // [84:110] is the sub-list for method output_type
+	58, // [58:84] is the sub-list for method input_type
+	58, // [58:58] is the sub-list for extension type_name
+	58, // [58:58] is the sub-list for extension extendee
+	0,  // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_sigil_agent_v1_agent_proto_init() }
@@ -4314,8 +4645,8 @@ func file_sigil_agent_v1_agent_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sigil_agent_v1_agent_proto_rawDesc), len(file_sigil_agent_v1_agent_proto_rawDesc)),
-			NumEnums:      10,
-			NumMessages:   46,
+			NumEnums:      11,
+			NumMessages:   49,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

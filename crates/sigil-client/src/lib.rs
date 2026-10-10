@@ -159,6 +159,7 @@ impl AgentClient {
                 expected_serial: expected_serial.to_owned(),
                 old_puk: old_puk.as_bytes().to_vec(),
                 new_puk: new_puk.as_bytes().to_vec(),
+                managed: None,
             }))
             .map(|_| ())
             .map_err(Self::map_status)
@@ -177,6 +178,7 @@ impl AgentClient {
                 expected_serial: expected_serial.to_owned(),
                 puk: puk.as_bytes().to_vec(),
                 new_pin: new_pin.as_bytes().to_vec(),
+                managed: None,
             }))
             .map(|_| ())
             .map_err(Self::map_status)
@@ -198,6 +200,7 @@ impl AgentClient {
                     current_algorithm: management_key_algorithm_to_proto(current.algorithm()),
                     new_algorithm: management_key_algorithm_to_proto(new.algorithm()),
                     new_management_key: new.as_bytes().to_vec(),
+                    managed: None,
                 },
             ))
             .map(|_| ())
@@ -233,6 +236,7 @@ impl AgentClient {
                         },
                         pin_policy: pin_policy_to_proto(configuration.pin_policy),
                         touch_policy: touch_policy_to_proto(configuration.touch_policy),
+                        managed: None,
                     }),
             )
             .map(|response| response.into_inner().subject_public_key_info)
@@ -302,6 +306,7 @@ impl AgentClient {
                         ),
                         slot_byte: u32::from(slot.byte()),
                         certificate_der: certificate_der.to_vec(),
+                        managed: None,
                     }),
             )
             .map(|_| ())
@@ -327,6 +332,7 @@ impl AgentClient {
                             management_key.algorithm(),
                         ),
                         slot_byte: u32::from(slot.byte()),
+                        managed: None,
                     }),
             )
             .map(|_| ())
@@ -349,6 +355,7 @@ impl AgentClient {
                     management_key.algorithm(),
                 ),
                 slot_byte: u32::from(slot.byte()),
+                managed: None,
             }))
             .map(|_| ())
             .map_err(Self::map_status)
@@ -360,6 +367,209 @@ impl AgentClient {
                 id: id.0.clone(),
                 confirm_serial: confirm_serial.to_owned(),
             }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn initialize_managed_piv(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .initialize_managed_piv(v1::InitializeManagedPivRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        managed: Some(managed_authorization(access_token)),
+                    }),
+            )
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn rotate_managed_piv_secret(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        kind: v1::ManagedSecretKind,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().rotate_managed_piv_secret(
+                v1::RotateManagedPivSecretRequest {
+                    id: id.0.clone(),
+                    expected_serial: expected_serial.to_owned(),
+                    managed: Some(managed_authorization(access_token)),
+                    kind: kind as i32,
+                },
+            ))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn generate_piv_key_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        configuration: PivKeyConfiguration,
+        access_token: &str,
+    ) -> Result<Vec<u8>> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .generate_piv_key(v1::GeneratePivKeyRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        management_key: Vec::new(),
+                        management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                        slot_byte: u32::from(configuration.slot.byte()),
+                        algorithm: match configuration.algorithm {
+                            sigil_core::PivKeyAlgorithm::EccP256 => {
+                                v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP256 as i32
+                            }
+                            sigil_core::PivKeyAlgorithm::EccP384 => {
+                                v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP384 as i32
+                            }
+                        },
+                        pin_policy: pin_policy_to_proto(configuration.pin_policy),
+                        touch_policy: touch_policy_to_proto(configuration.touch_policy),
+                        managed: Some(managed_authorization(access_token)),
+                    }),
+            )
+            .map(|response| response.into_inner().subject_public_key_info)
+            .map_err(Self::map_status)
+    }
+
+    pub fn import_piv_certificate_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+        certificate_der: &[u8],
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .import_piv_certificate(v1::ImportPivCertificateRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        management_key: Vec::new(),
+                        management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                        slot_byte: u32::from(slot.byte()),
+                        certificate_der: certificate_der.to_vec(),
+                        managed: Some(managed_authorization(access_token)),
+                    }),
+            )
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn delete_piv_certificate_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .delete_piv_certificate(v1::DeletePivCertificateRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        management_key: Vec::new(),
+                        management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                        slot_byte: u32::from(slot.byte()),
+                        managed: Some(managed_authorization(access_token)),
+                    }),
+            )
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn delete_piv_key_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        slot: PivSlot,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().delete_piv_key(v1::DeletePivKeyRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                management_key: Vec::new(),
+                management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                slot_byte: u32::from(slot.byte()),
+                managed: Some(managed_authorization(access_token)),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn unblock_piv_pin_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        new_pin: &PivPin,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().unblock_piv_pin(v1::UnblockPivPinRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                puk: Vec::new(),
+                new_pin: new_pin.as_bytes().to_vec(),
+                managed: Some(managed_authorization(access_token)),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn change_piv_puk_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().change_piv_puk(v1::ChangePivPukRequest {
+                id: id.0.clone(),
+                expected_serial: expected_serial.to_owned(),
+                old_puk: Vec::new(),
+                new_puk: Vec::new(),
+                managed: Some(managed_authorization(access_token)),
+            }))
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+
+    pub fn change_piv_management_key_managed(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        access_token: &str,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.rpc.clone().change_piv_management_key(
+                v1::ChangePivManagementKeyRequest {
+                    id: id.0.clone(),
+                    expected_serial: expected_serial.to_owned(),
+                    current_management_key: Vec::new(),
+                    current_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                    new_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                    new_management_key: Vec::new(),
+                    managed: Some(managed_authorization(access_token)),
+                },
+            ))
             .map(|_| ())
             .map_err(Self::map_status)
     }
@@ -791,6 +1001,12 @@ fn application_to_proto(application: &Application) -> i32 {
         Application::OpenPgp => v1::Application::OpenPgp as i32,
         Application::Oath => v1::Application::Oath as i32,
         Application::YubiHsmAuth => v1::Application::YubiHsmAuth as i32,
+    }
+}
+
+fn managed_authorization(access_token: &str) -> v1::ManagedAuthorization {
+    v1::ManagedAuthorization {
+        access_token: access_token.to_owned(),
     }
 }
 
