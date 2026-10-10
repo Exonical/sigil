@@ -689,6 +689,8 @@ fn agent_error(value: &core::CredentialError) -> v1::AgentError {
         core::CredentialError::PivNotFactoryDefault => (28, String::new()),
         core::CredentialError::ManagedRotationIncomplete(detail) => (29, detail.clone()),
         core::CredentialError::BackendRejected(detail) => (30, detail.clone()),
+        core::CredentialError::PinComplexity => (31, "pin".into()),
+        core::CredentialError::PukComplexity => (31, "puk".into()),
     };
     v1::AgentError { kind, detail }
 }
@@ -737,6 +739,8 @@ fn credential_error(value: v1::AgentError) -> core::CredentialError {
         28 => core::CredentialError::PivNotFactoryDefault,
         29 => core::CredentialError::ManagedRotationIncomplete(value.detail),
         30 => core::CredentialError::BackendRejected(value.detail),
+        31 if value.detail == "puk" => core::CredentialError::PukComplexity,
+        31 => core::CredentialError::PinComplexity,
         _ => core::CredentialError::AgentUnavailable("agent returned an unknown error".into()),
     }
 }
@@ -768,6 +772,8 @@ fn status_code(value: &core::CredentialError) -> Code {
         | core::CredentialError::DeviceMismatch
         | core::CredentialError::PivFipsNotApproved
         | core::CredentialError::PivNotFactoryDefault
+        | core::CredentialError::PinComplexity
+        | core::CredentialError::PukComplexity
         | core::CredentialError::ManagedRotationIncomplete(_) => Code::FailedPrecondition,
         core::CredentialError::BackendRejected(_) => Code::PermissionDenied,
         core::CredentialError::InvalidSlot(_) => Code::InvalidArgument,
@@ -783,6 +789,21 @@ pub fn status_from_error(error: &core::CredentialError) -> Status {
         error.to_string(),
         bytes::Bytes::from(details),
     )
+}
+
+/// Audit name for a status: the Sigil `ErrorKind` when the status carries an `AgentError`,
+/// otherwise the gRPC code name. Empty for success.
+pub fn audit_error_code(result: Option<&Status>) -> String {
+    let Some(status) = result else {
+        return String::new();
+    };
+    if let Ok(error) = v1::AgentError::decode(status.details())
+        && error.kind != 0
+        && let Ok(kind) = v1::ErrorKind::try_from(error.kind)
+    {
+        return kind.as_str_name().to_owned();
+    }
+    format!("{:?}", status.code())
 }
 
 pub fn error_from_status(status: &Status) -> core::CredentialError {
@@ -961,6 +982,8 @@ mod tests {
             core::CredentialError::PivNotFactoryDefault,
             core::CredentialError::ManagedRotationIncomplete("rotation".into()),
             core::CredentialError::BackendRejected("denied by backend".into()),
+            core::CredentialError::PinComplexity,
+            core::CredentialError::PukComplexity,
         ];
         for error in errors {
             let status = status_from_error(&error);
@@ -979,6 +1002,8 @@ mod tests {
                     | core::CredentialError::DeviceMismatch
                     | core::CredentialError::PivFipsNotApproved
                     | core::CredentialError::PivNotFactoryDefault
+                    | core::CredentialError::PinComplexity
+                    | core::CredentialError::PukComplexity
                     | core::CredentialError::ManagedRotationIncomplete(_)
             ) {
                 assert_eq!(status.code(), Code::FailedPrecondition);

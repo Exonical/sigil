@@ -176,6 +176,14 @@ pub enum CredentialError {
     PinBlocked,
     #[error("PIV PUK is blocked")]
     PukBlocked,
+    #[error(
+        "The key rejected this PIN as too easy to guess (PIN complexity is enforced). Choose a less common PIN."
+    )]
+    PinComplexity,
+    #[error(
+        "The key rejected this PUK as too easy to guess (PIN complexity is enforced). Choose a less common PUK."
+    )]
+    PukComplexity,
     #[error("managed setup requires the factory-default PUK and management key; reset PIV first")]
     PivNotFactoryDefault,
     #[error("PIV management key is incorrect")]

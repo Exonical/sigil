@@ -92,6 +92,20 @@ fn transmit_pin_command<T: CardTransport>(
     }
 }
 
+/// PIN complexity (firmware 5.7+) rejects a new PIN or PUK with SW 6985. Only change and
+/// unblock commands can produce it; verification keeps the generic card status.
+fn transmit_pin_change<T: CardTransport>(
+    transport: &mut T,
+    command: &[u8],
+    puk: bool,
+    complexity: CredentialError,
+) -> Result<()> {
+    match transmit_pin_command(transport, command, puk) {
+        Err(CredentialError::CardStatus(0x6985)) => Err(complexity),
+        other => other,
+    }
+}
+
 fn pin_verify_command(pin: &PivPin) -> Vec<u8> {
     let padded = pin.padded();
     let mut command = vec![0x00, 0x20, 0x00, 0x80, 0x08];
@@ -203,7 +217,12 @@ pub fn change_pin_selected<T: CardTransport>(
     let old = old_pin.padded();
     let new = new_pin.padded();
     let command = change_reference_data_command(0x80, old.as_slice(), new.as_slice())?;
-    transmit_pin_command(transport, command.as_slice(), false)
+    transmit_pin_change(
+        transport,
+        command.as_slice(),
+        false,
+        CredentialError::PinComplexity,
+    )
 }
 
 pub fn change_puk<T: CardTransport>(
@@ -223,7 +242,12 @@ pub fn change_puk_selected<T: CardTransport>(
     let old = old_puk.padded();
     let new = new_puk.padded();
     let command = change_reference_data_command(0x81, old.as_slice(), new.as_slice())?;
-    transmit_pin_command(transport, command.as_slice(), true)
+    transmit_pin_change(
+        transport,
+        command.as_slice(),
+        true,
+        CredentialError::PukComplexity,
+    )
 }
 
 pub fn unblock_pin<T: CardTransport>(
@@ -243,7 +267,12 @@ pub fn unblock_pin_selected<T: CardTransport>(
     let puk = puk.padded();
     let pin = new_pin.padded();
     let command = reset_retry_counter_command(puk.as_slice(), pin.as_slice())?;
-    transmit_pin_command(transport, command.as_slice(), true)
+    transmit_pin_change(
+        transport,
+        command.as_slice(),
+        true,
+        CredentialError::PinComplexity,
+    )
 }
 
 pub fn authenticate_management_key<T: CardTransport>(
@@ -904,6 +933,89 @@ mod tests {
         ]);
         change_pin(&mut change, &pin, &new_pin).unwrap();
         change_puk(&mut change, &old_puk, &new_puk).unwrap();
+    }
+
+    #[test]
+    fn pin_complexity_is_typed_only_for_pin_and_puk_changes() {
+        let pin = PivPin::new(b"123456".to_vec()).unwrap();
+        let new_pin = PivPin::new(b"654321".to_vec()).unwrap();
+        let puk = PivPuk::new(b"12345678".to_vec()).unwrap();
+        let new_puk = PivPuk::new(b"87654321".to_vec()).unwrap();
+        let select_apdu = vec![0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0, 0, 3, 8];
+
+        let mut change_pin_rejected = ScriptedTransport(vec![
+            (select_apdu.clone(), response(&[], 0x9000)),
+            (
+                vec![
+                    0x00, 0x24, 0x00, 0x80, 0x10, b'1', b'2', b'3', b'4', b'5', b'6', 0xff, 0xff,
+                    b'6', b'5', b'4', b'3', b'2', b'1', 0xff, 0xff,
+                ],
+                response(&[], 0x6985),
+            ),
+        ]);
+        assert_eq!(
+            change_pin(&mut change_pin_rejected, &pin, &new_pin),
+            Err(CredentialError::PinComplexity)
+        );
+
+        let mut change_puk_rejected = ScriptedTransport(vec![
+            (select_apdu.clone(), response(&[], 0x9000)),
+            (
+                vec![
+                    0x00, 0x24, 0x00, 0x81, 0x10, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8',
+                    b'8', b'7', b'6', b'5', b'4', b'3', b'2', b'1',
+                ],
+                response(&[], 0x6985),
+            ),
+        ]);
+        assert_eq!(
+            change_puk(&mut change_puk_rejected, &puk, &new_puk),
+            Err(CredentialError::PukComplexity)
+        );
+
+        let mut unblock_rejected = ScriptedTransport(vec![
+            (select_apdu.clone(), response(&[], 0x9000)),
+            (
+                vec![
+                    0x00, 0x2c, 0x00, 0x80, 0x10, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8',
+                    b'6', b'5', b'4', b'3', b'2', b'1', 0xff, 0xff,
+                ],
+                response(&[], 0x6985),
+            ),
+        ]);
+        assert_eq!(
+            unblock_pin(&mut unblock_rejected, &puk, &new_pin),
+            Err(CredentialError::PinComplexity)
+        );
+
+        let mut verify_unchanged = ScriptedTransport(vec![
+            (select_apdu.clone(), response(&[], 0x9000)),
+            (
+                vec![
+                    0x00, 0x20, 0x00, 0x80, 0x08, b'1', b'2', b'3', b'4', b'5', b'6', 0xff, 0xff,
+                ],
+                response(&[], 0x6985),
+            ),
+        ]);
+        assert_eq!(
+            verify_pin(&mut verify_unchanged, &pin),
+            Err(CredentialError::CardStatus(0x6985))
+        );
+
+        let mut other_status = ScriptedTransport(vec![
+            (select_apdu, response(&[], 0x9000)),
+            (
+                vec![
+                    0x00, 0x24, 0x00, 0x80, 0x10, b'1', b'2', b'3', b'4', b'5', b'6', 0xff, 0xff,
+                    b'6', b'5', b'4', b'3', b'2', b'1', 0xff, 0xff,
+                ],
+                response(&[], 0x6a80),
+            ),
+        ]);
+        assert_eq!(
+            change_pin(&mut other_status, &pin, &new_pin),
+            Err(CredentialError::CardStatus(0x6a80))
+        );
     }
 
     #[test]

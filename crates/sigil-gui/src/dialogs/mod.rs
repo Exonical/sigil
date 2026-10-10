@@ -1,4 +1,5 @@
 mod factory_reset;
+mod managed_dialog;
 mod piv;
 mod toggle_applications;
 
@@ -23,6 +24,9 @@ pub fn DialogHost() -> Element {
         }
         (Some(DialogKind::Piv(action)), Some(device)) => {
             rsx! { piv::PivDialog { device, action } }
+        }
+        (Some(DialogKind::Managed(action)), Some(device)) => {
+            rsx! { managed_dialog::ManagedDialog { device, action } }
         }
         _ => rsx! {},
     }

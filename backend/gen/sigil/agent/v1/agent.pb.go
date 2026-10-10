@@ -620,6 +620,7 @@ const (
 	ErrorKind_PIV_NOT_FACTORY_DEFAULT      ErrorKind = 28
 	ErrorKind_MANAGED_ROTATION_INCOMPLETE  ErrorKind = 29
 	ErrorKind_BACKEND_REJECTED             ErrorKind = 30
+	ErrorKind_PIN_COMPLEXITY_VIOLATION     ErrorKind = 31
 )
 
 // Enum value maps for ErrorKind.
@@ -656,6 +657,7 @@ var (
 		28: "PIV_NOT_FACTORY_DEFAULT",
 		29: "MANAGED_ROTATION_INCOMPLETE",
 		30: "BACKEND_REJECTED",
+		31: "PIN_COMPLEXITY_VIOLATION",
 	}
 	ErrorKind_value = map[string]int32{
 		"ERROR_KIND_UNSPECIFIED":       0,
@@ -689,6 +691,7 @@ var (
 		"PIV_NOT_FACTORY_DEFAULT":      28,
 		"MANAGED_ROTATION_INCOMPLETE":  29,
 		"BACKEND_REJECTED":             30,
+		"PIN_COMPLEXITY_VIOLATION":     31,
 	}
 )
 
@@ -4352,7 +4355,7 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x11ManagedSecretKind\x12#\n" +
 	"\x1fMANAGED_SECRET_KIND_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17MANAGED_SECRET_KIND_PUK\x10\x01\x12&\n" +
-	"\"MANAGED_SECRET_KIND_MANAGEMENT_KEY\x10\x02*\xb2\x06\n" +
+	"\"MANAGED_SECRET_KIND_MANAGEMENT_KEY\x10\x02*\xd0\x06\n" +
 	"\tErrorKind\x12\x1a\n" +
 	"\x16ERROR_KIND_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16ERROR_DEVICE_NOT_FOUND\x10\x01\x12\x18\n" +
@@ -4385,7 +4388,8 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x15PIV_FIPS_NOT_APPROVED\x10\x1b\x12\x1b\n" +
 	"\x17PIV_NOT_FACTORY_DEFAULT\x10\x1c\x12\x1f\n" +
 	"\x1bMANAGED_ROTATION_INCOMPLETE\x10\x1d\x12\x14\n" +
-	"\x10BACKEND_REJECTED\x10\x1e2\xae\x11\n" +
+	"\x10BACKEND_REJECTED\x10\x1e\x12\x1c\n" +
+	"\x18PIN_COMPLEXITY_VIOLATION\x10\x1f2\xae\x11\n" +
 	"\x05Agent\x12K\n" +
 	"\fGetAgentInfo\x12\x15.sigil.agent.v1.Empty\x1a$.sigil.agent.v1.GetAgentInfoResponse\x12I\n" +
 	"\vListDevices\x12\x15.sigil.agent.v1.Empty\x1a#.sigil.agent.v1.ListDevicesResponse\x12I\n" +

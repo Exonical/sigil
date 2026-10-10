@@ -307,6 +307,7 @@ pub(crate) fn managed_initialize(
                 CredentialError::PukIncorrect { .. }
                     | CredentialError::CardStatus(_)
                     | CredentialError::PivFipsNotApproved
+                    | CredentialError::PukComplexity
             ) {
                 return Err(puk_error);
             }

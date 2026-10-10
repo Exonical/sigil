@@ -114,7 +114,7 @@ impl AgentService {
             .unwrap_or_else(CallerIdentity::rejected);
         if let Err(error) = caller::authorize(&identity, self.policy) {
             let status = status_from_error(&error);
-            audit_static(&identity, rpc, device_id, false, Some(status.code()));
+            audit_static(&identity, rpc, device_id, false, Some(&status));
             return Err(status);
         }
         Ok(identity)
@@ -699,6 +699,8 @@ fn card_failure_is_definite(error: &CredentialError) -> bool {
             | CredentialError::PivUnavailable
             | CredentialError::PivFipsNotApproved
             | CredentialError::PivNotFactoryDefault
+            | CredentialError::PinComplexity
+            | CredentialError::PukComplexity
     )
 }
 
@@ -961,7 +963,7 @@ impl v1::agent_server::Agent for AgentService {
                 "EnrollFingerprint",
                 &device_id,
                 false,
-                Some(status.code()),
+                Some(status),
             );
         })?;
         let (sender, receiver) = mpsc::channel(32);
@@ -996,7 +998,7 @@ impl v1::agent_server::Agent for AgentService {
                         "EnrollFingerprint",
                         &audit_id,
                         false,
-                        Some(status.code()),
+                        Some(&status),
                     );
                 }
             }
@@ -1010,7 +1012,7 @@ impl v1::agent_server::Agent for AgentService {
                     "EnrollFingerprint",
                     &device_id,
                     false,
-                    Some(status.code()),
+                    Some(&status),
                 );
             }
         });
@@ -1032,7 +1034,7 @@ impl v1::agent_server::Agent for AgentService {
                 "RemoveFingerprint",
                 &device_id,
                 false,
-                Some(status.code()),
+                Some(status),
             );
         })?;
         let credentials = self.credentials.clone();
@@ -1090,7 +1092,7 @@ impl v1::agent_server::Agent for AgentService {
                     "GetPivCertificate",
                     &device_id,
                     false,
-                    Some(status.code()),
+                    Some(&status),
                 );
                 return Err(status);
             }
@@ -1102,7 +1104,7 @@ impl v1::agent_server::Agent for AgentService {
                 "GetPivCertificate",
                 &device_id,
                 false,
-                Some(status.code()),
+                Some(&status),
             );
             return Err(status);
         };
@@ -2741,7 +2743,7 @@ fn audit_static(
     rpc: &'static str,
     device_id: &str,
     success: bool,
-    code: Option<tonic::Code>,
+    code: Option<&Status>,
 ) {
     tracing::info!(
         target: "sigil::audit",
@@ -2751,7 +2753,7 @@ fn audit_static(
         rpc,
         device_id,
         result = if success { "ok" } else { "error" },
-        code = ?code
+        code = %sigil_proto::audit_error_code(code)
     );
 }
 
@@ -2768,10 +2770,8 @@ fn audit_piv<T>(
 ) {
     let (outcome, code) = match result {
         Ok(_) => ("success", None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => {
-            ("denied", Some(status.code()))
-        }
-        Err(status) => ("error", Some(status.code())),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => ("denied", Some(status)),
+        Err(status) => ("error", Some(status)),
     };
     tracing::info!(
         target: "sigil::audit",
@@ -2785,7 +2785,7 @@ fn audit_piv<T>(
         serial,
         grant_id = grant_id.unwrap_or_default(),
         outcome,
-        code = ?code
+        code = %sigil_proto::audit_error_code(code)
     );
 }
 
@@ -2803,10 +2803,8 @@ fn audit_managed<T>(
 ) {
     let (outcome, code) = match result {
         Ok(_) => ("success", None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => {
-            ("denied", Some(status.code()))
-        }
-        Err(status) => ("error", Some(status.code())),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => ("denied", Some(status)),
+        Err(status) => ("error", Some(status)),
     };
     tracing::info!(
         target: "sigil::audit",
@@ -2821,7 +2819,7 @@ fn audit_managed<T>(
         grant_id = grant_id.unwrap_or_default(),
         rotation_id = rotation_id.unwrap_or_default(),
         outcome,
-        code = ?code
+        code = %sigil_proto::audit_error_code(code)
     );
 }
 
@@ -2905,10 +2903,8 @@ fn audit_device<T>(
 ) {
     let (outcome, code) = match result {
         Ok(_) => ("success", None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => {
-            ("denied", Some(status.code()))
-        }
-        Err(status) => ("error", Some(status.code())),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => ("denied", Some(status)),
+        Err(status) => ("error", Some(status)),
     };
     tracing::info!(
         target: "sigil::audit",
@@ -2920,7 +2916,7 @@ fn audit_device<T>(
         operation,
         serial,
         outcome,
-        code = ?code
+        code = %sigil_proto::audit_error_code(code)
     );
 }
 
@@ -3083,5 +3079,67 @@ mod audit_tests {
             assert!(!field.contains("87654321"));
             assert!(!field.contains("[66, 66, 66"));
         }
+    }
+
+    #[test]
+    fn audit_code_uses_sigil_error_kind_then_grpc_code() {
+        let directory = tempfile::tempdir().expect("audit directory");
+        let outbox = Arc::new(AuditOutbox::open(directory.path()).expect("open outbox"));
+        let subscriber = tracing::Dispatch::new(
+            tracing_subscriber::registry().with(AuditOutboxLayer::new(Arc::clone(&outbox))),
+        );
+        let caller = CallerIdentity {
+            os_user: "test-user".into(),
+            session_id: Some(7),
+            pid: 1,
+        };
+        let complexity: std::result::Result<(), Status> =
+            Err(status_from_error(&CredentialError::PinComplexity));
+        let generic: std::result::Result<(), Status> =
+            Err(Status::failed_precondition("plain failure"));
+        let success: std::result::Result<(), Status> = Ok(());
+        tracing::dispatcher::with_default(&subscriber, || {
+            audit_piv(
+                &caller,
+                "ChangePivPin",
+                "mock-device",
+                "PIV_CHANGE_PIN",
+                None,
+                "12345678",
+                None,
+                &complexity,
+            );
+            audit_managed(
+                &caller,
+                "GeneratePivKey",
+                "mock-device",
+                "PIV_GENERATE_KEY",
+                None,
+                "12345678",
+                None,
+                None,
+                &generic,
+            );
+            audit_piv(
+                &caller,
+                "ChangePivPin",
+                "mock-device",
+                "PIV_CHANGE_PIN",
+                None,
+                "12345678",
+                None,
+                &success,
+            );
+        });
+        let codes: Vec<String> = outbox
+            .batch(3)
+            .expect("read audit events")
+            .into_iter()
+            .map(|event| event.code)
+            .collect();
+        assert_eq!(
+            codes,
+            ["PIN_COMPLEXITY_VIOLATION", "FailedPrecondition", ""]
+        );
     }
 }

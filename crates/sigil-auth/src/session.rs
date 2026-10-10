@@ -213,6 +213,13 @@ impl Session {
                     now: now_unix(),
                 },
             )?;
+            if claims.subject != self.identity().subject {
+                self.store.delete(&self.target)?;
+                inner.refresh = None;
+                inner.access = Zeroizing::new(String::new());
+                inner.access_expires_at = 0;
+                return Err(AuthError::SignedOut);
+            }
             let identity = Identity {
                 subject: claims.subject,
                 username: claims.username,

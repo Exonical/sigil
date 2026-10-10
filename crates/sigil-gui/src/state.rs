@@ -1,4 +1,4 @@
-use dioxus::prelude::{ReadableExt, Signal, SyncSignal};
+use dioxus::prelude::*;
 use sigil_app::CredentialService;
 use sigil_connect::ConnectionMode;
 use sigil_core::{
@@ -56,11 +56,20 @@ pub enum PivAction {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ManagedAction {
+    Initialize,
+    RotatePuk,
+    RotateManagementKey,
+    UnblockPin,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DialogKind {
     ToggleApplications,
     FactoryReset,
     SetupFips,
     Piv(PivAction),
+    Managed(ManagedAction),
 }
 
 #[derive(Clone)]
@@ -71,6 +80,7 @@ pub struct AppState {
     pub auth: SyncSignal<crate::auth::AuthStatus>,
     pub session: SyncSignal<Option<std::sync::Arc<sigil_auth::Session>>>,
     pub auth_cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub managed: Option<std::sync::Arc<dyn sigil_connect::ManagedPivAgent>>,
     pub devices: SyncSignal<Vec<DeviceInfo>>,
     pub selected_device: SyncSignal<Option<DeviceId>>,
     pub page: Signal<Page>,
@@ -98,5 +108,19 @@ impl AppState {
             .and_then(|selected| devices.iter().find(|device| &device.id == selected))
             .or_else(|| devices.first())
             .cloned()
+    }
+}
+
+/// Writes a sync signal from a background thread. Unlike set, this does nothing once the
+/// window or page that owns the signal is gone, so a late result cannot panic the process.
+pub trait SetLive<T> {
+    fn set_live(&mut self, value: T);
+}
+
+impl<T: Send + Sync + 'static> SetLive<T> for SyncSignal<T> {
+    fn set_live(&mut self, value: T) {
+        if let Ok(mut current) = self.try_write() {
+            *current = value;
+        }
     }
 }

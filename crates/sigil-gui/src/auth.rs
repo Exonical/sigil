@@ -49,6 +49,11 @@ fn publish<T: Send + Sync + 'static>(signal: &mut SyncSignal<T>, value: T) {
     }
 }
 
+/// Current access token for a managed operation. Blocks, so call it from a background thread.
+pub fn fresh_token(session: &Session) -> Result<zeroize::Zeroizing<String>, AuthError> {
+    runtime()?.block_on(session.access_token())
+}
+
 /// Silently restores a previous sign-in in the background.
 pub fn restore(state: &AppState) {
     let AuthConfig::Configured(settings) = state.auth_config.clone() else {

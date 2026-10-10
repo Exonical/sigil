@@ -1,3 +1,4 @@
+use crate::state::SetLive;
 use dioxus::prelude::*;
 use sigil_core::{CredentialError, DeviceInfo, Fingerprint};
 use zeroize::Zeroizing;
@@ -51,8 +52,8 @@ pub fn PasskeysPage(device: Option<DeviceInfo>) -> Element {
     use_hook(move || {
         let service = service.clone();
         std::thread::spawn(move || match service.fido_status(&id_for_load) {
-            Ok(value) => status_signal.set(Some((id_for_load, value))),
-            Err(value) => error.set(Some(value.to_string())),
+            Ok(value) => status_signal.set_live(Some((id_for_load, value))),
+            Err(value) => error.set_live(Some(value.to_string())),
         });
     });
 
@@ -83,11 +84,11 @@ pub fn PasskeysPage(device: Option<DeviceInfo>) -> Element {
                     div { class: "access-actions",
                         button { class: "primary-button", onclick: move |_| match crate::windows::restart_as_administrator() {
                             Ok(()) => std::process::exit(0),
-                            Err(reason) => message.set(Some(reason)),
+                            Err(reason) => message.set_live(Some(reason)),
                         }, "Request access" }
                         button { class: "text-button", onclick: move |_| match crate::windows::open_signin_options() {
-                            Ok(()) => message.set(Some("Windows sign-in settings opened.".into())),
-                            Err(reason) => message.set(Some(reason)),
+                            Ok(()) => message.set_live(Some("Windows sign-in settings opened.".into())),
+                            Err(reason) => message.set_live(Some(reason)),
                         }, "Open Windows settings" }
                     }
                 }
@@ -135,12 +136,12 @@ pub fn PasskeysPage(device: Option<DeviceInfo>) -> Element {
                             let mut status_signal = state.fido_status;
                             let mut error = error;
                             move |_| {
-                                error.set(None);
+                                error.set_live(None);
                                 let service = service.clone();
                                 let id = id.clone();
                                 std::thread::spawn(move || match service.fido_status(&id) {
-                                    Ok(value) => status_signal.set(Some((id, value))),
-                                    Err(value) => error.set(Some(value.to_string())),
+                                    Ok(value) => status_signal.set_live(Some((id, value))),
+                                    Err(value) => error.set_live(Some(value.to_string())),
                                 });
                             }
                         }, Icon { name: "refresh", size: 17 } }
@@ -167,16 +168,16 @@ pub fn PasskeysPage(device: Option<DeviceInfo>) -> Element {
                                     if busy() { return; }
                                     let supplied_pin = Zeroizing::new(pin.read().to_string());
                                     pin.set(Zeroizing::new(String::new()));
-                                    busy.set(true);
-                                    error.set(None);
+                                    busy.set_live(true);
+                                    error.set_live(None);
                                     let service = service.clone();
                                     let id = id.clone();
                                     std::thread::spawn(move || {
                                         match service.discoverable_credentials(&id, &supplied_pin) {
-                                            Ok(credentials) => passkeys.set(Some((id, credentials))),
-                                            Err(value) => error.set(Some(value.to_string())),
+                                            Ok(credentials) => passkeys.set_live(Some((id, credentials))),
+                                            Err(value) => error.set_live(Some(value.to_string())),
                                         }
-                                        busy.set(false);
+                                        busy.set_live(false);
                                     });
                                 }
                             }, "List passkeys" }
@@ -269,8 +270,8 @@ fn FingerprintSection(
                                     move |_| {
                                         let supplied_pin = Zeroizing::new(pin.read().to_string());
                                         pin.set(Zeroizing::new(String::new()));
-                                        pending_delete.set(None);
-                                        busy.set(true);
+                                        pending_delete.set_live(None);
+                                        busy.set_live(true);
                                         let service = service.clone();
                                         let id = id.clone();
                                         let finger_id = finger_id.clone();
@@ -279,21 +280,21 @@ fn FingerprintSection(
                                                 Ok(()) => {
                                                     let refreshed = service.fingerprints(&id, &supplied_pin);
                                                     if let Ok(value) = refreshed {
-                                                        fingerprints_signal.set(Some((id.clone(), value)));
+                                                        fingerprints_signal.set_live(Some((id.clone(), value)));
                                                     }
-                                                    message.set(Some("Fingerprint removed.".into()));
+                                                    message.set_live(Some("Fingerprint removed.".into()));
                                                 }
-                                                Err(value) => error.set(Some(value.to_string())),
+                                                Err(value) => error.set_live(Some(value.to_string())),
                                             }
-                                            busy.set(false);
+                                            busy.set_live(false);
                                         });
                                     }
                                 }, "Confirm remove" }
-                                button { class: "text-button", onclick: move |_| pending_delete.set(None), "Cancel" }
+                                button { class: "text-button", onclick: move |_| pending_delete.set_live(None), "Cancel" }
                             } else {
                                 button { class: "icon-button danger-icon", title: "Remove fingerprint", disabled: busy(), onclick: {
                                     let id = fingerprint.id.clone();
-                                    move |_| pending_delete.set(Some(id.clone()))
+                                    move |_| pending_delete.set_live(Some(id.clone()))
                                 }, Icon { name: "trash", size: 16 } }
                             }
                         }
@@ -319,19 +320,19 @@ fn FingerprintSection(
                     move |_| {
                         let supplied_pin = Zeroizing::new(pin.read().to_string());
                         pin.set(Zeroizing::new(String::new()));
-                        busy.set(true);
-                        error.set(None);
+                        busy.set_live(true);
+                        error.set_live(None);
                         let service = service.clone();
                         let id = id.clone();
                         std::thread::spawn(move || {
                             match service.fingerprints(&id, &supplied_pin) {
                                 Ok(value) => {
-                                    fingerprints_signal.set(Some((id, value)));
-                                    message.set(Some("Fingerprint list refreshed.".into()));
+                                    fingerprints_signal.set_live(Some((id, value)));
+                                    message.set_live(Some("Fingerprint list refreshed.".into()));
                                 }
-                                Err(value) => error.set(Some(value.to_string())),
+                                Err(value) => error.set_live(Some(value.to_string())),
                             }
-                            busy.set(false);
+                            busy.set_live(false);
                         });
                     }
                 }, "List fingerprints" }
@@ -346,15 +347,15 @@ fn FingerprintSection(
                     move |_| {
                         let supplied_pin = Zeroizing::new(pin.read().to_string());
                         pin.set(Zeroizing::new(String::new()));
-                        busy.set(true);
-                        message.set(Some("Touch the sensor when prompted.".into()));
-                        error.set(None);
+                        busy.set_live(true);
+                        message.set_live(Some("Touch the sensor when prompted.".into()));
+                        error.set_live(None);
                         let service = service.clone();
                         let id = id.clone();
                         std::thread::spawn(move || {
                             let mut progress = message;
                             let result = service.enroll_fingerprint(&id, &supplied_pin, &mut |step| {
-                                progress.set(Some(format!(
+                                progress.set_live(Some(format!(
                                     "{} · {} samples remaining",
                                     step.message, step.remaining_samples
                                 )));
@@ -362,16 +363,16 @@ fn FingerprintSection(
                             match result {
                                 Ok(_) => match service.fingerprints(&id, &supplied_pin) {
                                     Ok(value) => {
-                                        fingerprints_signal.set(Some((id, value)));
-                                        progress.set(Some("Fingerprint enrolled.".into()));
+                                        fingerprints_signal.set_live(Some((id, value)));
+                                        progress.set_live(Some("Fingerprint enrolled.".into()));
                                     }
-                                    Err(value) => error.set(Some(value.to_string())),
+                                    Err(value) => error.set_live(Some(value.to_string())),
                                 },
                                 Err(value) => {
-                                    error.set(Some(value.to_string()));
+                                    error.set_live(Some(value.to_string()));
                                 }
                             }
-                            busy.set(false);
+                            busy.set_live(false);
                         });
                     }
                 }, "Enroll fingerprint" }

@@ -1,3 +1,4 @@
+use crate::state::SetLive;
 use std::path::PathBuf;
 
 use dioxus::prelude::*;
@@ -10,6 +11,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     icons::Icon,
+    managed::{self, SlotOperation},
     state::{AppState, PivAction},
 };
 
@@ -65,6 +67,9 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
     let destructive_confirmed = use_signal(|| false);
     let error = use_signal_sync(|| None::<String>);
     let busy = use_signal_sync(|| false);
+    let managed_capable = managed::slot_action(action).is_some() && managed::ready(&state);
+    let own_key = use_signal(|| false);
+    let managed_mode = managed_capable && !own_key();
     let should_generate_key = action == PivAction::ChangeManagementKey;
     let mut generated_key_signal = generated_key;
     let mut key_error_signal = key_generation_error;
@@ -128,7 +133,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             {generated_key_view(generated_key, have_stored_key, key_generation_error, toast_signal)}
         },
         PivAction::GenerateKey(_) => rsx! {
-            {management_key_field(management_key_default, current)}
+            {slot_key_section(managed_capable, own_key, management_key_default, current)}
             div { class: "modal-field",
                 label { r#for: "key-algorithm", "Algorithm" }
                 select {
@@ -174,7 +179,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             {destructive_confirmation(destructive_confirmed, "Generating a key may replace the private key in this slot.")}
         },
         PivAction::ImportCertificate(_) => rsx! {
-            {management_key_field(management_key_default, current)}
+            {slot_key_section(managed_capable, own_key, management_key_default, current)}
             div { class: "modal-field",
                 label { "Certificate file" }
                 button { class: "secondary-button", onclick: move |_| {
@@ -264,18 +269,18 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             }
         },
         PivAction::DeleteCertificate(_) => rsx! {
-            {management_key_field(management_key_default, current)}
+            {slot_key_section(managed_capable, own_key, management_key_default, current)}
             {destructive_confirmation(destructive_confirmed, "Delete this certificate from the selected PIV slot?")}
         },
         PivAction::DeleteKey(_) => rsx! {
-            {management_key_field(management_key_default, current)}
+            {slot_key_section(managed_capable, own_key, management_key_default, current)}
             {destructive_confirmation(destructive_confirmed, "Permanently delete the private key in this slot?")}
         },
     };
     let can_submit = validate_form(
         action,
         fips,
-        current_secret_default,
+        current_secret_default || managed_mode,
         current.read().as_str(),
         new_secret.read().as_str(),
         confirmation.read().as_str(),
@@ -372,8 +377,72 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                             let mut dialog = dialog_signal;
                             let mut piv_info = piv_info_signal;
                             let mut piv_slots = piv_slots_signal;
+                            let managed_agent = state.managed.clone();
+                            let managed_session = state.session.read().clone();
+                            let managed_sessions = state.session;
+                            let managed_auth = state.auth;
                             move |_| {
                                 if busy() { return; }
+                                if managed_mode {
+                                    let (Some(agent), Some(session), Some(slot)) = (
+                                        managed_agent.clone(),
+                                        managed_session.clone(),
+                                        managed::slot_action(action),
+                                    ) else {
+                                        error.set_live(Some("Sign in first to use managed PIV.".into()));
+                                        return;
+                                    };
+                                    let operation = match action {
+                                        PivAction::GenerateKey(_) => SlotOperation::GenerateKey(PivKeyConfiguration {
+                                            slot,
+                                            algorithm: current_algorithm,
+                                            pin_policy: current_pin_policy,
+                                            touch_policy: current_touch_policy,
+                                        }),
+                                        PivAction::ImportCertificate(_) => match input_path.as_ref().map(std::fs::read) {
+                                            Some(Ok(der)) => SlotOperation::ImportCertificate(der),
+                                            Some(Err(value)) => {
+                                                error.set_live(Some(value.to_string()));
+                                                return;
+                                            }
+                                            None => {
+                                                error.set_live(Some("Choose a certificate file first.".into()));
+                                                return;
+                                            }
+                                        },
+                                        PivAction::DeleteCertificate(_) => SlotOperation::DeleteCertificate,
+                                        PivAction::DeleteKey(_) => SlotOperation::DeleteKey,
+                                        _ => return,
+                                    };
+                                    busy.set_live(true);
+                                    error.set_live(None);
+                                    let id = id.clone();
+                                    let serial = serial.clone();
+                                    let service = service.clone();
+                                    let mut piv_info = piv_info;
+                                    let mut piv_slots = piv_slots;
+                                    let mut toast = toast;
+                                    let mut dialog = dialog;
+                                    let mut error = error;
+                                    let mut busy = busy;
+                                    std::thread::spawn(move || {
+                                        let outcome = managed::fresh_token(&session, managed_sessions, managed_auth)
+                                            .and_then(|token| {
+                                                managed::run_slot_operation(agent.as_ref(), token.as_str(), &id, &serial, slot, operation)
+                                                    .map_err(|value| managed::error_message(&value))
+                                            });
+                                        match outcome {
+                                            Ok(()) => {
+                                                managed::reload_piv(&service, &id, &mut piv_info, &mut piv_slots);
+                                                toast.set_live(Some(format!("Managed PIV operation completed for slot {slot}.")));
+                                                dialog.set_live(None);
+                                            }
+                                            Err(message) => error.set_live(Some(message)),
+                                        }
+                                        busy.set_live(false);
+                                    });
+                                    return;
+                                }
                                 let operation = prepare_operation(
                                     action,
                                     info.as_ref(),
@@ -394,7 +463,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                 let operation = match operation {
                                     Ok(operation) => operation,
                                     Err(message) => {
-                                        error.set(Some(message));
+                                        error.set_live(Some(message));
                                         return;
                                     }
                                 };
@@ -402,8 +471,8 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                 new_secret.zeroize();
                                 confirmation.zeroize();
                                 generated_key.zeroize();
-                                busy.set(true);
-                                error.set(None);
+                                busy.set_live(true);
+                                error.set_live(None);
                                 let service = service.clone();
                                 let id = id.clone();
                                 let serial = serial.clone();
@@ -412,17 +481,17 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                     match result {
                                         Ok(message) => {
                                             if let Ok(info) = service.piv_info(&id) {
-                                                piv_info.set(Some((id.clone(), info)));
+                                                piv_info.set_live(Some((id.clone(), info)));
                                             }
                                             if let Ok(slots) = service.piv_slots(&id) {
-                                                piv_slots.set(Some((id.clone(), slots)));
+                                                piv_slots.set_live(Some((id.clone(), slots)));
                                             }
-                                            toast.set(Some(message));
-                                            dialog.set(None);
+                                            toast.set_live(Some(message));
+                                            dialog.set_live(None);
                                         }
-                                        Err(message) => error.set(Some(message)),
+                                        Err(message) => error.set_live(Some(message)),
                                     }
-                                    busy.set(false);
+                                    busy.set_live(false);
                                 });
                             }
                         },
@@ -598,7 +667,7 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                                 ) {
                                     Ok(secrets) => secrets,
                                     Err(message) => {
-                                        error.set(Some(message));
+                                        error.set_live(Some(message));
                                         return;
                                     }
                                 };
@@ -610,8 +679,8 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                                 current_puk.zeroize();
                                 current_management_key.zeroize();
                                 management_key.zeroize();
-                                busy.set(true);
-                                error.set(None);
+                                busy.set_live(true);
+                                error.set_live(None);
                                 let service = service.clone();
                                 let id = id.clone();
                                 let serial = serial.clone();
@@ -637,15 +706,15 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                                         outcomes.push(("Change PUK".into(), "Not run".into()));
                                         outcomes.push(("Change management key".into(), "Not run".into()));
                                     }
-                                    results.set(outcomes);
+                                    results.set_live(outcomes);
                                     if let Ok(info) = service.piv_info(&id) {
-                                        piv_info.set(Some((id.clone(), info)));
+                                        piv_info.set_live(Some((id.clone(), info)));
                                     }
                                     if let Ok(slots) = service.piv_slots(&id) {
-                                        piv_slots.set(Some((id.clone(), slots)));
+                                        piv_slots.set_live(Some((id.clone(), slots)));
                                     }
-                                    toast.set(Some("FIPS initialization sequence finished. Review each step.".into()));
-                                    busy.set(false);
+                                    toast.set_live(Some("FIPS initialization sequence finished. Review each step.".into()));
+                                    busy.set_live(false);
                                 });
                             }
                         },
@@ -728,6 +797,28 @@ fn fips_code_note(fips: bool, kind: &'static str) -> Element {
     }
 }
 
+fn slot_key_section(
+    managed_capable: bool,
+    mut own_key: Signal<bool>,
+    default_key: bool,
+    current: Signal<Zeroizing<String>>,
+) -> Element {
+    if !managed_capable {
+        return management_key_field(default_key, current);
+    }
+    if own_key() {
+        rsx! {
+            {management_key_field(default_key, current)}
+            button { class: "text-button", onclick: move |_| own_key.set(false), "Use the Sigil-managed key instead" }
+        }
+    } else {
+        rsx! {
+            p { class: "modal-help", "Sigil uses the management key it holds for this key, so you do not enter one." }
+            button { class: "text-button", onclick: move |_| own_key.set(true), "Use my own management key" }
+        }
+    }
+}
+
 fn management_key_field(default_key: bool, current: Signal<Zeroizing<String>>) -> Element {
     if default_key {
         rsx! {
@@ -779,8 +870,8 @@ fn generated_key_view(
                     onclick: move |_| {
                         let mut value = Zeroizing::new(key.read().to_string());
                         match crate::windows::copy_to_clipboard(&value) {
-                            Ok(()) => toast.set(Some("Management key copied to clipboard.".into())),
-                            Err(error) => toast.set(Some(error)),
+                            Ok(()) => toast.set_live(Some("Management key copied to clipboard.".into())),
+                            Err(error) => toast.set_live(Some(error)),
                         }
                         value.zeroize();
                     },

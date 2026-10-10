@@ -69,6 +69,7 @@ fn ConnectedApp() -> Element {
         auth: use_signal_sync(|| crate::auth::AuthStatus::Checking),
         session: use_signal_sync(|| None::<std::sync::Arc<sigil_auth::Session>>),
         auth_cancel,
+        managed: connection.managed.clone(),
         devices: initial_devices,
         selected_device,
         page,
@@ -147,6 +148,9 @@ fn connection_options() -> ConnectOptions {
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--agent" => options.agent = arguments.next(),
+            other if other.starts_with("--agent=") => {
+                options.agent = other.strip_prefix("--agent=").map(str::to_owned);
+            }
             "--direct" => options.direct = true,
             #[cfg(debug_assertions)]
             "--direct-mock" => options.direct_mock = true,

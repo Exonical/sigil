@@ -1,3 +1,4 @@
+use crate::state::SetLive;
 use dioxus::prelude::*;
 use sigil_core::{DeviceInfo, KeyStatus, PivSlot, PivSlotInfo};
 
@@ -42,11 +43,11 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
                 .and_then(|info| service.piv_slots(&id).map(|slots| (info, slots)));
             match result {
                 Ok((info, slots)) => {
-                    info_signal.set(Some((id.clone(), info)));
-                    slots_signal.set(Some((id.clone(), slots)));
-                    status.set(None);
+                    info_signal.set_live(Some((id.clone(), info)));
+                    slots_signal.set_live(Some((id.clone(), slots)));
+                    status.set_live(None);
                 }
-                Err(error) => status.set(Some(error.to_string())),
+                Err(error) => status.set_live(Some(error.to_string())),
             }
         });
     });

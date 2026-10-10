@@ -1,3 +1,4 @@
+use crate::state::SetLive;
 use dioxus::prelude::*;
 use sigil_core::{Application, DeviceInfo, Secret};
 use zeroize::Zeroizing;
@@ -123,15 +124,15 @@ pub fn ToggleApplicationsDialog(device: DeviceInfo) -> Element {
                                     match parse_lock_code(&lock_code_input) {
                                         Ok(code) => Some(code),
                                         Err(message) => {
-                                            error.set(Some(message));
+                                            error.set_live(Some(message));
                                             return;
                                         }
                                     }
                                 } else {
                                     None
                                 };
-                                saving.set(true);
-                                error.set(None);
+                                saving.set_live(true);
+                                error.set_live(None);
                                 let service = service.clone();
                                 let id = id.clone();
                                 let serial = expected_serial.clone();
@@ -147,12 +148,12 @@ pub fn ToggleApplicationsDialog(device: DeviceInfo) -> Element {
                                     );
                                     match result {
                                         Ok(()) => {
-                                            toast.set(Some("The YubiKey will restart to apply the change.".into()));
-                                            dialog.set(None);
+                                            toast.set_live(Some("The YubiKey will restart to apply the change.".into()));
+                                            dialog.set_live(None);
                                         }
-                                        Err(value) => error.set(Some(value.to_string())),
+                                        Err(value) => error.set_live(Some(value.to_string())),
                                     }
-                                    saving.set(false);
+                                    saving.set_live(false);
                                 });
                             }
                         },

@@ -3,7 +3,8 @@ use sigil_core::{KeyStatus, PivSlot, PivSlotInfo};
 
 use crate::{
     icons::Icon,
-    state::{AppState, DialogKind, Page, PivAction},
+    managed,
+    state::{AppState, DialogKind, ManagedAction, Page, PivAction},
 };
 
 #[component]
@@ -208,6 +209,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
         })
         .unwrap_or_else(|| "PIV PUK".into());
     let fips_defaults = device.fips == Some(true) && (pin_default || puk_default || mgmt_default);
+    let managed_mode = managed::ready(state);
 
     rsx! {
         PanelSection { title: "MANAGE",
@@ -222,6 +224,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                     move |_| dialog.set(Some(DialogKind::Piv(PivAction::ChangePin)))
                 }
             }
+            if !managed_mode {
             ActionRow {
                 icon: "key",
                 title: "Change PUK",
@@ -233,7 +236,21 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                     move |_| dialog.set(Some(DialogKind::Piv(PivAction::ChangePuk)))
                 }
             }
-            if info.as_ref().and_then(|info| info.pin.as_ref()).is_some_and(|status| status.remaining == 0) {
+            }
+            if managed_mode {
+                ActionRow {
+                    icon: "unlock",
+                    title: "Unblock PIN",
+                    subtitle: "Sigil unblocks the PIN with its escrowed PUK".to_owned(),
+                    warning: false,
+                    disabled: false,
+                    onclick: {
+                        let mut dialog = state.dialog;
+                        move |_| dialog.set(Some(DialogKind::Managed(ManagedAction::UnblockPin)))
+                    }
+                }
+            }
+            if !managed_mode && info.as_ref().and_then(|info| info.pin.as_ref()).is_some_and(|status| status.remaining == 0) {
                 ActionRow {
                 icon: "unlock",
                 title: "Unblock PIN",
@@ -246,6 +263,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                     }
                 }
             }
+            if !managed_mode {
             ActionRow {
                 icon: "lock",
                 title: "Management key",
@@ -261,8 +279,49 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                     move |_| dialog.set(Some(DialogKind::Piv(PivAction::ChangeManagementKey)))
                 }
             }
+            }
         }
-        if fips_defaults {
+        if managed_mode {
+            PanelSection { title: "MANAGED BY SIGIL",
+                if puk_default && mgmt_default {
+                    ActionRow {
+                        icon: "shield",
+                        title: "Set up managed PIV",
+                        subtitle: "Replace the factory PUK and management key with Sigil-held secrets".to_owned(),
+                        warning: true,
+                        disabled: false,
+                        onclick: {
+                            let mut dialog = state.dialog;
+                            move |_| dialog.set(Some(DialogKind::Managed(ManagedAction::Initialize)))
+                        }
+                    }
+                } else {
+                    ActionRow {
+                        icon: "rotate",
+                        title: "Rotate PUK",
+                        subtitle: "Replace the PUK with a new Sigil-held value".to_owned(),
+                        warning: false,
+                        disabled: false,
+                        onclick: {
+                            let mut dialog = state.dialog;
+                            move |_| dialog.set(Some(DialogKind::Managed(ManagedAction::RotatePuk)))
+                        }
+                    }
+                    ActionRow {
+                        icon: "rotate",
+                        title: "Rotate management key",
+                        subtitle: "Replace the management key with a new Sigil-held AES-256 key".to_owned(),
+                        warning: false,
+                        disabled: false,
+                        onclick: {
+                            let mut dialog = state.dialog;
+                            move |_| dialog.set(Some(DialogKind::Managed(ManagedAction::RotateManagementKey)))
+                        }
+                    }
+                }
+            }
+        }
+        if fips_defaults && !managed_mode {
             PanelSection { title: "SETUP",
                 ActionRow {
                     icon: "shield",

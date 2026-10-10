@@ -3,6 +3,7 @@ mod auth;
 mod dialogs;
 mod icons;
 mod layout;
+mod managed;
 mod pages;
 mod state;
 mod windows;

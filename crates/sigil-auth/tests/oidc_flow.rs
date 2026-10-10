@@ -34,6 +34,7 @@ const CLIENT_ID: &str = "sigil";
 
 #[derive(Clone, Default)]
 struct Options {
+    subject: Option<String>,
     discovery_issuer: Option<String>,
     token_issuer: Option<String>,
     audience: Option<String>,
@@ -105,7 +106,7 @@ impl Provider {
         self.sign(json!({
             "iss": options.token_issuer.unwrap_or_else(|| self.issuer.clone()),
             "aud": options.audience.unwrap_or_else(|| CLIENT_ID.into()),
-            "sub": "user-123",
+            "sub": options.subject.unwrap_or_else(|| "user-123".into()),
             "preferred_username": "alice",
             "email": "alice@example.test",
             "groups": ["sigil-admins"],
@@ -587,6 +588,31 @@ async fn refresh_rotates_the_stored_token_and_refreshes_near_expiry() {
         .expect("restored session");
     assert_eq!(restored.identity().username, "alice");
     assert_eq!(harness.provider.refresh_count(), 2);
+}
+
+#[tokio::test]
+async fn refresh_with_a_different_subject_signs_the_user_out() {
+    let harness = start_provider().await;
+    let store: Arc<dyn TokenStore> = Arc::new(MemoryStore::default());
+    let target = target_name(&harness.settings);
+    let _session = Session::sign_in(
+        &harness.settings,
+        Arc::clone(&store),
+        spawn_browser(harness.ca_file.clone(), Browser::Complete),
+        never(),
+    )
+    .await
+    .unwrap();
+
+    harness.provider.options.lock().unwrap().subject = Some("someone-else".into());
+    let restored = Session::load_or_none(&harness.settings, Arc::clone(&store))
+        .await
+        .expect("a subject change is not a transport error");
+    assert!(restored.is_none(), "a different subject ends the sign-in");
+    assert!(
+        store.load(&target).unwrap().is_none(),
+        "stored record is removed"
+    );
 }
 
 #[tokio::test]

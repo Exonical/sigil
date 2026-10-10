@@ -1,3 +1,4 @@
+use crate::state::SetLive;
 use dioxus::prelude::*;
 use sigil_core::{DeviceId, DeviceInfo};
 
@@ -73,8 +74,8 @@ pub fn FactoryResetDialog(device: DeviceInfo) -> Element {
                                 if busy() || confirmation.read().trim() != expected_serial {
                                     return;
                                 }
-                                busy.set(true);
-                                error.set(None);
+                                busy.set_live(true);
+                                error.set_live(None);
                                 let service = service.clone();
                                 let id: DeviceId = id.clone();
                                 let serial = expected_serial.clone();
@@ -82,17 +83,17 @@ pub fn FactoryResetDialog(device: DeviceInfo) -> Element {
                                     match service.reset(&id, &serial) {
                                         Ok(()) => {
                                             if let Ok(info) = service.piv_info(&id) {
-                                                piv_info.set(Some((id.clone(), info)));
+                                                piv_info.set_live(Some((id.clone(), info)));
                                             }
                                             if let Ok(slots) = service.piv_slots(&id) {
-                                                piv_slots.set(Some((id.clone(), slots)));
+                                                piv_slots.set_live(Some((id.clone(), slots)));
                                             }
-                                            toast.set(Some("PIV factory reset completed.".into()));
-                                            dialog.set(None);
+                                            toast.set_live(Some("PIV factory reset completed.".into()));
+                                            dialog.set_live(None);
                                         }
-                                        Err(value) => error.set(Some(value.to_string())),
+                                        Err(value) => error.set_live(Some(value.to_string())),
                                     }
-                                    busy.set(false);
+                                    busy.set_live(false);
                                 });
                             }
                         },
