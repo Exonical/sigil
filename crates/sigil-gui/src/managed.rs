@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use sigil_auth::{AuthError, Session};
-use sigil_connect::ManagedPivAgent;
+use sigil_connect::{CertificateProfile, ManagedPivAgent};
 use sigil_core::{CredentialError, DeviceId, PivInfo, PivKeyConfiguration, PivSlot, PivSlotInfo};
 use zeroize::Zeroizing;
 
@@ -108,9 +108,104 @@ pub fn reload_piv(
     }
 }
 
+/// Loads the certificate profiles for the selected device. Runs whenever managed mode, the selected device,
+/// the sign-in, or the PIV state changes. A failed load publishes an empty list, which hides the enroll shortcut.
+pub fn refresh_profiles(state: &AppState) {
+    let device = state.current_device().map(|device| device.id);
+    let session = state.session.read().clone();
+    let _ = state.piv_info.read();
+    let mut profiles = state.certificate_profiles;
+    let (Some(agent), Some(session), Some(id)) = (state.managed.clone(), session, device) else {
+        profiles.set(None);
+        return;
+    };
+    let sessions = state.session;
+    let auth_status = state.auth;
+    std::thread::spawn(move || {
+        let listed = fresh_token(&session, sessions, auth_status)
+            .ok()
+            .and_then(|token| agent.certificate_profiles(&id, &token).ok())
+            .unwrap_or_default();
+        profiles.set_live(Some((id, listed)));
+    });
+}
+
+/// Whether a profile's PIV slot, written as two hex digits, is the given slot.
+pub fn profile_matches_slot(profile: &CertificateProfile, slot: PivSlot) -> bool {
+    u8::from_str_radix(&profile.slot, 16).ok() == Some(slot.byte())
+}
+
+/// The index to preselect: the first profile for the given slot, otherwise the first profile.
+pub fn preselected_index(profiles: &[CertificateProfile], slot: Option<PivSlot>) -> usize {
+    slot.and_then(|slot| {
+        profiles
+            .iter()
+            .position(|profile| profile_matches_slot(profile, slot))
+    })
+    .unwrap_or(0)
+}
+
+/// The enroll shortcut for an unenrolled key in this slot, if a profile for the selected device targets it.
+pub fn enroll_shortcut(state: &AppState, slot: PivSlot) -> Option<CertificateProfile> {
+    let device = state.current_device()?.id;
+    let profiles = state.certificate_profiles.read();
+    let (owner, list) = profiles.as_ref()?;
+    if owner != &device {
+        return None;
+    }
+    list.iter()
+        .find(|profile| profile_matches_slot(profile, slot))
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use sigil_core::{CredentialError, PivSlot};
+
+    use super::{preselected_index, profile_matches_slot};
+    use sigil_connect::CertificateProfile;
+
+    fn profile(name: &str, slot: &str) -> CertificateProfile {
+        CertificateProfile {
+            name: name.into(),
+            display_name: name.into(),
+            slot: slot.into(),
+            algorithm: "p256".into(),
+            pin_policy: "once".into(),
+            touch_policy: "never".into(),
+            expected_subject: "alice".into(),
+        }
+    }
+
+    #[test]
+    fn profiles_match_their_slot_by_hex_value() {
+        assert!(profile_matches_slot(
+            &profile("auth", "9a"),
+            PivSlot::AUTHENTICATION
+        ));
+        assert!(!profile_matches_slot(
+            &profile("auth", "9c"),
+            PivSlot::AUTHENTICATION
+        ));
+        assert!(!profile_matches_slot(
+            &profile("bad", "zz"),
+            PivSlot::AUTHENTICATION
+        ));
+    }
+
+    #[test]
+    fn preselection_prefers_the_slot_match_and_falls_back_to_the_first_profile() {
+        let profiles = [profile("signing", "9c"), profile("auth", "9a")];
+        assert_eq!(
+            preselected_index(&profiles, Some(PivSlot::AUTHENTICATION)),
+            1
+        );
+        assert_eq!(preselected_index(&profiles, None), 0);
+        assert_eq!(
+            preselected_index(&profiles, Some(PivSlot::retired(1).unwrap())),
+            0
+        );
+    }
 
     use super::*;
     use crate::state::PivAction;

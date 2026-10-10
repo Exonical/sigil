@@ -1,3 +1,4 @@
+mod enroll_dialog;
 mod factory_reset;
 mod managed_dialog;
 mod piv;
@@ -27,6 +28,9 @@ pub fn DialogHost() -> Element {
         }
         (Some(DialogKind::Managed(action)), Some(device)) => {
             rsx! { managed_dialog::ManagedDialog { device, action } }
+        }
+        (Some(DialogKind::Enroll(preselected)), Some(device)) => {
+            rsx! { enroll_dialog::EnrollDialog { device, preselected } }
         }
         _ => rsx! {},
     }

@@ -361,6 +361,8 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                 DetailValue { label: "ISSUER", value: certificate.issuer.clone() }
                 DetailValue { label: "VALID", value: format!("{} – {}", certificate.not_before, certificate.not_after) }
                 DetailValue { label: "FINGERPRINT", value: certificate.sha256_fingerprint.clone() }
+            } else if metadata.is_some() {
+                p { class: "panel-detail muted", "Key without certificate loaded" }
             } else {
                 p { class: "panel-detail muted", "No certificate loaded" }
             }
@@ -369,6 +371,22 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                 DetailValue { label: "POLICY", value: format!("PIN {:?} · Touch {:?}", metadata.pin_policy, metadata.touch_policy) }
                 if let Some(origin) = metadata.origin {
                     DetailValue { label: "ORIGIN", value: format!("{origin:?}") }
+                }
+            }
+            if let Some(profile) = (managed::ready(state) && certificate.is_none() && metadata.is_some())
+                .then(|| managed::enroll_shortcut(state, slot_id))
+                .flatten()
+            {
+                ActionRow {
+                    icon: "plus",
+                    title: "Enroll",
+                    subtitle: format!("Enroll {}", profile.display_name),
+                    warning: false,
+                    disabled: false,
+                    onclick: {
+                        let mut dialog = state.dialog;
+                        move |_| dialog.set(Some(DialogKind::Enroll(Some(slot_id))))
+                    }
                 }
             }
             ActionRow {

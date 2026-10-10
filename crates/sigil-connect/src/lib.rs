@@ -62,6 +62,8 @@ pub enum ManagedSecret {
     ManagementKey,
 }
 
+pub use sigil_client::{CertificateProfile, EnrolledCertificate};
+
 /// Escrow-backed PIV operations. The agent holds the secrets and checks the backend grant
 /// inside the card transaction; the caller supplies only the sign-in access token.
 pub trait ManagedPivAgent: Send + Sync {

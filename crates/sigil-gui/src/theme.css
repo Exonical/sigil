@@ -946,3 +946,15 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .auth-button, .auth-cancel, .auth-menu { width: 100%; background: transparent; border: 0; color: var(--muted); text-align: left; }
 .auth-button:disabled { opacity: 0.6; cursor: default; }
 .auth-cancel, .auth-menu { font-size: 13px; }
+
+.cert-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.enroll-progress {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}

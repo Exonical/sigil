@@ -70,6 +70,8 @@ pub enum DialogKind {
     SetupFips,
     Piv(PivAction),
     Managed(ManagedAction),
+    /// Enroll a certificate; the optional slot preselects the matching profile.
+    Enroll(Option<PivSlot>),
 }
 
 #[derive(Clone)]
@@ -97,6 +99,9 @@ pub struct AppState {
     pub passkeys: SyncSignal<Option<(DeviceId, Vec<DiscoverableCredential>)>>,
     pub fingerprints: SyncSignal<Option<(DeviceId, Vec<Fingerprint>)>>,
     pub fips_banner_dismissed: Signal<bool>,
+    /// Certificate profiles the backend offers for a device. Empty when they could not be loaded.
+    pub certificate_profiles:
+        SyncSignal<Option<(DeviceId, Vec<sigil_connect::CertificateProfile>)>>,
 }
 
 impl AppState {

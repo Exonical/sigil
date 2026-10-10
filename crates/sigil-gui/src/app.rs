@@ -86,7 +86,12 @@ fn ConnectedApp() -> Element {
         passkeys: use_signal_sync(|| None::<(DeviceId, Vec<DiscoverableCredential>)>),
         fingerprints: use_signal_sync(|| None::<(DeviceId, Vec<Fingerprint>)>),
         fips_banner_dismissed: use_signal(|| false),
+        certificate_profiles: use_signal_sync(|| {
+            None::<(DeviceId, Vec<sigil_connect::CertificateProfile>)>
+        }),
     };
+    let profile_state = state.clone();
+    use_effect(move || crate::managed::refresh_profiles(&profile_state));
     let watcher_state = state.clone();
     use_hook(move || {
         tracing::info!(
@@ -184,6 +189,10 @@ fn startup_dialog() -> Option<DialogKind> {
     #[cfg(debug_assertions)]
     if std::env::args().any(|argument| argument == "--debug-toggle-dialog") {
         return Some(DialogKind::ToggleApplications);
+    }
+    #[cfg(debug_assertions)]
+    if std::env::args().any(|argument| argument == "--debug-enroll-dialog") {
+        return Some(DialogKind::Enroll(None));
     }
     None
 }

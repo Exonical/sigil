@@ -4,7 +4,8 @@ use sigil_core::{DeviceInfo, KeyStatus, PivSlot, PivSlotInfo};
 
 use crate::{
     icons::Icon,
-    state::{AppState, DialogKind},
+    managed,
+    state::{AppState, DialogKind, ManagedAction, PivAction},
 };
 
 #[component]
@@ -85,6 +86,25 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
                     .is_some_and(|status| status.default_value == Some(true))
         });
 
+    let managed_ready = managed::ready(&state);
+    let secrets_default = current_info.as_ref().is_some_and(|info| {
+        info.puk
+            .as_ref()
+            .is_some_and(|status| status.default_value == Some(true))
+            || info
+                .management_key
+                .as_ref()
+                .is_some_and(|status| status.default_value == Some(true))
+    });
+    let (banner_label, banner_action) = match (managed_ready, secrets_default) {
+        (false, _) => ("Set up FIPS", DialogKind::SetupFips),
+        (true, true) => (
+            "Set up managed PIV",
+            DialogKind::Managed(ManagedAction::Initialize),
+        ),
+        (true, false) => ("Change PIN", DialogKind::Piv(PivAction::ChangePin)),
+    };
+
     rsx! {
         div { class: "certificates-page page-scroll",
             if fips_defaults && !*state.fips_banner_dismissed.read() {
@@ -94,7 +114,7 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
                         strong { "For FIPS compliance it is required to change the default PIN, PUK and management key." }
                     }
                     button { class: "text-button", onclick: move |_| fips_banner_dismissed.set(true), "Dismiss" }
-                    button { class: "primary-button", onclick: move |_| dialog_signal.set(Some(DialogKind::SetupFips)), "Set up FIPS" }
+                    button { class: "primary-button", onclick: move |_| dialog_signal.set(Some(banner_action)), "{banner_label}" }
                 }
             }
             if let Some(message) = status.read().as_ref() {
@@ -113,7 +133,12 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
                         p { class: "eyebrow", "PIV APPLICATION" }
                         h2 { "Certificates" }
                     }
-                    span { class: "muted small", "Select a slot to view details" }
+                    div { class: "cert-heading-actions",
+                        if managed_ready {
+                            button { class: "primary-button", onclick: move |_| dialog_signal.set(Some(DialogKind::Enroll(None))), "Enroll certificate" }
+                        }
+                        span { class: "muted small", "Select a slot to view details" }
+                    }
                 }
                 div { class: "slot-list scroll-list",
                     for slot_info in slots.iter() {

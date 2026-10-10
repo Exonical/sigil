@@ -5,7 +5,7 @@ use zeroize::Zeroizing;
 use crate::{
     icons::Icon,
     managed,
-    state::{AppState, ManagedAction, SetLive},
+    state::{AppState, DialogKind, ManagedAction, PivAction, SetLive},
 };
 
 #[component]
@@ -164,7 +164,14 @@ pub fn ManagedDialog(device: DeviceInfo, action: ManagedAction) -> Element {
                                         Ok(()) => {
                                             managed::reload_piv(&service, &id, &mut info, &mut slots);
                                             toast.set_live(Some(success_message(action).into()));
-                                            dialog.set_live(None);
+                                            let pin_still_default = service
+                                                .piv_info(&id)
+                                                .ok()
+                                                .and_then(|value| value.pin)
+                                                .is_some_and(|status| status.default_value == Some(true));
+                                            let next = (action == ManagedAction::Initialize && pin_still_default)
+                                                .then_some(DialogKind::Piv(PivAction::ChangePin));
+                                            dialog.set_live(next);
                                         }
                                         Err(message) => error.set_live(Some(message)),
                                     }
@@ -214,7 +221,7 @@ fn success_message(action: ManagedAction) -> &'static str {
     }
 }
 
-fn pin_length_ok(value: &str, fips: bool) -> bool {
+pub(super) fn pin_length_ok(value: &str, fips: bool) -> bool {
     let characters = value.chars().count();
     value.is_ascii()
         && if fips {
