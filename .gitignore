@@ -22,6 +22,7 @@ dev/.secrets/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Built admin portal assets are embedded from this directory; only the committed placeholder is tracked.
+# Built admin portal assets (web build output) are embedded from this directory. Only the .gitkeep is tracked.
 backend/internal/portal/dist/*
-!backend/internal/portal/dist/index.html
+!backend/internal/portal/dist/.gitkeep
+web/dist/

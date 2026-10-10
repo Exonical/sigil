@@ -380,6 +380,7 @@ func startPortal(ctx context.Context, cfg *config.Config, store *db.Store, authe
 		ClientID:   cfg.Portal.ClientID,
 		PublicURL:  cfg.Portal.PublicURL,
 		DevOrigins: cfg.Portal.DevOrigins,
+		RoleGroups: map[string][]string{"admin": cfg.OIDC.RoleGroups.Admin, "helpdesk": cfg.OIDC.RoleGroups.Helpdesk},
 		APIPrefix:  prefix,
 		API:        api,
 	})

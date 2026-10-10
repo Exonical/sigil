@@ -68,3 +68,19 @@ The dev certificate authority is Smallstep step-ca, pinned to 0.30.2 and run in 
 4. Assign the token to a user who has signed in at least once: `go run ./cmd/sigil-server token assign --config ..\dev\.secrets\backend\backend.toml --serial <serial> --user <username-or-email>` from `backend\`. The certificate subject is the assigned user's username, and the CSR must carry the same common name. The agent builds it from `ListProfiles`.
 5. The elevated dev agent installs a certificate only if it chains to `issuing-ca.crt`, which `dev\agent\setup.ps1` copies from the step-ca root. Rerun setup elevated, then restart the agent.
 6. Enroll (agent mode, signed in): `cms --agent '\\.\pipe\sigil-agent-dev' piv profiles <device-id>` and then `cms --agent '\\.\pipe\sigil-agent-dev' piv enroll <device-id> --profile piv-authentication`. The command prompts once for the PIV PIN. The agent generates the key on the token, attests slot 9a, has the backend sign the CSR, verifies the chain against `issuing-ca.crt` and the key on the token, then imports the certificate.
+
+## Admin portal (web app)
+
+The portal API is served on the backend's `listen_portal` HTTPS listener (`localhost:8444` for the portal test
+instance). The browser signs in with the `sigil` OIDC client; `https://localhost:8444/callback` and
+`http://localhost:5173/callback` are registered in `dev/authentik/sigil.yaml`.
+
+Development (hot reload): start the backend with `[portal] dev_origins = ["http://localhost:5173"]` and run
+`npm run dev` in `web/`. Vite serves the app on `http://localhost:5173` and proxies `/portal-config.json` and the
+AdminService to the backend (`SIGIL_PORTAL_BACKEND` overrides the default `https://localhost:8444`).
+
+Production-style build: run `npm run build` in `web/`, then rebuild the backend. The backend serves the built app
+from its own HTTPS origin with the strict security headers, so open `https://localhost:8444/` directly.
+
+Sign in as a user in the `sigil-admins` or `sigil-helpdesk` group (for example `admin1`). Other users are refused by
+the API.

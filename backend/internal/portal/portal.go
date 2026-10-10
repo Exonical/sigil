@@ -11,10 +11,14 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"testing/fstest"
 )
 
-//go:embed dist
+//go:embed all:dist
 var distFiles embed.FS
+
+//go:embed placeholder/index.html
+var placeholderIndex []byte
 
 // Options configure the portal handler.
 type Options struct {
@@ -24,6 +28,9 @@ type Options struct {
 	ClientID string
 	// PublicURL is the portal origin the browser calls for the API.
 	PublicURL string
+	// RoleGroups maps the portal roles to the OIDC groups that grant them. The browser uses it to hide actions;
+	// the API enforces the same mapping.
+	RoleGroups map[string][]string
 	// DevOrigins are Vite dev-server origins that may call the API with CORS. Empty in production.
 	DevOrigins []string
 	// APIPrefix is the URL prefix of the Connect service, for example /sigil.admin.v1.AdminService/.
@@ -32,11 +39,19 @@ type Options struct {
 	API http.Handler
 }
 
+// placeholderFS serves the committed placeholder page until the web build has been copied into dist.
+func placeholderFS() fs.FS {
+	return fstest.MapFS{"index.html": {Data: placeholderIndex}}
+}
+
 // NewHandler returns the portal HTTP handler.
 func NewHandler(options Options) (http.Handler, error) {
 	assets, err := fs.Sub(distFiles, "dist")
 	if err != nil {
 		return nil, err
+	}
+	if _, err := fs.Stat(assets, "index.html"); err != nil {
+		assets = placeholderFS()
 	}
 	issuerOrigin, err := origin(options.Issuer)
 	if err != nil {
@@ -46,10 +61,11 @@ func NewHandler(options Options) (http.Handler, error) {
 	for _, value := range options.DevOrigins {
 		allowedDev[value] = true
 	}
-	config := map[string]string{
-		"issuer":   options.Issuer,
-		"clientId": options.ClientID,
-		"apiBase":  options.PublicURL,
+	config := map[string]any{
+		"issuer":     options.Issuer,
+		"clientId":   options.ClientID,
+		"apiBase":    options.PublicURL,
+		"roleGroups": options.RoleGroups,
 	}
 	configJSON, err := json.Marshal(config)
 	if err != nil {

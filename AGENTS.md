@@ -21,6 +21,18 @@ go test ./...
 
 After `go generate ./...`, run `git diff --exit-code` from the repository root to ensure generated code is up to date.
 
+The admin portal web app lives in `web/`. From `web/` (use `npm ci` for a clean install), run:
+
+```sh
+npm run generate
+npm run typecheck
+npm run lint
+npm run test
+npm run build
+```
+
+`npm run generate` rewrites `web/src/gen` from `proto/sigil/admin/v1/admin.proto`; the committed output must match it. `npm run build` copies the built app into `backend/internal/portal/dist`, which is git-ignored except for `.gitkeep`, so `git status` stays clean. Rebuild the backend after the web build so the embedded app is current.
+
 The Windows PC/SC hardware test is read-only and returns without hardware access unless `SIGIL_HARDWARE_TESTS=1` is set. Regular tests must remain hardware-free.
 
 To build the Windows x64 MSI with the pinned user-local .NET SDK and repo-local WiX tool, run from the workspace root:
