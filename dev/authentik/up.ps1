@@ -7,6 +7,7 @@ $environmentFile = Join-Path $secretsDirectory 'authentik.env'
 $usersFile = Join-Path $secretsDirectory 'users.txt'
 $clientFile = Join-Path $secretsDirectory 'test-client.txt'
 $caFile = Join-Path $secretsDirectory 'authentik-ca.pem'
+$authentikTlsDirectory = Join-Path $secretsDirectory 'authentik-tls'
 $blueprint = Join-Path $PSScriptRoot 'sigil.yaml'
 $networkName = 'sigil-authentik'
 $testDatabaseContainer = 'sigil-test-pg'
@@ -22,6 +23,16 @@ if (-not (Get-Command podman -ErrorAction SilentlyContinue)) {
     throw 'Podman is required to run the local Authentik environment.'
 }
 New-Item -ItemType Directory -Path $secretsDirectory -Force | Out-Null
+$backendDirectory = Join-Path $root 'backend'
+Push-Location $backendDirectory
+try {
+    $certificateOutput = & go run ./cmd/sigil-devcerts --out-dir $authentikTlsDirectory --authentik-localhost
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not generate the Authentik localhost TLS identity.'
+    }
+} finally {
+    Pop-Location
+}
 
 function New-RandomSecret {
     param([int]$ByteCount = 32)
@@ -127,19 +138,45 @@ function Ensure-Container {
         [string]$Name,
         [string]$Image,
         [string[]]$RunArguments,
-        [string[]]$Command = @()
+        [string[]]$Command = @(),
+        [string]$RequiredMountDirectory
     )
     & podman --connection $podmanConnection container exists $Name 2>$null
     if ($LASTEXITCODE -eq 0) {
         $containerState = (& podman --connection $podmanConnection inspect --format '{{.State.Status}}' $Name 2>$null).Trim()
-        if ($containerState -eq 'running') {
-            return
+        if ($RequiredMountDirectory) {
+            $mountOutput = & podman --connection $podmanConnection inspect --format '{{json .Mounts}}' $Name 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Could not inspect mounts for Authentik container $Name."
+            }
+            $mounts = ($mountOutput -join '') | ConvertFrom-Json
+            $sourceSuffix = '/dev/.secrets/' + [System.IO.Path]::GetFileName($RequiredMountDirectory)
+            $requiredMountExists = @($mounts | Where-Object {
+                $_.Destination -eq '/certs' -and
+                $_.Source.Replace('\', '/').EndsWith($sourceSuffix, [System.StringComparison]::OrdinalIgnoreCase)
+            }).Count -gt 0
+            if (-not $requiredMountExists) {
+                if ($containerState -ne 'exited' -and $containerState -ne 'created') {
+                    & podman --connection $podmanConnection stop $Name 2>$null | Out-Null
+                    $containerState = (& podman --connection $podmanConnection inspect --format '{{.State.Status}}' $Name 2>$null).Trim()
+                    if ($containerState -ne 'exited' -and $containerState -ne 'stopped') {
+                        throw "Could not stop Authentik container $Name to add the TLS certificate mount."
+                    }
+                }
+                Invoke-Podman @('rm', $Name)
+                $containerState = ''
+            }
         }
-        if ($containerState -eq 'exited' -or $containerState -eq 'created') {
-            Invoke-Podman @('start', $Name)
-            return
+        if ($containerState) {
+            if ($containerState -eq 'running') {
+                return
+            }
+            if ($containerState -eq 'exited' -or $containerState -eq 'created') {
+                Invoke-Podman @('start', $Name)
+                return
+            }
+            throw "Existing Authentik container $Name is in state $containerState."
         }
-        throw "Existing Authentik container $Name is in state $containerState."
     }
     Invoke-Podman (@('run', '--detach', '--name', $Name, '--network', $networkName, '--restart', 'unless-stopped') + $RunArguments + @($Image) + $Command)
 }
@@ -197,12 +234,14 @@ if (-not $databaseReady) {
 
 $blueprintMount = "type=bind,source=$blueprint,target=/blueprints/sigil.yaml,ro"
 $mediaMount = 'type=volume,source=sigil-authentik-media,target=/media'
-Ensure-Container $serverContainer $image @(
+$authentikTlsMount = "type=bind,source=$authentikTlsDirectory,target=/certs,ro"
+Ensure-Container -Name $serverContainer -Image $image -RunArguments @(
     '--env-file', $environmentFile,
     '--publish', '9000:9000',
     '--publish', '9443:9443',
-    '--mount', $mediaMount
-) @('server')
+    '--mount', $mediaMount,
+    '--mount', $authentikTlsMount
+) -Command @('server') -RequiredMountDirectory $authentikTlsDirectory
 
 $schemaReady = $false
 for ($attempt = 0; $attempt -lt 90; $attempt++) {
@@ -217,11 +256,28 @@ if (-not $schemaReady) {
     throw 'Authentik database migrations did not create the worker-status table.'
 }
 
-Ensure-Container $workerContainer $image @(
+Ensure-Container -Name $workerContainer -Image $image -RunArguments @(
     '--env-file', $environmentFile,
     '--mount', $mediaMount,
-    '--mount', $blueprintMount
-) @('worker')
+    '--mount', $blueprintMount,
+    '--mount', $authentikTlsMount
+) -Command @('worker') -RequiredMountDirectory $authentikTlsDirectory
+
+$workerIdentity = & podman --connection $podmanConnection exec $workerContainer /bin/sh -c 'id -un && test -r /certs/sigil-localhost/fullchain.pem && test -r /certs/sigil-localhost/privkey.pem'
+if ($LASTEXITCODE -ne 0) {
+    throw 'The Authentik worker cannot read the mounted localhost TLS certificate and key.'
+}
+$workerIdentityText = ($workerIdentity | Out-String).Trim()
+Write-Output "Authentik worker $workerIdentityText can read the mounted TLS identity."
+
+& podman --connection $podmanConnection exec $workerContainer ak import_certificate --certificate /certs/sigil-localhost/fullchain.pem --private-key /certs/sigil-localhost/privkey.pem --name sigil-localhost --verbosity 0 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Authentik could not import the mounted localhost TLS certificate.'
+}
+& podman --connection $podmanConnection exec $workerContainer ak apply_blueprint /blueprints/sigil.yaml --verbosity 0 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Authentik could not apply the Sigil blueprint after importing the localhost TLS certificate.'
+}
 
 $discoveryUrl = 'https://localhost:9443/application/o/sigil/.well-known/openid-configuration'
 $discoveryCode = 'import ssl,urllib.request;print(urllib.request.urlopen("https://localhost:9443/application/o/sigil/.well-known/openid-configuration",context=ssl._create_unverified_context(),timeout=5).read().decode())'
@@ -246,6 +302,57 @@ if (-not $providerReady) {
     throw 'The Sigil OIDC provider blueprint did not become available inside the Authentik server.'
 }
 
+$localhostCertificate = Get-Content -LiteralPath (Join-Path $authentikTlsDirectory 'sigil-localhost\fullchain.pem') -Raw
+$localhostCertificateBase64 = $localhostCertificate -replace '-----BEGIN CERTIFICATE-----', '' -replace '-----END CERTIFICATE-----', '' -replace '\s', ''
+$expectedCertificateDer = [Convert]::FromBase64String($localhostCertificateBase64)
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $expectedCertificateFingerprint = [Convert]::ToHexString($sha256.ComputeHash($expectedCertificateDer))
+} finally {
+    $sha256.Dispose()
+}
+
+function Get-ServedCertificateFingerprint {
+    $tcpClient = [System.Net.Sockets.TcpClient]::new()
+    $sslStream = $null
+    try {
+        $tcpClient.Connect('localhost', 9443)
+        $validationCallback = [System.Net.Security.RemoteCertificateValidationCallback]{
+            param($sender, $certificate, $chain, $errors)
+            return $true
+        }
+        $sslStream = [System.Net.Security.SslStream]::new($tcpClient.GetStream(), $false, $validationCallback)
+        $sslStream.AuthenticateAsClient('localhost')
+        $remoteCertificate = $sslStream.RemoteCertificate.GetRawCertData()
+        $hash = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            return [Convert]::ToHexString($hash.ComputeHash($remoteCertificate))
+        } finally {
+            $hash.Dispose()
+        }
+    } finally {
+        if ($sslStream) {
+            $sslStream.Dispose()
+        }
+        $tcpClient.Dispose()
+    }
+}
+
+$localhostCertificateServed = $false
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    try {
+        if ((Get-ServedCertificateFingerprint) -eq $expectedCertificateFingerprint) {
+            $localhostCertificateServed = $true
+            break
+        }
+    } catch {
+    }
+    Start-Sleep -Seconds 2
+}
+if (-not $localhostCertificateServed) {
+    throw 'Authentik is not serving the sigil-localhost certificate assigned to the default brand.'
+}
+
 $certificateCode = 'import base64,socket,ssl;connection=ssl._create_unverified_context().wrap_socket(socket.create_connection(("localhost",9443),timeout=5),server_hostname="localhost");print(base64.b64encode(connection.getpeercert(binary_form=True)).decode())'
 $certificateOutput = & podman --connection $podmanConnection exec $serverContainer python -c $certificateCode 2>$null
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($certificateOutput -join ''))) {
@@ -257,6 +364,11 @@ $pem = "-----BEGIN CERTIFICATE-----`n" +
     "-----END CERTIFICATE-----`n"
 Set-Content -LiteralPath $caFile -Value $pem -Encoding ascii
 
+$hostHttpStatus = & curl.exe -s --cacert $caFile -o NUL -w '%{http_code}' $discoveryUrl
+if ($LASTEXITCODE -ne 0 -or ($hostHttpStatus -join '').Trim() -ne '200') {
+    throw 'Windows could not verify Authentik OIDC discovery with the exported localhost certificate.'
+}
+
 Write-Output "Authentik $($image.Split(':')[-1]) server, worker and PostgreSQL are running."
-Write-Output "Container-local OIDC discovery issuer: $($discovery.issuer)"
-Write-Output "Container-local OIDC discovery URL: $discoveryUrl"
+Write-Output "Verified Windows OIDC discovery issuer: $($discovery.issuer)"
+Write-Output "Verified Windows OIDC discovery HTTP status: $($hostHttpStatus -join '')"

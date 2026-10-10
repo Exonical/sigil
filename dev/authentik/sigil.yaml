@@ -125,3 +125,10 @@ entries:
       name: Sigil development test client
       slug: sigil-dev-test
       provider: !KeyOf sigil-dev-test-provider
+  - model: authentik_brands.brand
+    state: present
+    identifiers:
+      domain: authentik-default
+      default: true
+    attrs:
+      web_certificate: !Find [authentik_crypto.certificatekeypair, [name, sigil-localhost]]
