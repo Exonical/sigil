@@ -3,7 +3,7 @@
 use std::io::Read;
 
 use const_oid::ObjectIdentifier;
-use der::Decode;
+use der::{Decode, DecodePem, Encode};
 use flate2::read::GzDecoder;
 use pkcs1::{RsaPublicKey, der::Decode as Pkcs1Decode};
 use sha2::{Digest, Sha256};
@@ -215,6 +215,16 @@ pub fn encode_certificate(der: &[u8], format: CertificateFormat) -> Vec<u8> {
     }
 }
 
+pub fn decode_certificate(encoded: &[u8]) -> Result<Vec<u8>> {
+    if encoded.starts_with(b"-----BEGIN CERTIFICATE-----") {
+        return Certificate::from_pem(encoded)
+            .and_then(|certificate| certificate.to_der())
+            .map_err(|error| CredentialError::CertificateParse(error.to_string()));
+    }
+    summarize_certificate(encoded)?;
+    Ok(encoded.to_vec())
+}
+
 fn certificate_parse(error: CredentialError) -> CredentialError {
     CredentialError::CertificateParse(error.to_string())
 }
@@ -416,5 +426,7 @@ mod tests {
         assert!(pem_text.starts_with("-----BEGIN CERTIFICATE-----\n"));
         let parsed = Certificate::from_pem(pem_text.as_bytes()).unwrap();
         assert_eq!(parsed.to_der().unwrap(), P256_CERT);
+        assert_eq!(decode_certificate(&pem).unwrap(), P256_CERT);
+        assert_eq!(decode_certificate(P256_CERT).unwrap(), P256_CERT);
     }
 }

@@ -39,6 +39,7 @@ fn application_to_proto(value: &core::Application) -> i32 {
         core::Application::Otp => v1::Application::Otp as i32,
         core::Application::OpenPgp => v1::Application::OpenPgp as i32,
         core::Application::Oath => v1::Application::Oath as i32,
+        core::Application::YubiHsmAuth => v1::Application::YubiHsmAuth as i32,
     }
 }
 
@@ -50,6 +51,7 @@ fn application_from_proto(value: i32) -> core::Result<core::Application> {
         v1::Application::Otp => Ok(core::Application::Otp),
         v1::Application::OpenPgp => Ok(core::Application::OpenPgp),
         v1::Application::Oath => Ok(core::Application::Oath),
+        v1::Application::YubiHsmAuth => Ok(core::Application::YubiHsmAuth),
         v1::Application::Unspecified => Err(invalid_proto("unspecified application")),
     }
 }
@@ -113,6 +115,28 @@ impl From<&core::DeviceInfo> for v1::DeviceInfo {
                 core::MetadataAccess::Restricted => v1::MetadataAccess::Restricted as i32,
             },
             fips: value.fips,
+            usb_enabled: value.usb_enabled.iter().map(application_to_proto).collect(),
+            usb_supported: value
+                .usb_supported
+                .iter()
+                .map(application_to_proto)
+                .collect(),
+            nfc_enabled: value.nfc_enabled.iter().map(application_to_proto).collect(),
+            nfc_supported: value
+                .nfc_supported
+                .iter()
+                .map(application_to_proto)
+                .collect(),
+            config_locked: value.config_locked,
+            fips_approved_available: value.fips_approved.is_some(),
+            fips_approved: value
+                .fips_approved
+                .as_ref()
+                .into_iter()
+                .flatten()
+                .map(application_to_proto)
+                .collect(),
+            pin_complexity: value.pin_complexity,
         }
     }
 }
@@ -153,6 +177,38 @@ impl TryFrom<v1::DeviceInfo> for core::DeviceInfo {
                 v1::MetadataAccess::Restricted => core::MetadataAccess::Restricted,
             },
             fips: value.fips,
+            usb_enabled: value
+                .usb_enabled
+                .into_iter()
+                .map(application_from_proto)
+                .collect::<core::Result<_>>()?,
+            usb_supported: value
+                .usb_supported
+                .into_iter()
+                .map(application_from_proto)
+                .collect::<core::Result<_>>()?,
+            nfc_enabled: value
+                .nfc_enabled
+                .into_iter()
+                .map(application_from_proto)
+                .collect::<core::Result<_>>()?,
+            nfc_supported: value
+                .nfc_supported
+                .into_iter()
+                .map(application_from_proto)
+                .collect::<core::Result<_>>()?,
+            config_locked: value.config_locked,
+            fips_approved: value
+                .fips_approved_available
+                .then(|| {
+                    value
+                        .fips_approved
+                        .into_iter()
+                        .map(application_from_proto)
+                        .collect::<core::Result<Vec<_>>>()
+                })
+                .transpose()?,
+            pin_complexity: value.pin_complexity,
         })
     }
 }
@@ -742,9 +798,26 @@ mod tests {
             connection: Some(Transport::UsbSmartCard),
             transports: vec![Transport::UsbSmartCard, Transport::Nfc],
             applications: vec![Application::Piv, Application::Fido2],
-            supported_applications: vec![Application::Piv, Application::Fido2, Application::Otp],
+            supported_applications: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::Otp,
+                Application::YubiHsmAuth,
+            ],
             simulated: false,
             metadata_access: MetadataAccess::Available,
+            usb_enabled: vec![Application::Piv, Application::Fido2],
+            usb_supported: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::Otp,
+                Application::YubiHsmAuth,
+            ],
+            nfc_enabled: vec![Application::Piv],
+            nfc_supported: vec![Application::Piv, Application::Oath],
+            config_locked: Some(false),
+            fips_approved: Some(vec![Application::Piv]),
+            pin_complexity: Some(true),
         }
     }
 

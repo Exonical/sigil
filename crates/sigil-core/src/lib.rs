@@ -36,6 +36,7 @@ pub enum Application {
     Otp,
     OpenPgp,
     Oath,
+    YubiHsmAuth,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,6 +59,20 @@ pub struct DeviceInfo {
     /// Whether the device reports FIPS-capable PIV firmware.
     #[serde(default)]
     pub fips: Option<bool>,
+    #[serde(default)]
+    pub usb_enabled: Vec<Application>,
+    #[serde(default)]
+    pub usb_supported: Vec<Application>,
+    #[serde(default)]
+    pub nfc_enabled: Vec<Application>,
+    #[serde(default)]
+    pub nfc_supported: Vec<Application>,
+    #[serde(default)]
+    pub config_locked: Option<bool>,
+    #[serde(default)]
+    pub fips_approved: Option<Vec<Application>>,
+    #[serde(default)]
+    pub pin_complexity: Option<bool>,
     /// How this discovery entry is currently reached (USB CCID, USB HID, or NFC). `transports` lists interfaces the device supports/enables.
     #[serde(default)]
     pub connection: Option<Transport>,
@@ -310,4 +325,15 @@ pub trait PivManagement: Send + Sync {
     ) -> Result<()>;
 
     fn reset(&self, id: &DeviceId, expected_serial: &str) -> Result<()>;
+}
+
+pub trait DeviceManagement: Send + Sync {
+    fn set_enabled_applications(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        usb: &[Application],
+        nfc: Option<&[Application]>,
+        lock_code: Option<&Secret>,
+    ) -> Result<()>;
 }

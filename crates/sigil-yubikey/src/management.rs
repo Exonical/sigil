@@ -1,19 +1,30 @@
-//! Read-only parsing of Yubico's management application device information.
-//! APDU transport stays private to the platform provider.
+//! Yubico management application protocol. APDU transport stays private to the
+//! provider crate.
 
 use std::collections::BTreeMap;
 
-use sigil_core::{Application, FirmwareVersion, Transport};
+use sigil_core::{Application, CredentialError, FirmwareVersion, Result, Secret, Transport};
+use sigil_piv::{CardTransport, transceive};
 
-const TAG_USB_SUPPORTED: u8 = 0x01;
+pub const TAG_USB_SUPPORTED: u8 = 0x01;
 const TAG_SERIAL: u8 = 0x02;
-const TAG_USB_ENABLED: u8 = 0x03;
+pub const TAG_USB_ENABLED: u8 = 0x03;
 const TAG_FORM_FACTOR: u8 = 0x04;
 const TAG_VERSION: u8 = 0x05;
 pub const TAG_MORE_DATA: u8 = 0x10;
-const TAG_NFC_SUPPORTED: u8 = 0x0d;
-const TAG_NFC_ENABLED: u8 = 0x0e;
+pub const TAG_CONFIG_LOCK: u8 = 0x0a;
+pub const TAG_UNLOCK: u8 = 0x0b;
+pub const TAG_REBOOT: u8 = 0x0c;
+pub const TAG_NFC_SUPPORTED: u8 = 0x0d;
+pub const TAG_NFC_ENABLED: u8 = 0x0e;
 pub const TAG_FIPS_CAPABLE: u8 = 0x14;
+pub const TAG_FIPS_APPROVED: u8 = 0x15;
+// yubikit/management.py defines PIN complexity as 0x16 and NFC restricted as 0x17:
+// https://github.com/Yubico/yubikey-manager/blob/main/yubikit/management.py.
+pub const TAG_PIN_COMPLEXITY: u8 = 0x16;
+const INS_WRITE_CONFIG: u8 = 0x1c;
+const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
+const MAX_INFO_PAGES: u8 = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
@@ -48,10 +59,13 @@ pub struct ManagementInfo {
     pub form_factor: Option<String>,
     pub fips: Option<bool>,
     pub transports: Vec<Transport>,
-    pub enabled_applications: Vec<Application>,
-    pub supported_applications: Vec<Application>,
+    pub usb_enabled_applications: Vec<Application>,
+    pub usb_supported_applications: Vec<Application>,
     pub nfc_enabled_applications: Vec<Application>,
     pub nfc_supported_applications: Vec<Application>,
+    pub config_locked: Option<bool>,
+    pub fips_approved_applications: Option<Vec<Application>>,
+    pub pin_complexity: Option<bool>,
 }
 
 impl ManagementInfo {
@@ -68,6 +82,15 @@ impl ManagementInfo {
             .get(&TAG_NFC_SUPPORTED)
             .map(|bytes| parse_number(bytes));
         let nfc_enabled_bits = tags.get(&TAG_NFC_ENABLED).map(|bytes| parse_number(bytes));
+        let config_locked = tags
+            .get(&TAG_CONFIG_LOCK)
+            .map(|bytes| bytes.as_slice() == [1]);
+        let fips_approved = tags
+            .get(&TAG_FIPS_APPROVED)
+            .map(|bytes| applications(parse_number(bytes)));
+        let pin_complexity = tags
+            .get(&TAG_PIN_COMPLEXITY)
+            .map(|bytes| bytes.as_slice() == [1]);
         let fips = tags
             .get(&TAG_FIPS_CAPABLE)
             .map(|bytes| parse_number(bytes) & 0x02 != 0);
@@ -119,12 +142,55 @@ impl ManagementInfo {
             form_factor,
             fips,
             transports,
-            enabled_applications: enabled_bits.map(applications).unwrap_or_default(),
-            supported_applications: applications(supported_bits),
+            usb_enabled_applications: enabled_bits.map(applications).unwrap_or_default(),
+            usb_supported_applications: applications(supported_bits),
             nfc_enabled_applications: nfc_enabled_bits.map(applications).unwrap_or_default(),
             nfc_supported_applications: nfc_supported_bits.map(applications).unwrap_or_default(),
+            config_locked,
+            fips_approved_applications: fips_approved,
+            pin_complexity,
         })
     }
+}
+
+pub fn read_info<T: CardTransport>(transport: &mut T) -> Result<ManagementInfo> {
+    let mut select = vec![0x00, 0xa4, 0x04, 0x00, MANAGEMENT_AID.len() as u8];
+    select.extend_from_slice(&MANAGEMENT_AID);
+    let (select_data, status) = transceive(transport, &select)?;
+    if status != 0x9000 {
+        return Err(CredentialError::CardStatus(status));
+    }
+    let select_version = parse_select_version(&select_data);
+    let mut all_tags = Tags::new();
+    for page in 0..MAX_INFO_PAGES {
+        let (encoded, status) = transceive(transport, &[0x00, 0x1d, page, 0x00, 0x00])?;
+        if status != 0x9000 {
+            return Err(CredentialError::CardStatus(status));
+        }
+        let mut tags = parse_page(&encoded)
+            .map_err(|error| CredentialError::SmartCardOperation(format!("{error:?}")))?;
+        let more = tags
+            .remove(&TAG_MORE_DATA)
+            .is_some_and(|value| value.iter().any(|byte| *byte != 0));
+        all_tags.append(&mut tags);
+        if !more {
+            return ManagementInfo::from_tags(&all_tags, select_version)
+                .map_err(|error| CredentialError::SmartCardOperation(format!("{error:?}")));
+        }
+    }
+    Err(CredentialError::SmartCardOperation(
+        "YubiKey management information exceeded the maximum number of pages".into(),
+    ))
+}
+
+fn parse_select_version(response: &[u8]) -> Option<FirmwareVersion> {
+    let text = std::str::from_utf8(response).ok()?;
+    let mut parts = text.split('.');
+    Some(FirmwareVersion {
+        major: parts.next()?.parse().ok()?,
+        minor: parts.next()?.parse().ok()?,
+        patch: parts.next()?.parse().ok()?,
+    })
 }
 
 fn parse_number(bytes: &[u8]) -> u64 {
@@ -142,6 +208,7 @@ fn applications(bits: u64) -> Vec<Application> {
         (0x01, Application::Otp),
         (0x08, Application::OpenPgp),
         (0x20, Application::Oath),
+        (0x0100, Application::YubiHsmAuth),
     ] {
         if bits & mask != 0 {
             apps.push(app);
@@ -150,9 +217,97 @@ fn applications(bits: u64) -> Vec<Application> {
     apps
 }
 
+fn application_mask(applications: &[Application]) -> u16 {
+    applications.iter().fold(0u16, |mask, application| {
+        mask | match application {
+            Application::Piv => 0x0010,
+            Application::Fido2 => 0x0200,
+            Application::U2f => 0x0002,
+            Application::Otp => 0x0001,
+            Application::OpenPgp => 0x0008,
+            Application::Oath => 0x0020,
+            Application::YubiHsmAuth => 0x0100,
+        }
+    })
+}
+
+/// Write enabled USB/NFC capabilities and reboot using Yubico's management
+/// applet configuration encoding (`DeviceConfig.get_bytes` in yubikit).
+/// See https://github.com/Yubico/yubikey-manager/blob/main/yubikit/management.py.
+pub fn write_config<T: CardTransport>(
+    transport: &mut T,
+    usb: &[Application],
+    nfc: Option<&[Application]>,
+    lock_code: Option<&Secret>,
+) -> Result<()> {
+    if lock_code.is_some_and(|code| code.expose().len() != 16) {
+        return Err(CredentialError::SmartCardOperation(
+            "configuration lock code must be 16 bytes".into(),
+        ));
+    }
+
+    let mut tlvs = sigil_piv::tlv::encode(u16::from(TAG_REBOOT), &[])?;
+    if let Some(lock_code) = lock_code {
+        tlvs.extend(sigil_piv::tlv::encode(
+            u16::from(TAG_UNLOCK),
+            lock_code.expose(),
+        )?);
+    }
+    tlvs.extend(sigil_piv::tlv::encode(
+        u16::from(TAG_USB_ENABLED),
+        &application_mask(usb).to_be_bytes(),
+    )?);
+    if let Some(nfc) = nfc {
+        tlvs.extend(sigil_piv::tlv::encode(
+            u16::from(TAG_NFC_ENABLED),
+            &application_mask(nfc).to_be_bytes(),
+        )?);
+    }
+    if tlvs.len() > u8::MAX as usize {
+        return Err(CredentialError::SmartCardOperation(
+            "management configuration exceeds 255 bytes".into(),
+        ));
+    }
+    let mut data = Vec::with_capacity(tlvs.len() + 1);
+    data.push(tlvs.len() as u8);
+    data.extend_from_slice(&tlvs);
+    let mut command = vec![0x00, INS_WRITE_CONFIG, 0x00, 0x00, data.len() as u8];
+    command.extend_from_slice(&data);
+    let (_, status) = transceive(transport, &command)?;
+    if status == 0x9000 {
+        Ok(())
+    } else {
+        Err(CredentialError::CardStatus(status))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use super::*;
+
+    struct ScriptedTransport {
+        commands: VecDeque<Vec<u8>>,
+        responses: VecDeque<Vec<u8>>,
+    }
+
+    impl CardTransport for ScriptedTransport {
+        fn transmit(&mut self, command: &[u8]) -> Result<Vec<u8>> {
+            assert_eq!(self.commands.pop_front().as_deref(), Some(command));
+            Ok(self.responses.pop_front().expect("scripted response"))
+        }
+    }
+
+    fn encoded_page(tags: &[(u8, Vec<u8>)]) -> Vec<u8> {
+        let payload = tags
+            .iter()
+            .flat_map(|(tag, value)| sigil_piv::tlv::encode(u16::from(*tag), value).unwrap())
+            .collect::<Vec<_>>();
+        let mut page = vec![payload.len() as u8];
+        page.extend(payload);
+        page
+    }
 
     #[test]
     fn parses_serial_version_and_distinct_enabled_capabilities() {
@@ -165,14 +320,135 @@ mod tests {
         let info = ManagementInfo::from_tags(&tags, None).expect("management info");
         assert_eq!(info.serial.as_deref(), Some("12345678"));
         assert_eq!(info.form_factor.as_deref(), Some("Keychain (USB-C)"));
-        assert!(info.supported_applications.contains(&Application::Oath));
-        assert!(!info.enabled_applications.contains(&Application::Oath));
-        assert!(info.enabled_applications.contains(&Application::Fido2));
+        assert!(info.usb_supported_applications.contains(&Application::Oath));
+        assert!(!info.usb_enabled_applications.contains(&Application::Oath));
+        assert!(info.usb_enabled_applications.contains(&Application::Fido2));
         assert!(info.nfc_supported_applications.contains(&Application::Oath));
         assert_eq!(info.nfc_enabled_applications, vec![Application::Piv]);
         assert!(!info.nfc_enabled_applications.contains(&Application::Fido2));
         assert!(info.transports.contains(&Transport::Nfc));
         assert_eq!(info.fips, Some(true));
+    }
+
+    #[test]
+    fn parses_all_configuration_and_approval_metadata() {
+        let tags = [
+            (TAG_USB_SUPPORTED, vec![0x03, 0x3b]),
+            (TAG_USB_ENABLED, vec![0x02, 0x10]),
+            (TAG_NFC_SUPPORTED, vec![0x03, 0x39]),
+            (TAG_NFC_ENABLED, vec![0x00, 0x20]),
+            (TAG_CONFIG_LOCK, vec![0x01]),
+            (TAG_FIPS_APPROVED, vec![0x02, 0x10]),
+            (TAG_PIN_COMPLEXITY, vec![0x01]),
+        ]
+        .into_iter()
+        .collect();
+        let info = ManagementInfo::from_tags(&tags, None).unwrap();
+
+        assert_eq!(
+            info.usb_supported_applications,
+            vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+                Application::YubiHsmAuth,
+            ]
+        );
+        assert_eq!(
+            info.usb_enabled_applications,
+            vec![Application::Piv, Application::Fido2]
+        );
+        assert_eq!(
+            info.nfc_supported_applications,
+            vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+                Application::YubiHsmAuth,
+            ]
+        );
+        assert_eq!(info.nfc_enabled_applications, vec![Application::Oath]);
+        assert_eq!(
+            info.fips_approved_applications,
+            Some(vec![Application::Piv, Application::Fido2])
+        );
+        assert_eq!(info.config_locked, Some(true));
+        assert_eq!(info.pin_complexity, Some(true));
+    }
+
+    #[test]
+    fn parses_missing_configuration_metadata_as_unknown() {
+        let tags = [(TAG_USB_SUPPORTED, vec![0x00, 0x10])]
+            .into_iter()
+            .collect();
+        let info = ManagementInfo::from_tags(&tags, None).unwrap();
+        assert!(info.usb_enabled_applications.is_empty());
+        assert!(info.nfc_supported_applications.is_empty());
+        assert_eq!(info.config_locked, None);
+        assert_eq!(info.fips_approved_applications, None);
+        assert_eq!(info.pin_complexity, None);
+    }
+
+    #[test]
+    fn application_mask_covers_all_yubico_management_bits() {
+        assert_eq!(
+            application_mask(&[
+                Application::Otp,
+                Application::U2f,
+                Application::OpenPgp,
+                Application::Piv,
+                Application::Oath,
+                Application::YubiHsmAuth,
+                Application::Fido2,
+            ]),
+            0x033b
+        );
+    }
+
+    #[test]
+    fn read_info_selects_management_applet_and_collects_pages() {
+        let mut select = vec![0x00, 0xa4, 0x04, 0x00, MANAGEMENT_AID.len() as u8];
+        select.extend_from_slice(&MANAGEMENT_AID);
+        let page0 = encoded_page(&[
+            (TAG_MORE_DATA, vec![0x01]),
+            (TAG_USB_SUPPORTED, vec![0x00, 0x10]),
+        ]);
+        let page1 = encoded_page(&[
+            (TAG_USB_ENABLED, vec![0x00, 0x10]),
+            (TAG_SERIAL, vec![0x00, 0xbc, 0x61, 0x4e]),
+            (TAG_CONFIG_LOCK, vec![0x00]),
+            (TAG_PIN_COMPLEXITY, vec![0x01]),
+        ]);
+        let mut page0_response = page0;
+        page0_response.extend_from_slice(&[0x90, 0x00]);
+        let mut page1_response = page1;
+        page1_response.extend_from_slice(&[0x90, 0x00]);
+        let mut select_response = b"5.7.4".to_vec();
+        select_response.extend_from_slice(&[0x90, 0x00]);
+        let mut transport = ScriptedTransport {
+            commands: [
+                select,
+                vec![0x00, 0x1d, 0x00, 0x00, 0x00],
+                vec![0x00, 0x1d, 0x01, 0x00, 0x00],
+            ]
+            .into(),
+            responses: [select_response, page0_response, page1_response].into(),
+        };
+
+        let info = read_info(&mut transport).unwrap();
+
+        assert_eq!(info.serial.as_deref(), Some("12345678"));
+        assert_eq!(info.firmware.as_ref().map(|version| version.major), Some(5));
+        assert_eq!(info.config_locked, Some(false));
+        assert_eq!(info.pin_complexity, Some(true));
+        assert_eq!(info.usb_enabled_applications, vec![Application::Piv]);
+        assert!(transport.commands.is_empty());
+        assert!(transport.responses.is_empty());
     }
 
     #[test]
@@ -208,6 +484,75 @@ mod tests {
                 .expect("extended")
                 .get(&0x13),
             Some(&vec![b'A'])
+        );
+    }
+
+    #[test]
+    fn write_config_encodes_reboot_usb_and_nfc_applications() {
+        let expected = vec![
+            0x00, 0x1c, 0x00, 0x00, 0x0b, 0x0a, 0x0c, 0x00, 0x03, 0x02, 0x02, 0x10, 0x0e, 0x02,
+            0x00, 0x20,
+        ];
+        let mut transport = ScriptedTransport {
+            commands: [expected.clone()].into(),
+            responses: [vec![0x90, 0x00]].into(),
+        };
+
+        write_config(
+            &mut transport,
+            &[Application::Piv, Application::Fido2],
+            Some(&[Application::Oath]),
+            None,
+        )
+        .unwrap();
+
+        assert!(transport.commands.is_empty());
+    }
+
+    #[test]
+    fn write_config_encodes_unlock_lock_code_and_omits_unspecified_nfc() {
+        let lock_code = Secret::new(vec![0x5a; 16]);
+        let mut expected = vec![0x00, 0x1c, 0x00, 0x00, 0x19, 0x18, 0x0c, 0x00, 0x0b, 0x10];
+        expected.extend([0x5a; 16]);
+        expected.extend_from_slice(&[0x03, 0x02, 0x00, 0x10]);
+        let mut transport = ScriptedTransport {
+            commands: [expected].into(),
+            responses: [vec![0x90, 0x00]].into(),
+        };
+
+        write_config(&mut transport, &[Application::Piv], None, Some(&lock_code)).unwrap();
+
+        assert!(transport.commands.is_empty());
+    }
+
+    #[test]
+    fn write_config_rejects_invalid_lock_code_and_preserves_card_status() {
+        let mut unused_transport = ScriptedTransport {
+            commands: VecDeque::new(),
+            responses: VecDeque::new(),
+        };
+        let short_lock_code = Secret::new(vec![0x33; 15]);
+        assert!(
+            write_config(
+                &mut unused_transport,
+                &[Application::Piv],
+                None,
+                Some(&short_lock_code)
+            )
+            .is_err()
+        );
+        assert!(unused_transport.commands.is_empty());
+
+        let expected = vec![
+            0x00, 0x1c, 0x00, 0x00, 0x07, 0x06, 0x0c, 0x00, 0x03, 0x02, 0x00, 0x10,
+        ];
+        let mut rejected = ScriptedTransport {
+            commands: [expected].into(),
+            responses: [vec![0x69, 0x85]].into(),
+        };
+        assert_eq!(
+            write_config(&mut rejected, &[Application::Piv], None, None),
+            Err(CredentialError::CardStatus(0x6985))
         );
     }
 }

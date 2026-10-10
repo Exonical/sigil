@@ -10,11 +10,12 @@ use std::{
 
 use sigil_core::{
     Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
-    DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint, FingerprintProgress,
-    FirmwareVersion, KeyOrigin, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
-    ManagementKeyStatus, MetadataAccess, PinPolicy, PivAlgorithm, PivAttestation, PivCertificate,
-    PivInfo, PivInspection, PivKeyAlgorithm, PivKeyMetadata, PivManagement, PivPin, PivPuk,
-    PivSlot, PivSlotInfo, Result, RetryStatus, TouchPolicy, Transport,
+    DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
+    FingerprintProgress, FirmwareVersion, KeyOrigin, KeyStatus, ManagementKey,
+    ManagementKeyAlgorithm, ManagementKeyStatus, MetadataAccess, PinPolicy, PivAlgorithm,
+    PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyAlgorithm, PivKeyMetadata,
+    PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, RetryStatus, Secret, TouchPolicy,
+    Transport,
 };
 
 struct MockPivSlot {
@@ -218,6 +219,7 @@ impl MockDiscovery {
                 Application::Otp,
                 Application::OpenPgp,
                 Application::Oath,
+                Application::YubiHsmAuth,
             ],
             supported_applications: vec![
                 Application::Piv,
@@ -226,9 +228,49 @@ impl MockDiscovery {
                 Application::Otp,
                 Application::OpenPgp,
                 Application::Oath,
+                Application::YubiHsmAuth,
             ],
             simulated: true,
             metadata_access: MetadataAccess::Available,
+            usb_enabled: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+                Application::YubiHsmAuth,
+            ],
+            usb_supported: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+                Application::YubiHsmAuth,
+            ],
+            nfc_enabled: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+                Application::YubiHsmAuth,
+            ],
+            nfc_supported: vec![
+                Application::Piv,
+                Application::Fido2,
+                Application::U2f,
+                Application::Otp,
+                Application::OpenPgp,
+                Application::Oath,
+                Application::YubiHsmAuth,
+            ],
+            config_locked: Some(false),
+            fips_approved: Some(Vec::new()),
+            pin_complexity: Some(true),
         }])
     }
 
@@ -718,6 +760,50 @@ fn verify_mock_management_key(state: &MockPivState, key: &ManagementKey) -> Resu
 const P256_CERT: &[u8] = include_bytes!("../fixtures/piv-9a-p256.der");
 const RSA_CERT: &[u8] = include_bytes!("../fixtures/piv-9d-rsa2048.der");
 const CARD_AUTH_CERT: &[u8] = include_bytes!("../fixtures/piv-9e-p256.der");
+
+impl DeviceManagement for MockDiscovery {
+    fn set_enabled_applications(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        usb: &[Application],
+        nfc: Option<&[Application]>,
+        lock_code: Option<&Secret>,
+    ) -> Result<()> {
+        self.verify_expected_serial(id, expected_serial)?;
+        if lock_code.is_some_and(|code| code.expose().len() != 16) {
+            return Err(CredentialError::SmartCardOperation(
+                "configuration lock code must be 16 bytes".into(),
+            ));
+        }
+        let updated = {
+            let mut devices = self
+                .devices
+                .lock()
+                .map_err(|_| CredentialError::InventoryUnavailable)?;
+            let device = devices
+                .iter_mut()
+                .find(|device| device.id == *id)
+                .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))?;
+            if device.config_locked == Some(true) && lock_code.is_none() {
+                return Err(CredentialError::SmartCardOperation(
+                    "the YubiKey configuration lock code is required".into(),
+                ));
+            }
+            device.usb_enabled = usb.to_vec();
+            if let Some(nfc) = nfc {
+                device.nfc_enabled = nfc.to_vec();
+            }
+            device.applications = if device.connection == Some(Transport::Nfc) {
+                device.nfc_enabled.clone()
+            } else {
+                device.usb_enabled.clone()
+            };
+            device.clone()
+        };
+        self.publish(DeviceEvent::Updated(updated))
+    }
+}
 
 impl DeviceDiscovery for MockDiscovery {
     fn list(&self) -> Result<Vec<DeviceInfo>> {

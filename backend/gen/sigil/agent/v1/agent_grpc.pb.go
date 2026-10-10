@@ -22,6 +22,7 @@ const (
 	Agent_GetAgentInfo_FullMethodName                = "/sigil.agent.v1.Agent/GetAgentInfo"
 	Agent_ListDevices_FullMethodName                 = "/sigil.agent.v1.Agent/ListDevices"
 	Agent_GetDevice_FullMethodName                   = "/sigil.agent.v1.Agent/GetDevice"
+	Agent_SetEnabledApplications_FullMethodName      = "/sigil.agent.v1.Agent/SetEnabledApplications"
 	Agent_WatchDevices_FullMethodName                = "/sigil.agent.v1.Agent/WatchDevices"
 	Agent_GetFidoStatus_FullMethodName               = "/sigil.agent.v1.Agent/GetFidoStatus"
 	Agent_ListDiscoverableCredentials_FullMethodName = "/sigil.agent.v1.Agent/ListDiscoverableCredentials"
@@ -51,6 +52,7 @@ type AgentClient interface {
 	GetAgentInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*GetAgentInfoResponse, error)
 	ListDevices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListDevicesResponse, error)
 	GetDevice(ctx context.Context, in *GetDeviceRequest, opts ...grpc.CallOption) (*DeviceInfo, error)
+	SetEnabledApplications(ctx context.Context, in *SetEnabledApplicationsRequest, opts ...grpc.CallOption) (*Empty, error)
 	WatchDevices(ctx context.Context, in *Empty, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DeviceEvent], error)
 	GetFidoStatus(ctx context.Context, in *DeviceRequest, opts ...grpc.CallOption) (*FidoStatus, error)
 	ListDiscoverableCredentials(ctx context.Context, in *PinRequest, opts ...grpc.CallOption) (*DiscoverableCredentialList, error)
@@ -105,6 +107,16 @@ func (c *agentClient) GetDevice(ctx context.Context, in *GetDeviceRequest, opts 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeviceInfo)
 	err := c.cc.Invoke(ctx, Agent_GetDevice_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentClient) SetEnabledApplications(ctx context.Context, in *SetEnabledApplicationsRequest, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, Agent_SetEnabledApplications_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +348,7 @@ type AgentServer interface {
 	GetAgentInfo(context.Context, *Empty) (*GetAgentInfoResponse, error)
 	ListDevices(context.Context, *Empty) (*ListDevicesResponse, error)
 	GetDevice(context.Context, *GetDeviceRequest) (*DeviceInfo, error)
+	SetEnabledApplications(context.Context, *SetEnabledApplicationsRequest) (*Empty, error)
 	WatchDevices(*Empty, grpc.ServerStreamingServer[DeviceEvent]) error
 	GetFidoStatus(context.Context, *DeviceRequest) (*FidoStatus, error)
 	ListDiscoverableCredentials(context.Context, *PinRequest) (*DiscoverableCredentialList, error)
@@ -374,6 +387,9 @@ func (UnimplementedAgentServer) ListDevices(context.Context, *Empty) (*ListDevic
 }
 func (UnimplementedAgentServer) GetDevice(context.Context, *GetDeviceRequest) (*DeviceInfo, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDevice not implemented")
+}
+func (UnimplementedAgentServer) SetEnabledApplications(context.Context, *SetEnabledApplicationsRequest) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetEnabledApplications not implemented")
 }
 func (UnimplementedAgentServer) WatchDevices(*Empty, grpc.ServerStreamingServer[DeviceEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchDevices not implemented")
@@ -506,6 +522,24 @@ func _Agent_GetDevice_Handler(srv interface{}, ctx context.Context, dec func(int
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AgentServer).GetDevice(ctx, req.(*GetDeviceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agent_SetEnabledApplications_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetEnabledApplicationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentServer).SetEnabledApplications(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agent_SetEnabledApplications_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentServer).SetEnabledApplications(ctx, req.(*SetEnabledApplicationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -874,6 +908,10 @@ var Agent_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDevice",
 			Handler:    _Agent_GetDevice_Handler,
+		},
+		{
+			MethodName: "SetEnabledApplications",
+			Handler:    _Agent_SetEnabledApplications_Handler,
 		},
 		{
 			MethodName: "GetFidoStatus",

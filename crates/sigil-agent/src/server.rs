@@ -3,8 +3,9 @@ use std::{collections::HashMap, pin::Pin, sync::Arc};
 use futures_util::Stream;
 use sigil_app::CredentialService;
 use sigil_core::{
-    CredentialError, DeviceId, ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm,
-    PivKeyConfiguration, PivPin, PivPuk, PivSlot, Result as CoreResult, TouchPolicy,
+    Application, CredentialError, DeviceId, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
+    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, Result as CoreResult, Secret,
+    TouchPolicy,
 };
 use sigil_proto::{status_from_error, v1};
 use tokio::{sync::mpsc, task};
@@ -120,6 +121,33 @@ impl AgentService {
         Ok(identity)
     }
 
+    fn caller_device<T>(
+        &self,
+        request: &Request<T>,
+        rpc: &'static str,
+        device_id: &str,
+        operation: &'static str,
+    ) -> std::result::Result<CallerIdentity, Status> {
+        let identity = request
+            .extensions()
+            .get::<CallerIdentity>()
+            .cloned()
+            .unwrap_or_else(CallerIdentity::rejected);
+        if let Err(error) = caller::authorize(&identity, self.policy) {
+            let status = status_from_error(&error);
+            audit_device::<()>(
+                &identity,
+                rpc,
+                device_id,
+                operation,
+                "",
+                &Err(status.clone()),
+            );
+            return Err(status);
+        }
+        Ok(identity)
+    }
+
     async fn device_serial(&self, id: &DeviceId) -> std::result::Result<String, Status> {
         let credentials = self.credentials.clone();
         let device_id = id.clone();
@@ -141,6 +169,31 @@ impl AgentService {
             return Err(status_from_error(&CredentialError::DeviceMismatch));
         }
         Ok(actual)
+    }
+
+    async fn preflight_device_serial(
+        &self,
+        caller: &CallerIdentity,
+        rpc: &'static str,
+        device_id: &str,
+        operation: &'static str,
+        expected_serial: &str,
+    ) -> std::result::Result<String, Status> {
+        let id = DeviceId(device_id.to_owned());
+        match self.ensure_expected_serial(&id, expected_serial).await {
+            Ok(serial) => Ok(serial),
+            Err(status) => {
+                audit_device::<()>(
+                    caller,
+                    rpc,
+                    device_id,
+                    operation,
+                    expected_serial,
+                    &Err(status.clone()),
+                );
+                Err(status)
+            }
+        }
     }
 
     async fn preflight_piv_serial(
@@ -305,6 +358,87 @@ impl v1::agent_server::Agent for AgentService {
         let result = blocking(move || credentials.device(&id)).await;
         audit(&caller, "GetDevice", &device_id, &result);
         result.map(|device| Response::new((&device).into()))
+    }
+
+    async fn set_enabled_applications(
+        &self,
+        request: Request<v1::SetEnabledApplicationsRequest>,
+    ) -> std::result::Result<Response<v1::Empty>, Status> {
+        let input = request.get_ref();
+        let caller = self.caller_device(
+            &request,
+            "SetEnabledApplications",
+            &input.id,
+            "DEVICE_SET_ENABLED_APPLICATIONS",
+        )?;
+        let mut input = request.into_inner();
+        let device_id = input.id.clone();
+        let expected_serial = input.expected_serial.clone();
+        let usb = match applications_from_proto(input.usb_enabled) {
+            Ok(applications) => applications,
+            Err(error) => {
+                return Err(audit_device_error(
+                    &caller,
+                    "SetEnabledApplications",
+                    &device_id,
+                    "DEVICE_SET_ENABLED_APPLICATIONS",
+                    &expected_serial,
+                    error,
+                ));
+            }
+        };
+        let nfc = if input.set_nfc {
+            match applications_from_proto(input.nfc_enabled) {
+                Ok(applications) => Some(applications),
+                Err(error) => {
+                    return Err(audit_device_error(
+                        &caller,
+                        "SetEnabledApplications",
+                        &device_id,
+                        "DEVICE_SET_ENABLED_APPLICATIONS",
+                        &expected_serial,
+                        error,
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        let mut lock_code_bytes = std::mem::take(&mut input.lock_code);
+        let lock_code = (!lock_code_bytes.is_empty())
+            .then(|| Secret::new(std::mem::take(&mut lock_code_bytes)));
+
+        let serial = self
+            .preflight_device_serial(
+                &caller,
+                "SetEnabledApplications",
+                &device_id,
+                "DEVICE_SET_ENABLED_APPLICATIONS",
+                &expected_serial,
+            )
+            .await?;
+        let credentials = self.credentials.clone();
+        let id = DeviceId(device_id.clone());
+        let expected = serial.clone();
+        let result = blocking(move || {
+            credentials.set_enabled_applications(
+                &id,
+                &expected,
+                &usb,
+                nfc.as_deref(),
+                lock_code.as_ref(),
+            )
+        })
+        .await;
+        audit_device(
+            &caller,
+            "SetEnabledApplications",
+            &device_id,
+            "DEVICE_SET_ENABLED_APPLICATIONS",
+            &serial,
+            &result,
+        );
+        result.map(|()| Response::new(v1::Empty {}))
     }
 
     async fn watch_devices(
@@ -1546,6 +1680,77 @@ fn audit_piv_error(
         &Err(status.clone()),
     );
     status
+}
+
+fn audit_device<T>(
+    caller: &CallerIdentity,
+    rpc: &'static str,
+    device_id: &str,
+    operation: &'static str,
+    serial: &str,
+    result: &std::result::Result<T, Status>,
+) {
+    let (outcome, code) = match result {
+        Ok(_) => ("success", None),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => {
+            ("denied", Some(status.code()))
+        }
+        Err(status) => ("error", Some(status.code())),
+    };
+    tracing::info!(
+        target: "sigil::audit",
+        caller_os_user = %caller.os_user,
+        session_id = ?caller.session_id,
+        pid = caller.pid,
+        rpc,
+        device_id,
+        operation,
+        serial,
+        outcome,
+        code = ?code
+    );
+}
+
+fn audit_device_error(
+    caller: &CallerIdentity,
+    rpc: &'static str,
+    device_id: &str,
+    operation: &'static str,
+    serial: &str,
+    error: CredentialError,
+) -> Status {
+    let status = status_from_error(&error);
+    audit_device::<()>(
+        caller,
+        rpc,
+        device_id,
+        operation,
+        serial,
+        &Err(status.clone()),
+    );
+    status
+}
+
+fn applications_from_proto(values: Vec<i32>) -> CoreResult<Vec<Application>> {
+    values
+        .into_iter()
+        .map(|value| {
+            match v1::Application::try_from(value).map_err(|_| {
+                CredentialError::SmartCardOperation("invalid application value".into())
+            })? {
+                v1::Application::Piv => Ok(Application::Piv),
+                v1::Application::Fido2 => Ok(Application::Fido2),
+                v1::Application::U2f => Ok(Application::U2f),
+                v1::Application::Otp => Ok(Application::Otp),
+                v1::Application::OpenPgp => Ok(Application::OpenPgp),
+                v1::Application::Oath => Ok(Application::Oath),
+                v1::Application::YubiHsmAuth => Ok(Application::YubiHsmAuth),
+                v1::Application::Unspecified => Err(CredentialError::SmartCardOperation(
+                    "unspecified application value".into(),
+                )),
+            }
+        })
+        .collect()
 }
 
 fn piv_slot(slot_byte: u32) -> CoreResult<PivSlot> {

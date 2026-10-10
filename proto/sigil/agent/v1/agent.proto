@@ -8,6 +8,7 @@ service Agent {
   rpc GetAgentInfo(Empty) returns (GetAgentInfoResponse);
   rpc ListDevices(Empty) returns (ListDevicesResponse);
   rpc GetDevice(GetDeviceRequest) returns (DeviceInfo);
+  rpc SetEnabledApplications(SetEnabledApplicationsRequest) returns (Empty);
   rpc WatchDevices(Empty) returns (stream DeviceEvent);
   rpc GetFidoStatus(DeviceRequest) returns (FidoStatus);
   rpc ListDiscoverableCredentials(PinRequest) returns (DiscoverableCredentialList);
@@ -68,6 +69,7 @@ enum Application {
   APPLICATION_OTP = 4;
   APPLICATION_OPEN_PGP = 5;
   APPLICATION_OATH = 6;
+  APPLICATION_YUBI_HSM_AUTH = 7;
 }
 
 enum MetadataAccess {
@@ -90,10 +92,27 @@ message DeviceInfo {
   bool simulated = 11;
   MetadataAccess metadata_access = 12;
   optional bool fips = 13;
+  repeated Application usb_enabled = 14;
+  repeated Application usb_supported = 15;
+  repeated Application nfc_enabled = 16;
+  repeated Application nfc_supported = 17;
+  optional bool config_locked = 18;
+  bool fips_approved_available = 19;
+  repeated Application fips_approved = 20;
+  optional bool pin_complexity = 21;
 }
 
 message DeviceRequest {
   string id = 1;
+}
+
+message SetEnabledApplicationsRequest {
+  string id = 1;
+  string expected_serial = 2;
+  repeated Application usb_enabled = 3;
+  bool set_nfc = 4;
+  repeated Application nfc_enabled = 5;
+  bytes lock_code = 6;
 }
 
 message GetDeviceRequest {

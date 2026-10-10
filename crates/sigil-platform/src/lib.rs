@@ -3,10 +3,10 @@
 #[cfg(not(target_os = "windows"))]
 use sigil_core::CredentialError;
 use sigil_core::{
-    DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoInspection,
-    FidoStatus, Fingerprint, FingerprintProgress, ManagementKey, PivAttestation, PivCertificate,
-    PivInfo, PivInspection, PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot,
-    PivSlotInfo, Result,
+    Application, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DeviceManagement,
+    DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint, FingerprintProgress,
+    ManagementKey, PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyConfiguration,
+    PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
 };
 use std::sync::mpsc::Receiver;
 #[cfg(any(target_os = "windows", test))]
@@ -408,6 +408,27 @@ impl PivManagement for NativeDiscovery {
     }
 }
 
+impl DeviceManagement for NativeDiscovery {
+    fn set_enabled_applications(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        usb: &[Application],
+        nfc: Option<&[Application]>,
+        lock_code: Option<&Secret>,
+    ) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows::piv::set_enabled_applications(id, expected_serial, usb, nfc, lock_code);
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (id, expected_serial, usb, nfc, lock_code);
+            Err(CredentialError::UnsupportedOperation(
+                "native application configuration is not implemented on this platform".into(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,6 +451,13 @@ mod tests {
             transports: vec![Transport::UsbSmartCard],
             applications: vec![Application::Piv],
             supported_applications: vec![Application::Piv],
+            usb_enabled: vec![Application::Piv],
+            usb_supported: vec![Application::Piv],
+            nfc_enabled: Vec::new(),
+            nfc_supported: Vec::new(),
+            config_locked: Some(false),
+            fips_approved: None,
+            pin_complexity: None,
             simulated: false,
             metadata_access: MetadataAccess::Unknown,
         }

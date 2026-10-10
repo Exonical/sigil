@@ -5,7 +5,7 @@ use std::{fs, path::Path};
 use serde::Deserialize;
 use sigil_app::CredentialService;
 use sigil_client::{AgentClient, DEFAULT_ENDPOINT};
-use sigil_core::{CredentialError, DeviceDiscovery, PivManagement};
+use sigil_core::{CredentialError, DeviceDiscovery, DeviceManagement, PivManagement};
 use sigil_platform::NativeDiscovery;
 use thiserror::Error;
 
@@ -227,8 +227,13 @@ pub fn connect_with_policy(
         ConnectionMode::Agent { .. } => {
             let client = std::sync::Arc::new(agent.expect("selected connected agent"));
             let discovery: std::sync::Arc<dyn DeviceDiscovery> = client.clone();
-            let management: std::sync::Arc<dyn PivManagement> = client;
-            CredentialService::new_with_piv_management(discovery, management)
+            let piv_management: std::sync::Arc<dyn PivManagement> = client.clone();
+            let device_management: std::sync::Arc<dyn DeviceManagement> = client;
+            CredentialService::new_with_device_management(
+                discovery,
+                piv_management,
+                device_management,
+            )
         }
         ConnectionMode::Direct { .. } => native_service(),
     };
@@ -242,16 +247,18 @@ pub fn connect_with_policy(
 fn native_service() -> CredentialService {
     let native = std::sync::Arc::new(NativeDiscovery);
     let discovery: std::sync::Arc<dyn DeviceDiscovery> = native.clone();
-    let management: std::sync::Arc<dyn PivManagement> = native;
-    CredentialService::new_with_piv_management(discovery, management)
+    let piv_management: std::sync::Arc<dyn PivManagement> = native.clone();
+    let device_management: std::sync::Arc<dyn DeviceManagement> = native;
+    CredentialService::new_with_device_management(discovery, piv_management, device_management)
 }
 
 #[cfg(debug_assertions)]
 fn mock_service() -> CredentialService {
-    let mock = std::sync::Arc::new(sigil_mock::MockDiscovery::with_example());
+    let mock = std::sync::Arc::new(sigil_mock::MockDiscovery::with_example_fips());
     let discovery: std::sync::Arc<dyn DeviceDiscovery> = mock.clone();
-    let management: std::sync::Arc<dyn PivManagement> = mock;
-    CredentialService::new_with_piv_management(discovery, management)
+    let piv_management: std::sync::Arc<dyn PivManagement> = mock.clone();
+    let device_management: std::sync::Arc<dyn DeviceManagement> = mock;
+    CredentialService::new_with_device_management(discovery, piv_management, device_management)
 }
 
 #[cfg(windows)]

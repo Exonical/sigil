@@ -30,14 +30,19 @@ pub async fn run(
     ready: Option<oneshot::Sender<()>>,
     shutdown: oneshot::Receiver<()>,
 ) -> anyhow::Result<()> {
-    let (discovery, piv_management): (Arc<dyn DeviceDiscovery>, Arc<dyn PivManagement>) = if mock {
+    let (discovery, piv_management, device_management): (
+        Arc<dyn DeviceDiscovery>,
+        Arc<dyn PivManagement>,
+        Arc<dyn sigil_core::DeviceManagement>,
+    ) = if mock {
         let mock = Arc::new(sigil_mock::MockDiscovery::with_example());
-        (mock.clone(), mock)
+        (mock.clone(), mock.clone(), mock)
     } else {
         let native = Arc::new(sigil_platform::NativeDiscovery);
-        (native.clone(), native)
+        (native.clone(), native.clone(), native)
     };
-    let credentials = CredentialService::new_with_piv_management(discovery, piv_management);
+    let credentials =
+        CredentialService::new_with_device_management(discovery, piv_management, device_management);
     let station_id = config.station_id();
     let (grant_provider, grant_verifier) = config.authorization()?;
     let service = AgentService::new(credentials, station_id)
@@ -59,7 +64,7 @@ pub mod test_support {
 
     use anyhow::{Context, Result};
     use sigil_app::CredentialService;
-    use sigil_core::{DeviceDiscovery, PivManagement};
+    use sigil_core::{DeviceDiscovery, DeviceManagement, PivManagement};
     use sigil_mock::MockDiscovery;
     use tokio::{runtime::Builder, sync::oneshot};
 
@@ -79,7 +84,12 @@ pub mod test_support {
             let mock = Arc::new(MockDiscovery::with_example());
             let discovery: Arc<dyn DeviceDiscovery> = mock.clone();
             let piv_management: Arc<dyn PivManagement> = mock.clone();
-            let service = CredentialService::new_with_piv_management(discovery, piv_management);
+            let device_management: Arc<dyn DeviceManagement> = mock.clone();
+            let service = CredentialService::new_with_device_management(
+                discovery,
+                piv_management,
+                device_management,
+            );
             let agent_service = AgentService::new(service, "sigil-test-station");
             Self::spawn_service_inner(agent_service, Some(mock))
         }

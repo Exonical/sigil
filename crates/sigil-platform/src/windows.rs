@@ -1,5 +1,5 @@
-//! Windows PC/SC discovery using WinSCard through pcsc. Only read-only
-//! management APDUs are sent; no arbitrary APDU interface escapes this module.
+//! Windows PC/SC discovery and typed credential operations using WinSCard.
+//! No arbitrary APDU interface escapes the provider crates.
 
 use std::{
     collections::HashSet,
@@ -72,6 +72,28 @@ fn establish() -> std::result::Result<Context, PcscError> {
     Context::establish(Scope::User)
 }
 
+// pcsc panics on transmit when SCardConnect reported no active protocol,
+// which Windows can do while a card is resetting (for example after a
+// management-applet reboot). Renegotiate once, then fail instead of panicking.
+pub(super) fn connect_shared(
+    context: &Context,
+    reader: &CStr,
+) -> std::result::Result<pcsc::Card, PcscError> {
+    let mut card = context.connect(reader, ShareMode::Shared, Protocols::ANY)?;
+    let has_protocol = |card: &pcsc::Card| matches!(card.status2_owned(), Ok(status) if status.protocol2().is_some());
+    if !has_protocol(&card) {
+        card.reconnect(
+            ShareMode::Shared,
+            Protocols::ANY,
+            pcsc::Disposition::LeaveCard,
+        )?;
+        if !has_protocol(&card) {
+            return Err(PcscError::UnpoweredCard);
+        }
+    }
+    Ok(card)
+}
+
 fn service_stopped(error: PcscError) -> bool {
     matches!(error, PcscError::NoService | PcscError::ServiceStopped)
 }
@@ -105,7 +127,7 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
         let name = reader.to_string_lossy().into_owned();
         match reader_kind(&reader) {
             ReaderKind::YubiKeyUsb => {
-                let card = match context.connect(&reader, ShareMode::Shared, Protocols::ANY) {
+                let mut card = match connect_shared(context, &reader) {
                     Ok(card) => card,
                     Err(PcscError::NoSmartcard | PcscError::UnknownReader) => continue,
                     Err(error) => {
@@ -114,21 +136,21 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
                         continue;
                     }
                 };
-                let details = read_management_info(&card);
+                let details = read_management_info(&mut card);
                 if details.is_none() {
                     tracing::debug!(reader = %name, "YubiKey management information unavailable");
                 }
                 devices.push(device_for_reader(&name, details, Transport::UsbSmartCard));
             }
             ReaderKind::Other => {
-                let card = match context.connect(&reader, ShareMode::Shared, Protocols::ANY) {
+                let mut card = match connect_shared(context, &reader) {
                     Ok(card) => card,
                     Err(error) => {
                         tracing::debug!(reader = %name, error = %error, "could not probe non-YubiKey smart-card reader");
                         continue;
                     }
                 };
-                let Some(details) = read_management_info(&card) else {
+                let Some(details) = read_management_info(&mut card) else {
                     tracing::debug!(reader = %name, "non-YubiKey smart-card ignored");
                     continue;
                 };
@@ -205,6 +227,13 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     transports: vec![Transport::UsbHid],
                     applications: Vec::new(),
                     supported_applications: Vec::new(),
+                    usb_enabled: Vec::new(),
+                    usb_supported: Vec::new(),
+                    nfc_enabled: Vec::new(),
+                    nfc_supported: Vec::new(),
+                    config_locked: None,
+                    fips_approved: None,
+                    pin_complexity: None,
                     simulated: false,
                     metadata_access: MetadataAccess::Unknown,
                 };
@@ -239,8 +268,16 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
             device.serial = details.serial;
             device.firmware = details.firmware.or(device.firmware.take());
             device.form_factor = details.form_factor;
-            device.applications = details.enabled_applications;
-            device.supported_applications = details.supported_applications;
+            device.fips = details.fips;
+            device.applications = details.usb_enabled_applications.clone();
+            device.supported_applications = details.usb_supported_applications.clone();
+            device.usb_enabled = details.usb_enabled_applications;
+            device.usb_supported = details.usb_supported_applications;
+            device.nfc_enabled = details.nfc_enabled_applications;
+            device.nfc_supported = details.nfc_supported_applications;
+            device.config_locked = details.config_locked;
+            device.fips_approved = details.fips_approved_applications;
+            device.pin_complexity = details.pin_complexity;
             if details.transports.contains(&Transport::UsbOtp) {
                 device.transports.push(Transport::UsbOtp);
             }
@@ -780,6 +817,13 @@ fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceIn
         transports: vec![Transport::UsbHid],
         applications: Vec::new(),
         supported_applications: Vec::new(),
+        usb_enabled: Vec::new(),
+        usb_supported: Vec::new(),
+        nfc_enabled: Vec::new(),
+        nfc_supported: Vec::new(),
+        config_locked: None,
+        fips_approved: None,
+        pin_complexity: None,
         simulated: false,
         metadata_access: MetadataAccess::Unknown,
     })
@@ -823,7 +867,7 @@ fn device_for_reader(
             if is_nfc {
                 info.nfc_enabled_applications.clone()
             } else {
-                info.enabled_applications.clone()
+                info.usb_enabled_applications.clone()
             }
         })
         .unwrap_or_default();
@@ -833,7 +877,7 @@ fn device_for_reader(
             if is_nfc {
                 info.nfc_supported_applications.clone()
             } else {
-                info.supported_applications.clone()
+                info.usb_supported_applications.clone()
             }
         })
         .unwrap_or_default();
@@ -858,12 +902,37 @@ fn device_for_reader(
         transports,
         applications,
         supported_applications,
+        usb_enabled: details
+            .as_ref()
+            .map(|info| info.usb_enabled_applications.clone())
+            .unwrap_or_default(),
+        usb_supported: details
+            .as_ref()
+            .map(|info| info.usb_supported_applications.clone())
+            .unwrap_or_default(),
+        nfc_enabled: details
+            .as_ref()
+            .map(|info| info.nfc_enabled_applications.clone())
+            .unwrap_or_default(),
+        nfc_supported: details
+            .as_ref()
+            .map(|info| info.nfc_supported_applications.clone())
+            .unwrap_or_default(),
+        config_locked: details.as_ref().and_then(|info| info.config_locked),
+        fips_approved: details
+            .as_ref()
+            .and_then(|info| info.fips_approved_applications.clone()),
+        pin_complexity: details.as_ref().and_then(|info| info.pin_complexity),
         simulated: false,
         metadata_access,
     }
 }
 
-fn read_management_info(card: &pcsc::Card) -> Option<ManagementInfo> {
+// Hold a transaction so another process cannot select a different applet
+// between the SELECT and the GET DEVICE INFO pages.
+fn read_management_info(card: &mut pcsc::Card) -> Option<ManagementInfo> {
+    let transaction = card.transaction().ok()?;
+    let card: &pcsc::Card = &transaction;
     let mut select = vec![0x00, 0xa4, 0x04, 0x00, MANAGEMENT_AID.len() as u8];
     select.extend_from_slice(&MANAGEMENT_AID);
     let select_response = send_read_only(card, &select)?;
@@ -946,21 +1015,62 @@ fn watch(context: Context, sender: &Sender<DeviceEvent>, previous: &mut Vec<Devi
         if !reconcile(previous, current, sender) {
             return false;
         }
-        match context.get_status_change(Duration::from_secs(5), &mut states) {
-            Ok(()) => states.iter_mut().for_each(ReaderState::sync_current_state),
-            Err(PcscError::Timeout) => {}
-            Err(error) => {
-                tracing::warn!(%error, "smart-card watcher stopped");
-                return true;
+        // Scanning connects to each card, which toggles INUSE for every
+        // watcher (including this one). Rescan only on insertion, removal or
+        // reader changes, or on the periodic timeout that also covers HID.
+        loop {
+            match context.get_status_change(Duration::from_secs(5), &mut states) {
+                Ok(()) => {
+                    let relevant = states.iter().enumerate().any(|(index, state)| {
+                        if index == 0 {
+                            state.event_state().contains(State::CHANGED)
+                        } else {
+                            presence_changed(state.current_state(), state.event_state())
+                        }
+                    });
+                    states.iter_mut().for_each(ReaderState::sync_current_state);
+                    if relevant {
+                        break;
+                    }
+                }
+                Err(PcscError::Timeout) => break,
+                Err(error) => {
+                    tracing::warn!(%error, "smart-card watcher stopped");
+                    return true;
+                }
             }
         }
     }
+}
+
+fn presence_changed(current: State, event: State) -> bool {
+    let mask = State::PRESENT | State::EMPTY | State::MUTE | State::UNAVAILABLE | State::UNKNOWN;
+    (current & mask) != (event & mask)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sigil_core::Application;
+
+    #[test]
+    fn watcher_ignores_in_use_changes_but_not_insertion_or_removal() {
+        let idle = State::PRESENT;
+        assert!(!presence_changed(
+            idle,
+            State::PRESENT | State::INUSE | State::CHANGED
+        ));
+        assert!(!presence_changed(
+            State::PRESENT | State::INUSE,
+            idle | State::CHANGED
+        ));
+        assert!(presence_changed(idle, State::EMPTY | State::CHANGED));
+        assert!(presence_changed(
+            State::EMPTY,
+            State::PRESENT | State::CHANGED
+        ));
+        assert!(presence_changed(State::UNAWARE, State::PRESENT));
+    }
 
     fn reader_kind_from_name(name: &str) -> ReaderKind {
         let reader = CString::new(name).expect("reader name");
@@ -982,10 +1092,13 @@ mod tests {
                 Transport::UsbHid,
                 Transport::UsbOtp,
             ],
-            enabled_applications: vec![Application::Fido2],
-            supported_applications: vec![Application::Fido2, Application::Piv],
+            usb_enabled_applications: vec![Application::Fido2],
+            usb_supported_applications: vec![Application::Fido2, Application::Piv],
             nfc_enabled_applications: vec![Application::Piv],
             nfc_supported_applications: vec![Application::Piv, Application::Oath],
+            config_locked: Some(false),
+            fips_approved_applications: None,
+            pin_complexity: Some(false),
         }
     }
 

@@ -10,10 +10,11 @@ use std::{
 };
 
 use sigil_core::{
-    CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
-    FidoInspection, FidoStatus, Fingerprint, FingerprintProgress, ManagementKey,
-    ManagementKeyAlgorithm, PinPolicy, PivAttestation, PivCertificate, PivInfo, PivInspection,
-    PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, TouchPolicy,
+    Application, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, DeviceInfo,
+    DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
+    FingerprintProgress, ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivAttestation,
+    PivCertificate, PivInfo, PivInspection, PivKeyConfiguration, PivManagement, PivPin, PivPuk,
+    PivSlot, PivSlotInfo, Result, Secret, TouchPolicy,
 };
 use sigil_proto::v1;
 use tonic::transport::{Channel, Endpoint};
@@ -745,6 +746,51 @@ impl PivManagement for AgentClient {
 
     fn reset(&self, id: &DeviceId, expected_serial: &str) -> Result<()> {
         self.rpc_reset_piv(id, expected_serial)
+    }
+}
+
+impl DeviceManagement for AgentClient {
+    fn set_enabled_applications(
+        &self,
+        id: &DeviceId,
+        expected_serial: &str,
+        usb: &[Application],
+        nfc: Option<&[Application]>,
+        lock_code: Option<&Secret>,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(
+                self.rpc
+                    .clone()
+                    .set_enabled_applications(v1::SetEnabledApplicationsRequest {
+                        id: id.0.clone(),
+                        expected_serial: expected_serial.to_owned(),
+                        usb_enabled: usb.iter().map(application_to_proto).collect(),
+                        set_nfc: nfc.is_some(),
+                        nfc_enabled: nfc
+                            .unwrap_or_default()
+                            .iter()
+                            .map(application_to_proto)
+                            .collect(),
+                        lock_code: lock_code
+                            .map(|code| code.expose().to_vec())
+                            .unwrap_or_default(),
+                    }),
+            )
+            .map(|_| ())
+            .map_err(Self::map_status)
+    }
+}
+
+fn application_to_proto(application: &Application) -> i32 {
+    match application {
+        Application::Piv => v1::Application::Piv as i32,
+        Application::Fido2 => v1::Application::Fido2 as i32,
+        Application::U2f => v1::Application::U2f as i32,
+        Application::Otp => v1::Application::Otp as i32,
+        Application::OpenPgp => v1::Application::OpenPgp as i32,
+        Application::Oath => v1::Application::Oath as i32,
+        Application::YubiHsmAuth => v1::Application::YubiHsmAuth as i32,
     }
 }
 

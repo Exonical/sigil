@@ -19,9 +19,9 @@ use sigil_agent::{
 use sigil_app::CredentialService;
 use sigil_client::AgentClient;
 use sigil_core::{
-    CredentialError, DeviceDiscovery, KeyStatus, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
-    PivInspection, PivKeyAlgorithm, PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot,
-    TouchPolicy,
+    Application, CredentialError, DeviceDiscovery, DeviceManagement, KeyStatus, ManagementKey,
+    ManagementKeyAlgorithm, PinPolicy, PivInspection, PivKeyAlgorithm, PivKeyConfiguration,
+    PivManagement, PivPin, PivPuk, PivSlot, TouchPolicy,
 };
 use sigil_mock::MockDiscovery;
 use tokio::{runtime::Builder, sync::oneshot};
@@ -115,8 +115,10 @@ fn unique_endpoint() -> String {
 
 fn service(mock: Arc<MockDiscovery>) -> AgentService {
     let discovery: Arc<dyn DeviceDiscovery> = mock.clone();
-    let management: Arc<dyn PivManagement> = mock;
-    let credentials = CredentialService::new_with_piv_management(discovery, management);
+    let management: Arc<dyn PivManagement> = mock.clone();
+    let device_management: Arc<dyn DeviceManagement> = mock;
+    let credentials =
+        CredentialService::new_with_device_management(discovery, management, device_management);
     AgentService::new(credentials, TEST_STATION)
         .with_policy(CallerPolicy {
             require_console_session: false,
@@ -255,5 +257,40 @@ fn caller_supplied_piv_secrets_work_without_a_grant_provider() -> Result<()> {
             .iter()
             .all(|slot| slot.key == KeyStatus::Absent || slot.slot == PivSlot::ATTESTATION)
     );
+    Ok(())
+}
+
+#[test]
+fn caller_configures_supported_applications_without_a_grant() -> Result<()> {
+    let mock = Arc::new(MockDiscovery::with_example());
+    let server = TestServer::spawn(service(mock))?;
+    let client = AgentClient::connect(Some(&server.endpoint))?;
+    let id = sigil_core::DeviceId("mock-yubikey-12345678".into());
+
+    client.set_enabled_applications(
+        &id,
+        TEST_SERIAL,
+        &[Application::Piv, Application::Fido2, Application::Oath],
+        Some(&[Application::Piv, Application::Oath]),
+        None,
+    )?;
+    let updated = client.list()?.remove(0);
+    assert_eq!(
+        updated.usb_enabled,
+        vec![Application::Piv, Application::Fido2, Application::Oath]
+    );
+    assert_eq!(
+        updated.nfc_enabled,
+        vec![Application::Piv, Application::Oath]
+    );
+
+    assert!(matches!(
+        client.set_enabled_applications(&id, "wrong-serial", &[Application::Piv], None, None),
+        Err(CredentialError::DeviceMismatch)
+    ));
+    assert!(matches!(
+        client.set_enabled_applications(&id, TEST_SERIAL, &[Application::Fido2], None, None),
+        Err(CredentialError::SmartCardOperation(_))
+    ));
     Ok(())
 }

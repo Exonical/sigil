@@ -1,15 +1,16 @@
 use std::ffi::CString;
 
-use pcsc::{Card, Error as PcscError, Protocols, ShareMode, Transaction};
+use pcsc::{Card, Error as PcscError, Transaction};
 use sha2::{Digest, Sha256, Sha384};
 use sigil_core::{
-    CredentialError, DeviceId, ManagementKey, PinPolicy, PivAttestation, PivCertificate, PivInfo,
-    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result,
+    Application, CredentialError, DeviceId, ManagementKey, PinPolicy, PivAttestation,
+    PivCertificate, PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot,
+    PivSlotInfo, Result, Secret,
 };
 use sigil_piv::CardTransport;
-use sigil_yubikey::piv as yubikey_piv;
+use sigil_yubikey::{management as yubikey_management, piv as yubikey_piv};
 
-use super::{establish, list};
+use super::{connect_shared, establish, list};
 
 pub(super) struct PcscTransport<'tx, 'card> {
     transaction: &'tx Transaction<'card>,
@@ -70,9 +71,7 @@ fn with_transport<T>(
     let reader = CString::new(reader_name).map_err(|_| {
         CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
     })?;
-    let mut card: Card = context
-        .connect(&reader, ShareMode::Shared, Protocols::ANY)
-        .map_err(map_pcsc_error)?;
+    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
     let transaction = card.transaction().map_err(map_pcsc_error)?;
     let mut transport = PcscTransport {
         transaction: &transaction,
@@ -110,15 +109,63 @@ fn with_transport_and_serial<T>(
     let reader = CString::new(reader_name).map_err(|_| {
         CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
     })?;
-    let mut card: Card = context
-        .connect(&reader, ShareMode::Shared, Protocols::ANY)
-        .map_err(map_pcsc_error)?;
+    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
     let transaction = card.transaction().map_err(map_pcsc_error)?;
     let mut transport = PcscTransport {
         transaction: &transaction,
     };
     let verified_serial = yubikey_piv::read_expected_serial(&mut transport, expected_serial)?;
     operation(&mut transport, &verified_serial)
+}
+
+fn with_management_info<T>(
+    id: &DeviceId,
+    expected_serial: &str,
+    operation: impl FnOnce(
+        &mut PcscTransport<'_, '_>,
+        &sigil_yubikey::management::ManagementInfo,
+    ) -> Result<T>,
+) -> Result<T> {
+    let (reader_name, serial_in_id) = parse_device_id(id)?;
+    if expected_serial.is_empty()
+        || serial_in_id
+            .as_deref()
+            .is_some_and(|serial| serial != expected_serial)
+    {
+        return Err(CredentialError::DeviceMismatch);
+    }
+    let context =
+        establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
+    let reader = CString::new(reader_name).map_err(|_| {
+        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
+    })?;
+    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
+    let transaction = card.transaction().map_err(map_pcsc_error)?;
+    let mut transport = PcscTransport {
+        transaction: &transaction,
+    };
+    let info = yubikey_management::read_info(&mut transport)?;
+    let serial = info
+        .serial
+        .as_deref()
+        .ok_or(CredentialError::DeviceMismatch)?;
+    if serial != expected_serial {
+        return Err(CredentialError::DeviceMismatch);
+    }
+    operation(&mut transport, &info)
+}
+
+pub(crate) fn set_enabled_applications(
+    id: &DeviceId,
+    expected_serial: &str,
+    usb: &[Application],
+    nfc: Option<&[Application]>,
+    lock_code: Option<&Secret>,
+) -> Result<()> {
+    with_management_info(id, expected_serial, |transport, _| {
+        // Do not query the card after a successful rebooting write; discovery events refresh it.
+        yubikey_management::write_config(transport, usb, nfc, lock_code)
+    })
 }
 
 pub(crate) fn piv_serial(id: &DeviceId, expected_serial: &str) -> Result<String> {

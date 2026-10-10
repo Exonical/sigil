@@ -79,13 +79,14 @@ func (Transport) EnumDescriptor() ([]byte, []int) {
 type Application int32
 
 const (
-	Application_APPLICATION_UNSPECIFIED Application = 0
-	Application_APPLICATION_PIV         Application = 1
-	Application_APPLICATION_FIDO2       Application = 2
-	Application_APPLICATION_U2F         Application = 3
-	Application_APPLICATION_OTP         Application = 4
-	Application_APPLICATION_OPEN_PGP    Application = 5
-	Application_APPLICATION_OATH        Application = 6
+	Application_APPLICATION_UNSPECIFIED   Application = 0
+	Application_APPLICATION_PIV           Application = 1
+	Application_APPLICATION_FIDO2         Application = 2
+	Application_APPLICATION_U2F           Application = 3
+	Application_APPLICATION_OTP           Application = 4
+	Application_APPLICATION_OPEN_PGP      Application = 5
+	Application_APPLICATION_OATH          Application = 6
+	Application_APPLICATION_YUBI_HSM_AUTH Application = 7
 )
 
 // Enum value maps for Application.
@@ -98,15 +99,17 @@ var (
 		4: "APPLICATION_OTP",
 		5: "APPLICATION_OPEN_PGP",
 		6: "APPLICATION_OATH",
+		7: "APPLICATION_YUBI_HSM_AUTH",
 	}
 	Application_value = map[string]int32{
-		"APPLICATION_UNSPECIFIED": 0,
-		"APPLICATION_PIV":         1,
-		"APPLICATION_FIDO2":       2,
-		"APPLICATION_U2F":         3,
-		"APPLICATION_OTP":         4,
-		"APPLICATION_OPEN_PGP":    5,
-		"APPLICATION_OATH":        6,
+		"APPLICATION_UNSPECIFIED":   0,
+		"APPLICATION_PIV":           1,
+		"APPLICATION_FIDO2":         2,
+		"APPLICATION_U2F":           3,
+		"APPLICATION_OTP":           4,
+		"APPLICATION_OPEN_PGP":      5,
+		"APPLICATION_OATH":          6,
+		"APPLICATION_YUBI_HSM_AUTH": 7,
 	}
 )
 
@@ -905,6 +908,14 @@ type DeviceInfo struct {
 	Simulated             bool                   `protobuf:"varint,11,opt,name=simulated,proto3" json:"simulated,omitempty"`
 	MetadataAccess        MetadataAccess         `protobuf:"varint,12,opt,name=metadata_access,json=metadataAccess,proto3,enum=sigil.agent.v1.MetadataAccess" json:"metadata_access,omitempty"`
 	Fips                  *bool                  `protobuf:"varint,13,opt,name=fips,proto3,oneof" json:"fips,omitempty"`
+	UsbEnabled            []Application          `protobuf:"varint,14,rep,packed,name=usb_enabled,json=usbEnabled,proto3,enum=sigil.agent.v1.Application" json:"usb_enabled,omitempty"`
+	UsbSupported          []Application          `protobuf:"varint,15,rep,packed,name=usb_supported,json=usbSupported,proto3,enum=sigil.agent.v1.Application" json:"usb_supported,omitempty"`
+	NfcEnabled            []Application          `protobuf:"varint,16,rep,packed,name=nfc_enabled,json=nfcEnabled,proto3,enum=sigil.agent.v1.Application" json:"nfc_enabled,omitempty"`
+	NfcSupported          []Application          `protobuf:"varint,17,rep,packed,name=nfc_supported,json=nfcSupported,proto3,enum=sigil.agent.v1.Application" json:"nfc_supported,omitempty"`
+	ConfigLocked          *bool                  `protobuf:"varint,18,opt,name=config_locked,json=configLocked,proto3,oneof" json:"config_locked,omitempty"`
+	FipsApprovedAvailable bool                   `protobuf:"varint,19,opt,name=fips_approved_available,json=fipsApprovedAvailable,proto3" json:"fips_approved_available,omitempty"`
+	FipsApproved          []Application          `protobuf:"varint,20,rep,packed,name=fips_approved,json=fipsApproved,proto3,enum=sigil.agent.v1.Application" json:"fips_approved,omitempty"`
+	PinComplexity         *bool                  `protobuf:"varint,21,opt,name=pin_complexity,json=pinComplexity,proto3,oneof" json:"pin_complexity,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1030,6 +1041,62 @@ func (x *DeviceInfo) GetFips() bool {
 	return false
 }
 
+func (x *DeviceInfo) GetUsbEnabled() []Application {
+	if x != nil {
+		return x.UsbEnabled
+	}
+	return nil
+}
+
+func (x *DeviceInfo) GetUsbSupported() []Application {
+	if x != nil {
+		return x.UsbSupported
+	}
+	return nil
+}
+
+func (x *DeviceInfo) GetNfcEnabled() []Application {
+	if x != nil {
+		return x.NfcEnabled
+	}
+	return nil
+}
+
+func (x *DeviceInfo) GetNfcSupported() []Application {
+	if x != nil {
+		return x.NfcSupported
+	}
+	return nil
+}
+
+func (x *DeviceInfo) GetConfigLocked() bool {
+	if x != nil && x.ConfigLocked != nil {
+		return *x.ConfigLocked
+	}
+	return false
+}
+
+func (x *DeviceInfo) GetFipsApprovedAvailable() bool {
+	if x != nil {
+		return x.FipsApprovedAvailable
+	}
+	return false
+}
+
+func (x *DeviceInfo) GetFipsApproved() []Application {
+	if x != nil {
+		return x.FipsApproved
+	}
+	return nil
+}
+
+func (x *DeviceInfo) GetPinComplexity() bool {
+	if x != nil && x.PinComplexity != nil {
+		return *x.PinComplexity
+	}
+	return false
+}
+
 type DeviceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1074,6 +1141,90 @@ func (x *DeviceRequest) GetId() string {
 	return ""
 }
 
+type SetEnabledApplicationsRequest struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	ExpectedSerial string                 `protobuf:"bytes,2,opt,name=expected_serial,json=expectedSerial,proto3" json:"expected_serial,omitempty"`
+	UsbEnabled     []Application          `protobuf:"varint,3,rep,packed,name=usb_enabled,json=usbEnabled,proto3,enum=sigil.agent.v1.Application" json:"usb_enabled,omitempty"`
+	SetNfc         bool                   `protobuf:"varint,4,opt,name=set_nfc,json=setNfc,proto3" json:"set_nfc,omitempty"`
+	NfcEnabled     []Application          `protobuf:"varint,5,rep,packed,name=nfc_enabled,json=nfcEnabled,proto3,enum=sigil.agent.v1.Application" json:"nfc_enabled,omitempty"`
+	LockCode       []byte                 `protobuf:"bytes,6,opt,name=lock_code,json=lockCode,proto3" json:"lock_code,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SetEnabledApplicationsRequest) Reset() {
+	*x = SetEnabledApplicationsRequest{}
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetEnabledApplicationsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetEnabledApplicationsRequest) ProtoMessage() {}
+
+func (x *SetEnabledApplicationsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetEnabledApplicationsRequest.ProtoReflect.Descriptor instead.
+func (*SetEnabledApplicationsRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SetEnabledApplicationsRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *SetEnabledApplicationsRequest) GetExpectedSerial() string {
+	if x != nil {
+		return x.ExpectedSerial
+	}
+	return ""
+}
+
+func (x *SetEnabledApplicationsRequest) GetUsbEnabled() []Application {
+	if x != nil {
+		return x.UsbEnabled
+	}
+	return nil
+}
+
+func (x *SetEnabledApplicationsRequest) GetSetNfc() bool {
+	if x != nil {
+		return x.SetNfc
+	}
+	return false
+}
+
+func (x *SetEnabledApplicationsRequest) GetNfcEnabled() []Application {
+	if x != nil {
+		return x.NfcEnabled
+	}
+	return nil
+}
+
+func (x *SetEnabledApplicationsRequest) GetLockCode() []byte {
+	if x != nil {
+		return x.LockCode
+	}
+	return nil
+}
+
 type GetDeviceRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1083,7 +1234,7 @@ type GetDeviceRequest struct {
 
 func (x *GetDeviceRequest) Reset() {
 	*x = GetDeviceRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1095,7 +1246,7 @@ func (x *GetDeviceRequest) String() string {
 func (*GetDeviceRequest) ProtoMessage() {}
 
 func (x *GetDeviceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1108,7 +1259,7 @@ func (x *GetDeviceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDeviceRequest.ProtoReflect.Descriptor instead.
 func (*GetDeviceRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetDeviceRequest) GetId() string {
@@ -1127,7 +1278,7 @@ type ListDevicesResponse struct {
 
 func (x *ListDevicesResponse) Reset() {
 	*x = ListDevicesResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1139,7 +1290,7 @@ func (x *ListDevicesResponse) String() string {
 func (*ListDevicesResponse) ProtoMessage() {}
 
 func (x *ListDevicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1152,7 +1303,7 @@ func (x *ListDevicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListDevicesResponse.ProtoReflect.Descriptor instead.
 func (*ListDevicesResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ListDevicesResponse) GetDevices() []*DeviceInfo {
@@ -1176,7 +1327,7 @@ type DeviceEvent struct {
 
 func (x *DeviceEvent) Reset() {
 	*x = DeviceEvent{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1188,7 +1339,7 @@ func (x *DeviceEvent) String() string {
 func (*DeviceEvent) ProtoMessage() {}
 
 func (x *DeviceEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1201,7 +1352,7 @@ func (x *DeviceEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeviceEvent.ProtoReflect.Descriptor instead.
 func (*DeviceEvent) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DeviceEvent) GetEvent() isDeviceEvent_Event {
@@ -1273,7 +1424,7 @@ type FidoStatus struct {
 
 func (x *FidoStatus) Reset() {
 	*x = FidoStatus{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1285,7 +1436,7 @@ func (x *FidoStatus) String() string {
 func (*FidoStatus) ProtoMessage() {}
 
 func (x *FidoStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1298,7 +1449,7 @@ func (x *FidoStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FidoStatus.ProtoReflect.Descriptor instead.
 func (*FidoStatus) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *FidoStatus) GetVersions() []string {
@@ -1346,7 +1497,7 @@ type PinRequest struct {
 
 func (x *PinRequest) Reset() {
 	*x = PinRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1358,7 +1509,7 @@ func (x *PinRequest) String() string {
 func (*PinRequest) ProtoMessage() {}
 
 func (x *PinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[10]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1371,7 +1522,7 @@ func (x *PinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PinRequest.ProtoReflect.Descriptor instead.
 func (*PinRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{10}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *PinRequest) GetId() string {
@@ -1401,7 +1552,7 @@ type DiscoverableCredential struct {
 
 func (x *DiscoverableCredential) Reset() {
 	*x = DiscoverableCredential{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1413,7 +1564,7 @@ func (x *DiscoverableCredential) String() string {
 func (*DiscoverableCredential) ProtoMessage() {}
 
 func (x *DiscoverableCredential) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[11]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1426,7 +1577,7 @@ func (x *DiscoverableCredential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoverableCredential.ProtoReflect.Descriptor instead.
 func (*DiscoverableCredential) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{11}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *DiscoverableCredential) GetRpId() string {
@@ -1473,7 +1624,7 @@ type DiscoverableCredentialList struct {
 
 func (x *DiscoverableCredentialList) Reset() {
 	*x = DiscoverableCredentialList{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1485,7 +1636,7 @@ func (x *DiscoverableCredentialList) String() string {
 func (*DiscoverableCredentialList) ProtoMessage() {}
 
 func (x *DiscoverableCredentialList) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[12]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1498,7 +1649,7 @@ func (x *DiscoverableCredentialList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiscoverableCredentialList.ProtoReflect.Descriptor instead.
 func (*DiscoverableCredentialList) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{12}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *DiscoverableCredentialList) GetCredentials() []*DiscoverableCredential {
@@ -1518,7 +1669,7 @@ type Fingerprint struct {
 
 func (x *Fingerprint) Reset() {
 	*x = Fingerprint{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1530,7 +1681,7 @@ func (x *Fingerprint) String() string {
 func (*Fingerprint) ProtoMessage() {}
 
 func (x *Fingerprint) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[13]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1543,7 +1694,7 @@ func (x *Fingerprint) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Fingerprint.ProtoReflect.Descriptor instead.
 func (*Fingerprint) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{13}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Fingerprint) GetId() string {
@@ -1569,7 +1720,7 @@ type FingerprintList struct {
 
 func (x *FingerprintList) Reset() {
 	*x = FingerprintList{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1581,7 +1732,7 @@ func (x *FingerprintList) String() string {
 func (*FingerprintList) ProtoMessage() {}
 
 func (x *FingerprintList) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[14]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1594,7 +1745,7 @@ func (x *FingerprintList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FingerprintList.ProtoReflect.Descriptor instead.
 func (*FingerprintList) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{14}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *FingerprintList) GetFingerprints() []*Fingerprint {
@@ -1614,7 +1765,7 @@ type EnrollFingerprintRequest struct {
 
 func (x *EnrollFingerprintRequest) Reset() {
 	*x = EnrollFingerprintRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1626,7 +1777,7 @@ func (x *EnrollFingerprintRequest) String() string {
 func (*EnrollFingerprintRequest) ProtoMessage() {}
 
 func (x *EnrollFingerprintRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[15]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1639,7 +1790,7 @@ func (x *EnrollFingerprintRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollFingerprintRequest.ProtoReflect.Descriptor instead.
 func (*EnrollFingerprintRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{15}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *EnrollFingerprintRequest) GetId() string {
@@ -1666,7 +1817,7 @@ type FingerprintProgress struct {
 
 func (x *FingerprintProgress) Reset() {
 	*x = FingerprintProgress{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1678,7 +1829,7 @@ func (x *FingerprintProgress) String() string {
 func (*FingerprintProgress) ProtoMessage() {}
 
 func (x *FingerprintProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[16]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1691,7 +1842,7 @@ func (x *FingerprintProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FingerprintProgress.ProtoReflect.Descriptor instead.
 func (*FingerprintProgress) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{16}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *FingerprintProgress) GetMessage() string {
@@ -1721,7 +1872,7 @@ type EnrollFingerprintEvent struct {
 
 func (x *EnrollFingerprintEvent) Reset() {
 	*x = EnrollFingerprintEvent{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1733,7 +1884,7 @@ func (x *EnrollFingerprintEvent) String() string {
 func (*EnrollFingerprintEvent) ProtoMessage() {}
 
 func (x *EnrollFingerprintEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[17]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1746,7 +1897,7 @@ func (x *EnrollFingerprintEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnrollFingerprintEvent.ProtoReflect.Descriptor instead.
 func (*EnrollFingerprintEvent) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{17}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *EnrollFingerprintEvent) GetEvent() isEnrollFingerprintEvent_Event {
@@ -1801,7 +1952,7 @@ type RemoveFingerprintRequest struct {
 
 func (x *RemoveFingerprintRequest) Reset() {
 	*x = RemoveFingerprintRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1813,7 +1964,7 @@ func (x *RemoveFingerprintRequest) String() string {
 func (*RemoveFingerprintRequest) ProtoMessage() {}
 
 func (x *RemoveFingerprintRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[18]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1826,7 +1977,7 @@ func (x *RemoveFingerprintRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveFingerprintRequest.ProtoReflect.Descriptor instead.
 func (*RemoveFingerprintRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{18}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *RemoveFingerprintRequest) GetId() string {
@@ -1860,7 +2011,7 @@ type PivAlgorithm struct {
 
 func (x *PivAlgorithm) Reset() {
 	*x = PivAlgorithm{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1872,7 +2023,7 @@ func (x *PivAlgorithm) String() string {
 func (*PivAlgorithm) ProtoMessage() {}
 
 func (x *PivAlgorithm) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[19]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1885,7 +2036,7 @@ func (x *PivAlgorithm) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PivAlgorithm.ProtoReflect.Descriptor instead.
 func (*PivAlgorithm) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{19}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *PivAlgorithm) GetKind() PivAlgorithmKind {
@@ -1914,7 +2065,7 @@ type PivKeyMetadata struct {
 
 func (x *PivKeyMetadata) Reset() {
 	*x = PivKeyMetadata{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[20]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1926,7 +2077,7 @@ func (x *PivKeyMetadata) String() string {
 func (*PivKeyMetadata) ProtoMessage() {}
 
 func (x *PivKeyMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[20]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1939,7 +2090,7 @@ func (x *PivKeyMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PivKeyMetadata.ProtoReflect.Descriptor instead.
 func (*PivKeyMetadata) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{20}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *PivKeyMetadata) GetAlgorithm() *PivAlgorithm {
@@ -1984,7 +2135,7 @@ type KeyStatus struct {
 
 func (x *KeyStatus) Reset() {
 	*x = KeyStatus{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[21]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1996,7 +2147,7 @@ func (x *KeyStatus) String() string {
 func (*KeyStatus) ProtoMessage() {}
 
 func (x *KeyStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[21]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2009,7 +2160,7 @@ func (x *KeyStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeyStatus.ProtoReflect.Descriptor instead.
 func (*KeyStatus) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{21}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *KeyStatus) GetStatus() isKeyStatus_Status {
@@ -2083,7 +2234,7 @@ type CertificateSummary struct {
 
 func (x *CertificateSummary) Reset() {
 	*x = CertificateSummary{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[22]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2095,7 +2246,7 @@ func (x *CertificateSummary) String() string {
 func (*CertificateSummary) ProtoMessage() {}
 
 func (x *CertificateSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[22]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2108,7 +2259,7 @@ func (x *CertificateSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CertificateSummary.ProtoReflect.Descriptor instead.
 func (*CertificateSummary) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{22}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CertificateSummary) GetSubject() string {
@@ -2171,7 +2322,7 @@ type PivSlotInfo struct {
 
 func (x *PivSlotInfo) Reset() {
 	*x = PivSlotInfo{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[23]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2183,7 +2334,7 @@ func (x *PivSlotInfo) String() string {
 func (*PivSlotInfo) ProtoMessage() {}
 
 func (x *PivSlotInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[23]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2196,7 +2347,7 @@ func (x *PivSlotInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PivSlotInfo.ProtoReflect.Descriptor instead.
 func (*PivSlotInfo) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{23}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *PivSlotInfo) GetSlotByte() uint32 {
@@ -2229,7 +2380,7 @@ type PivSlotInfoList struct {
 
 func (x *PivSlotInfoList) Reset() {
 	*x = PivSlotInfoList{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[24]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2241,7 +2392,7 @@ func (x *PivSlotInfoList) String() string {
 func (*PivSlotInfoList) ProtoMessage() {}
 
 func (x *PivSlotInfoList) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[24]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2254,7 +2405,7 @@ func (x *PivSlotInfoList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PivSlotInfoList.ProtoReflect.Descriptor instead.
 func (*PivSlotInfoList) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{24}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *PivSlotInfoList) GetSlots() []*PivSlotInfo {
@@ -2275,7 +2426,7 @@ type RetryStatus struct {
 
 func (x *RetryStatus) Reset() {
 	*x = RetryStatus{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[25]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2287,7 +2438,7 @@ func (x *RetryStatus) String() string {
 func (*RetryStatus) ProtoMessage() {}
 
 func (x *RetryStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[25]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2300,7 +2451,7 @@ func (x *RetryStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryStatus.ProtoReflect.Descriptor instead.
 func (*RetryStatus) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{25}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RetryStatus) GetRemaining() uint32 {
@@ -2335,7 +2486,7 @@ type ManagementKeyStatus struct {
 
 func (x *ManagementKeyStatus) Reset() {
 	*x = ManagementKeyStatus{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[26]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2347,7 +2498,7 @@ func (x *ManagementKeyStatus) String() string {
 func (*ManagementKeyStatus) ProtoMessage() {}
 
 func (x *ManagementKeyStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[26]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2360,7 +2511,7 @@ func (x *ManagementKeyStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManagementKeyStatus.ProtoReflect.Descriptor instead.
 func (*ManagementKeyStatus) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{26}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ManagementKeyStatus) GetAlgorithm() *PivAlgorithm {
@@ -2396,7 +2547,7 @@ type PivInfo struct {
 
 func (x *PivInfo) Reset() {
 	*x = PivInfo{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[27]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2408,7 +2559,7 @@ func (x *PivInfo) String() string {
 func (*PivInfo) ProtoMessage() {}
 
 func (x *PivInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[27]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2421,7 +2572,7 @@ func (x *PivInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PivInfo.ProtoReflect.Descriptor instead.
 func (*PivInfo) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{27}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *PivInfo) GetVersion() *FirmwareVersion {
@@ -2462,7 +2613,7 @@ type GetPivCertificateRequest struct {
 
 func (x *GetPivCertificateRequest) Reset() {
 	*x = GetPivCertificateRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[28]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2474,7 +2625,7 @@ func (x *GetPivCertificateRequest) String() string {
 func (*GetPivCertificateRequest) ProtoMessage() {}
 
 func (x *GetPivCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[28]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2487,7 +2638,7 @@ func (x *GetPivCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPivCertificateRequest.ProtoReflect.Descriptor instead.
 func (*GetPivCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{28}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetPivCertificateRequest) GetId() string {
@@ -2515,7 +2666,7 @@ type GetPivCertificateResponse struct {
 
 func (x *GetPivCertificateResponse) Reset() {
 	*x = GetPivCertificateResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[29]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2527,7 +2678,7 @@ func (x *GetPivCertificateResponse) String() string {
 func (*GetPivCertificateResponse) ProtoMessage() {}
 
 func (x *GetPivCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[29]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2540,7 +2691,7 @@ func (x *GetPivCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetPivCertificateResponse.ProtoReflect.Descriptor instead.
 func (*GetPivCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{29}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *GetPivCertificateResponse) GetFound() bool {
@@ -2576,7 +2727,7 @@ type ChangePivPinRequest struct {
 
 func (x *ChangePivPinRequest) Reset() {
 	*x = ChangePivPinRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[30]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2588,7 +2739,7 @@ func (x *ChangePivPinRequest) String() string {
 func (*ChangePivPinRequest) ProtoMessage() {}
 
 func (x *ChangePivPinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[30]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2601,7 +2752,7 @@ func (x *ChangePivPinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePivPinRequest.ProtoReflect.Descriptor instead.
 func (*ChangePivPinRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{30}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ChangePivPinRequest) GetId() string {
@@ -2644,7 +2795,7 @@ type ChangePivPukRequest struct {
 
 func (x *ChangePivPukRequest) Reset() {
 	*x = ChangePivPukRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[31]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2656,7 +2807,7 @@ func (x *ChangePivPukRequest) String() string {
 func (*ChangePivPukRequest) ProtoMessage() {}
 
 func (x *ChangePivPukRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[31]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2669,7 +2820,7 @@ func (x *ChangePivPukRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePivPukRequest.ProtoReflect.Descriptor instead.
 func (*ChangePivPukRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{31}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ChangePivPukRequest) GetId() string {
@@ -2712,7 +2863,7 @@ type UnblockPivPinRequest struct {
 
 func (x *UnblockPivPinRequest) Reset() {
 	*x = UnblockPivPinRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[32]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2724,7 +2875,7 @@ func (x *UnblockPivPinRequest) String() string {
 func (*UnblockPivPinRequest) ProtoMessage() {}
 
 func (x *UnblockPivPinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[32]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2737,7 +2888,7 @@ func (x *UnblockPivPinRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnblockPivPinRequest.ProtoReflect.Descriptor instead.
 func (*UnblockPivPinRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{32}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *UnblockPivPinRequest) GetId() string {
@@ -2782,7 +2933,7 @@ type ChangePivManagementKeyRequest struct {
 
 func (x *ChangePivManagementKeyRequest) Reset() {
 	*x = ChangePivManagementKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2794,7 +2945,7 @@ func (x *ChangePivManagementKeyRequest) String() string {
 func (*ChangePivManagementKeyRequest) ProtoMessage() {}
 
 func (x *ChangePivManagementKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[33]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2807,7 +2958,7 @@ func (x *ChangePivManagementKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangePivManagementKeyRequest.ProtoReflect.Descriptor instead.
 func (*ChangePivManagementKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{33}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ChangePivManagementKeyRequest) GetId() string {
@@ -2868,7 +3019,7 @@ type GeneratePivKeyRequest struct {
 
 func (x *GeneratePivKeyRequest) Reset() {
 	*x = GeneratePivKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2880,7 +3031,7 @@ func (x *GeneratePivKeyRequest) String() string {
 func (*GeneratePivKeyRequest) ProtoMessage() {}
 
 func (x *GeneratePivKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[34]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2893,7 +3044,7 @@ func (x *GeneratePivKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePivKeyRequest.ProtoReflect.Descriptor instead.
 func (*GeneratePivKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{34}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *GeneratePivKeyRequest) GetId() string {
@@ -2961,7 +3112,7 @@ type GeneratePivKeyResponse struct {
 
 func (x *GeneratePivKeyResponse) Reset() {
 	*x = GeneratePivKeyResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2973,7 +3124,7 @@ func (x *GeneratePivKeyResponse) String() string {
 func (*GeneratePivKeyResponse) ProtoMessage() {}
 
 func (x *GeneratePivKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[35]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2986,7 +3137,7 @@ func (x *GeneratePivKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GeneratePivKeyResponse.ProtoReflect.Descriptor instead.
 func (*GeneratePivKeyResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{35}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GeneratePivKeyResponse) GetSubjectPublicKeyInfo() []byte {
@@ -3007,7 +3158,7 @@ type AttestPivKeyRequest struct {
 
 func (x *AttestPivKeyRequest) Reset() {
 	*x = AttestPivKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3019,7 +3170,7 @@ func (x *AttestPivKeyRequest) String() string {
 func (*AttestPivKeyRequest) ProtoMessage() {}
 
 func (x *AttestPivKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[36]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3032,7 +3183,7 @@ func (x *AttestPivKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttestPivKeyRequest.ProtoReflect.Descriptor instead.
 func (*AttestPivKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{36}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *AttestPivKeyRequest) GetId() string {
@@ -3066,7 +3217,7 @@ type AttestPivKeyResponse struct {
 
 func (x *AttestPivKeyResponse) Reset() {
 	*x = AttestPivKeyResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3078,7 +3229,7 @@ func (x *AttestPivKeyResponse) String() string {
 func (*AttestPivKeyResponse) ProtoMessage() {}
 
 func (x *AttestPivKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[37]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3091,7 +3242,7 @@ func (x *AttestPivKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AttestPivKeyResponse.ProtoReflect.Descriptor instead.
 func (*AttestPivKeyResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{37}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *AttestPivKeyResponse) GetAttestationDer() []byte {
@@ -3121,7 +3272,7 @@ type SignPivCsrRequest struct {
 
 func (x *SignPivCsrRequest) Reset() {
 	*x = SignPivCsrRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3133,7 +3284,7 @@ func (x *SignPivCsrRequest) String() string {
 func (*SignPivCsrRequest) ProtoMessage() {}
 
 func (x *SignPivCsrRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[38]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3146,7 +3297,7 @@ func (x *SignPivCsrRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignPivCsrRequest.ProtoReflect.Descriptor instead.
 func (*SignPivCsrRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{38}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *SignPivCsrRequest) GetId() string {
@@ -3193,7 +3344,7 @@ type SignPivCsrResponse struct {
 
 func (x *SignPivCsrResponse) Reset() {
 	*x = SignPivCsrResponse{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3205,7 +3356,7 @@ func (x *SignPivCsrResponse) String() string {
 func (*SignPivCsrResponse) ProtoMessage() {}
 
 func (x *SignPivCsrResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[39]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3218,7 +3369,7 @@ func (x *SignPivCsrResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SignPivCsrResponse.ProtoReflect.Descriptor instead.
 func (*SignPivCsrResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{39}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *SignPivCsrResponse) GetCsrDer() []byte {
@@ -3242,7 +3393,7 @@ type ImportPivCertificateRequest struct {
 
 func (x *ImportPivCertificateRequest) Reset() {
 	*x = ImportPivCertificateRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3254,7 +3405,7 @@ func (x *ImportPivCertificateRequest) String() string {
 func (*ImportPivCertificateRequest) ProtoMessage() {}
 
 func (x *ImportPivCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[40]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3267,7 +3418,7 @@ func (x *ImportPivCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ImportPivCertificateRequest.ProtoReflect.Descriptor instead.
 func (*ImportPivCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{40}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ImportPivCertificateRequest) GetId() string {
@@ -3325,7 +3476,7 @@ type DeletePivCertificateRequest struct {
 
 func (x *DeletePivCertificateRequest) Reset() {
 	*x = DeletePivCertificateRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3337,7 +3488,7 @@ func (x *DeletePivCertificateRequest) String() string {
 func (*DeletePivCertificateRequest) ProtoMessage() {}
 
 func (x *DeletePivCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[41]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3350,7 +3501,7 @@ func (x *DeletePivCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePivCertificateRequest.ProtoReflect.Descriptor instead.
 func (*DeletePivCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{41}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *DeletePivCertificateRequest) GetId() string {
@@ -3401,7 +3552,7 @@ type DeletePivKeyRequest struct {
 
 func (x *DeletePivKeyRequest) Reset() {
 	*x = DeletePivKeyRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3413,7 +3564,7 @@ func (x *DeletePivKeyRequest) String() string {
 func (*DeletePivKeyRequest) ProtoMessage() {}
 
 func (x *DeletePivKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[42]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3426,7 +3577,7 @@ func (x *DeletePivKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeletePivKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeletePivKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{42}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *DeletePivKeyRequest) GetId() string {
@@ -3474,7 +3625,7 @@ type ResetPivRequest struct {
 
 func (x *ResetPivRequest) Reset() {
 	*x = ResetPivRequest{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3486,7 +3637,7 @@ func (x *ResetPivRequest) String() string {
 func (*ResetPivRequest) ProtoMessage() {}
 
 func (x *ResetPivRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[43]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3499,7 +3650,7 @@ func (x *ResetPivRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetPivRequest.ProtoReflect.Descriptor instead.
 func (*ResetPivRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{43}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ResetPivRequest) GetId() string {
@@ -3526,7 +3677,7 @@ type AgentError struct {
 
 func (x *AgentError) Reset() {
 	*x = AgentError{}
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3538,7 +3689,7 @@ func (x *AgentError) String() string {
 func (*AgentError) ProtoMessage() {}
 
 func (x *AgentError) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_agent_v1_agent_proto_msgTypes[44]
+	mi := &file_sigil_agent_v1_agent_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3551,7 +3702,7 @@ func (x *AgentError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentError.ProtoReflect.Descriptor instead.
 func (*AgentError) Descriptor() ([]byte, []int) {
-	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{44}
+	return file_sigil_agent_v1_agent_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *AgentError) GetKind() ErrorKind {
@@ -3590,7 +3741,7 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x0fFirmwareVersion\x12\x14\n" +
 	"\x05major\x18\x01 \x01(\rR\x05major\x12\x14\n" +
 	"\x05minor\x18\x02 \x01(\rR\x05minor\x12\x14\n" +
-	"\x05patch\x18\x03 \x01(\rR\x05patch\"\x9f\x05\n" +
+	"\x05patch\x18\x03 \x01(\rR\x05patch\"\x94\t\n" +
 	"\n" +
 	"DeviceInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
@@ -3611,14 +3762,35 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	" \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\x15supportedApplications\x12\x1c\n" +
 	"\tsimulated\x18\v \x01(\bR\tsimulated\x12G\n" +
 	"\x0fmetadata_access\x18\f \x01(\x0e2\x1e.sigil.agent.v1.MetadataAccessR\x0emetadataAccess\x12\x17\n" +
-	"\x04fips\x18\r \x01(\bH\x04R\x04fips\x88\x01\x01B\t\n" +
+	"\x04fips\x18\r \x01(\bH\x04R\x04fips\x88\x01\x01\x12<\n" +
+	"\vusb_enabled\x18\x0e \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\n" +
+	"usbEnabled\x12@\n" +
+	"\rusb_supported\x18\x0f \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\fusbSupported\x12<\n" +
+	"\vnfc_enabled\x18\x10 \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\n" +
+	"nfcEnabled\x12@\n" +
+	"\rnfc_supported\x18\x11 \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\fnfcSupported\x12(\n" +
+	"\rconfig_locked\x18\x12 \x01(\bH\x05R\fconfigLocked\x88\x01\x01\x126\n" +
+	"\x17fips_approved_available\x18\x13 \x01(\bR\x15fipsApprovedAvailable\x12@\n" +
+	"\rfips_approved\x18\x14 \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\ffipsApproved\x12*\n" +
+	"\x0epin_complexity\x18\x15 \x01(\bH\x06R\rpinComplexity\x88\x01\x01B\t\n" +
 	"\a_serialB\v\n" +
 	"\t_firmwareB\x0e\n" +
 	"\f_form_factorB\r\n" +
 	"\v_connectionB\a\n" +
-	"\x05_fips\"\x1f\n" +
+	"\x05_fipsB\x10\n" +
+	"\x0e_config_lockedB\x11\n" +
+	"\x0f_pin_complexity\"\x1f\n" +
 	"\rDeviceRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\"\"\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\x8a\x02\n" +
+	"\x1dSetEnabledApplicationsRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12'\n" +
+	"\x0fexpected_serial\x18\x02 \x01(\tR\x0eexpectedSerial\x12<\n" +
+	"\vusb_enabled\x18\x03 \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\n" +
+	"usbEnabled\x12\x17\n" +
+	"\aset_nfc\x18\x04 \x01(\bR\x06setNfc\x12<\n" +
+	"\vnfc_enabled\x18\x05 \x03(\x0e2\x1b.sigil.agent.v1.ApplicationR\n" +
+	"nfcEnabled\x12\x1b\n" +
+	"\tlock_code\x18\x06 \x01(\fR\blockCode\"\"\n" +
 	"\x10GetDeviceRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"K\n" +
 	"\x13ListDevicesResponse\x124\n" +
@@ -3816,7 +3988,7 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x18TRANSPORT_USB_SMART_CARD\x10\x01\x12\x15\n" +
 	"\x11TRANSPORT_USB_HID\x10\x02\x12\x15\n" +
 	"\x11TRANSPORT_USB_OTP\x10\x03\x12\x11\n" +
-	"\rTRANSPORT_NFC\x10\x04*\xb0\x01\n" +
+	"\rTRANSPORT_NFC\x10\x04*\xcf\x01\n" +
 	"\vApplication\x12\x1b\n" +
 	"\x17APPLICATION_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fAPPLICATION_PIV\x10\x01\x12\x15\n" +
@@ -3824,7 +3996,8 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\x0fAPPLICATION_U2F\x10\x03\x12\x13\n" +
 	"\x0fAPPLICATION_OTP\x10\x04\x12\x18\n" +
 	"\x14APPLICATION_OPEN_PGP\x10\x05\x12\x14\n" +
-	"\x10APPLICATION_OATH\x10\x06*l\n" +
+	"\x10APPLICATION_OATH\x10\x06\x12\x1d\n" +
+	"\x19APPLICATION_YUBI_HSM_AUTH\x10\a*l\n" +
 	"\x0eMetadataAccess\x12\x1b\n" +
 	"\x17METADATA_ACCESS_UNKNOWN\x10\x00\x12\x1d\n" +
 	"\x19METADATA_ACCESS_AVAILABLE\x10\x01\x12\x1e\n" +
@@ -3901,11 +4074,12 @@ const file_sigil_agent_v1_agent_proto_rawDesc = "" +
 	"\vPUK_BLOCKED\x10\x18\x12\x1c\n" +
 	"\x18MANAGEMENT_KEY_INCORRECT\x10\x19\x12\x13\n" +
 	"\x0fDEVICE_MISMATCH\x10\x1a\x12\x19\n" +
-	"\x15PIV_FIPS_NOT_APPROVED\x10\x1b2\x92\x0f\n" +
+	"\x15PIV_FIPS_NOT_APPROVED\x10\x1b2\xf2\x0f\n" +
 	"\x05Agent\x12K\n" +
 	"\fGetAgentInfo\x12\x15.sigil.agent.v1.Empty\x1a$.sigil.agent.v1.GetAgentInfoResponse\x12I\n" +
 	"\vListDevices\x12\x15.sigil.agent.v1.Empty\x1a#.sigil.agent.v1.ListDevicesResponse\x12I\n" +
-	"\tGetDevice\x12 .sigil.agent.v1.GetDeviceRequest\x1a\x1a.sigil.agent.v1.DeviceInfo\x12D\n" +
+	"\tGetDevice\x12 .sigil.agent.v1.GetDeviceRequest\x1a\x1a.sigil.agent.v1.DeviceInfo\x12^\n" +
+	"\x16SetEnabledApplications\x12-.sigil.agent.v1.SetEnabledApplicationsRequest\x1a\x15.sigil.agent.v1.Empty\x12D\n" +
 	"\fWatchDevices\x12\x15.sigil.agent.v1.Empty\x1a\x1b.sigil.agent.v1.DeviceEvent0\x01\x12J\n" +
 	"\rGetFidoStatus\x12\x1d.sigil.agent.v1.DeviceRequest\x1a\x1a.sigil.agent.v1.FidoStatus\x12e\n" +
 	"\x1bListDiscoverableCredentials\x12\x1a.sigil.agent.v1.PinRequest\x1a*.sigil.agent.v1.DiscoverableCredentialList\x12O\n" +
@@ -3942,7 +4116,7 @@ func file_sigil_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_sigil_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 10)
-var file_sigil_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_sigil_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
 var file_sigil_agent_v1_agent_proto_goTypes = []any{
 	(Transport)(0),                        // 0: sigil.agent.v1.Transport
 	(Application)(0),                      // 1: sigil.agent.v1.Application
@@ -3960,45 +4134,46 @@ var file_sigil_agent_v1_agent_proto_goTypes = []any{
 	(*FirmwareVersion)(nil),               // 13: sigil.agent.v1.FirmwareVersion
 	(*DeviceInfo)(nil),                    // 14: sigil.agent.v1.DeviceInfo
 	(*DeviceRequest)(nil),                 // 15: sigil.agent.v1.DeviceRequest
-	(*GetDeviceRequest)(nil),              // 16: sigil.agent.v1.GetDeviceRequest
-	(*ListDevicesResponse)(nil),           // 17: sigil.agent.v1.ListDevicesResponse
-	(*DeviceEvent)(nil),                   // 18: sigil.agent.v1.DeviceEvent
-	(*FidoStatus)(nil),                    // 19: sigil.agent.v1.FidoStatus
-	(*PinRequest)(nil),                    // 20: sigil.agent.v1.PinRequest
-	(*DiscoverableCredential)(nil),        // 21: sigil.agent.v1.DiscoverableCredential
-	(*DiscoverableCredentialList)(nil),    // 22: sigil.agent.v1.DiscoverableCredentialList
-	(*Fingerprint)(nil),                   // 23: sigil.agent.v1.Fingerprint
-	(*FingerprintList)(nil),               // 24: sigil.agent.v1.FingerprintList
-	(*EnrollFingerprintRequest)(nil),      // 25: sigil.agent.v1.EnrollFingerprintRequest
-	(*FingerprintProgress)(nil),           // 26: sigil.agent.v1.FingerprintProgress
-	(*EnrollFingerprintEvent)(nil),        // 27: sigil.agent.v1.EnrollFingerprintEvent
-	(*RemoveFingerprintRequest)(nil),      // 28: sigil.agent.v1.RemoveFingerprintRequest
-	(*PivAlgorithm)(nil),                  // 29: sigil.agent.v1.PivAlgorithm
-	(*PivKeyMetadata)(nil),                // 30: sigil.agent.v1.PivKeyMetadata
-	(*KeyStatus)(nil),                     // 31: sigil.agent.v1.KeyStatus
-	(*CertificateSummary)(nil),            // 32: sigil.agent.v1.CertificateSummary
-	(*PivSlotInfo)(nil),                   // 33: sigil.agent.v1.PivSlotInfo
-	(*PivSlotInfoList)(nil),               // 34: sigil.agent.v1.PivSlotInfoList
-	(*RetryStatus)(nil),                   // 35: sigil.agent.v1.RetryStatus
-	(*ManagementKeyStatus)(nil),           // 36: sigil.agent.v1.ManagementKeyStatus
-	(*PivInfo)(nil),                       // 37: sigil.agent.v1.PivInfo
-	(*GetPivCertificateRequest)(nil),      // 38: sigil.agent.v1.GetPivCertificateRequest
-	(*GetPivCertificateResponse)(nil),     // 39: sigil.agent.v1.GetPivCertificateResponse
-	(*ChangePivPinRequest)(nil),           // 40: sigil.agent.v1.ChangePivPinRequest
-	(*ChangePivPukRequest)(nil),           // 41: sigil.agent.v1.ChangePivPukRequest
-	(*UnblockPivPinRequest)(nil),          // 42: sigil.agent.v1.UnblockPivPinRequest
-	(*ChangePivManagementKeyRequest)(nil), // 43: sigil.agent.v1.ChangePivManagementKeyRequest
-	(*GeneratePivKeyRequest)(nil),         // 44: sigil.agent.v1.GeneratePivKeyRequest
-	(*GeneratePivKeyResponse)(nil),        // 45: sigil.agent.v1.GeneratePivKeyResponse
-	(*AttestPivKeyRequest)(nil),           // 46: sigil.agent.v1.AttestPivKeyRequest
-	(*AttestPivKeyResponse)(nil),          // 47: sigil.agent.v1.AttestPivKeyResponse
-	(*SignPivCsrRequest)(nil),             // 48: sigil.agent.v1.SignPivCsrRequest
-	(*SignPivCsrResponse)(nil),            // 49: sigil.agent.v1.SignPivCsrResponse
-	(*ImportPivCertificateRequest)(nil),   // 50: sigil.agent.v1.ImportPivCertificateRequest
-	(*DeletePivCertificateRequest)(nil),   // 51: sigil.agent.v1.DeletePivCertificateRequest
-	(*DeletePivKeyRequest)(nil),           // 52: sigil.agent.v1.DeletePivKeyRequest
-	(*ResetPivRequest)(nil),               // 53: sigil.agent.v1.ResetPivRequest
-	(*AgentError)(nil),                    // 54: sigil.agent.v1.AgentError
+	(*SetEnabledApplicationsRequest)(nil), // 16: sigil.agent.v1.SetEnabledApplicationsRequest
+	(*GetDeviceRequest)(nil),              // 17: sigil.agent.v1.GetDeviceRequest
+	(*ListDevicesResponse)(nil),           // 18: sigil.agent.v1.ListDevicesResponse
+	(*DeviceEvent)(nil),                   // 19: sigil.agent.v1.DeviceEvent
+	(*FidoStatus)(nil),                    // 20: sigil.agent.v1.FidoStatus
+	(*PinRequest)(nil),                    // 21: sigil.agent.v1.PinRequest
+	(*DiscoverableCredential)(nil),        // 22: sigil.agent.v1.DiscoverableCredential
+	(*DiscoverableCredentialList)(nil),    // 23: sigil.agent.v1.DiscoverableCredentialList
+	(*Fingerprint)(nil),                   // 24: sigil.agent.v1.Fingerprint
+	(*FingerprintList)(nil),               // 25: sigil.agent.v1.FingerprintList
+	(*EnrollFingerprintRequest)(nil),      // 26: sigil.agent.v1.EnrollFingerprintRequest
+	(*FingerprintProgress)(nil),           // 27: sigil.agent.v1.FingerprintProgress
+	(*EnrollFingerprintEvent)(nil),        // 28: sigil.agent.v1.EnrollFingerprintEvent
+	(*RemoveFingerprintRequest)(nil),      // 29: sigil.agent.v1.RemoveFingerprintRequest
+	(*PivAlgorithm)(nil),                  // 30: sigil.agent.v1.PivAlgorithm
+	(*PivKeyMetadata)(nil),                // 31: sigil.agent.v1.PivKeyMetadata
+	(*KeyStatus)(nil),                     // 32: sigil.agent.v1.KeyStatus
+	(*CertificateSummary)(nil),            // 33: sigil.agent.v1.CertificateSummary
+	(*PivSlotInfo)(nil),                   // 34: sigil.agent.v1.PivSlotInfo
+	(*PivSlotInfoList)(nil),               // 35: sigil.agent.v1.PivSlotInfoList
+	(*RetryStatus)(nil),                   // 36: sigil.agent.v1.RetryStatus
+	(*ManagementKeyStatus)(nil),           // 37: sigil.agent.v1.ManagementKeyStatus
+	(*PivInfo)(nil),                       // 38: sigil.agent.v1.PivInfo
+	(*GetPivCertificateRequest)(nil),      // 39: sigil.agent.v1.GetPivCertificateRequest
+	(*GetPivCertificateResponse)(nil),     // 40: sigil.agent.v1.GetPivCertificateResponse
+	(*ChangePivPinRequest)(nil),           // 41: sigil.agent.v1.ChangePivPinRequest
+	(*ChangePivPukRequest)(nil),           // 42: sigil.agent.v1.ChangePivPukRequest
+	(*UnblockPivPinRequest)(nil),          // 43: sigil.agent.v1.UnblockPivPinRequest
+	(*ChangePivManagementKeyRequest)(nil), // 44: sigil.agent.v1.ChangePivManagementKeyRequest
+	(*GeneratePivKeyRequest)(nil),         // 45: sigil.agent.v1.GeneratePivKeyRequest
+	(*GeneratePivKeyResponse)(nil),        // 46: sigil.agent.v1.GeneratePivKeyResponse
+	(*AttestPivKeyRequest)(nil),           // 47: sigil.agent.v1.AttestPivKeyRequest
+	(*AttestPivKeyResponse)(nil),          // 48: sigil.agent.v1.AttestPivKeyResponse
+	(*SignPivCsrRequest)(nil),             // 49: sigil.agent.v1.SignPivCsrRequest
+	(*SignPivCsrResponse)(nil),            // 50: sigil.agent.v1.SignPivCsrResponse
+	(*ImportPivCertificateRequest)(nil),   // 51: sigil.agent.v1.ImportPivCertificateRequest
+	(*DeletePivCertificateRequest)(nil),   // 52: sigil.agent.v1.DeletePivCertificateRequest
+	(*DeletePivKeyRequest)(nil),           // 53: sigil.agent.v1.DeletePivKeyRequest
+	(*ResetPivRequest)(nil),               // 54: sigil.agent.v1.ResetPivRequest
+	(*AgentError)(nil),                    // 55: sigil.agent.v1.AgentError
 }
 var file_sigil_agent_v1_agent_proto_depIdxs = []int32{
 	11, // 0: sigil.agent.v1.GetAgentInfoResponse.caller:type_name -> sigil.agent.v1.Caller
@@ -4008,91 +4183,100 @@ var file_sigil_agent_v1_agent_proto_depIdxs = []int32{
 	1,  // 4: sigil.agent.v1.DeviceInfo.applications:type_name -> sigil.agent.v1.Application
 	1,  // 5: sigil.agent.v1.DeviceInfo.supported_applications:type_name -> sigil.agent.v1.Application
 	2,  // 6: sigil.agent.v1.DeviceInfo.metadata_access:type_name -> sigil.agent.v1.MetadataAccess
-	14, // 7: sigil.agent.v1.ListDevicesResponse.devices:type_name -> sigil.agent.v1.DeviceInfo
-	14, // 8: sigil.agent.v1.DeviceEvent.connected:type_name -> sigil.agent.v1.DeviceInfo
-	14, // 9: sigil.agent.v1.DeviceEvent.updated:type_name -> sigil.agent.v1.DeviceInfo
-	21, // 10: sigil.agent.v1.DiscoverableCredentialList.credentials:type_name -> sigil.agent.v1.DiscoverableCredential
-	23, // 11: sigil.agent.v1.FingerprintList.fingerprints:type_name -> sigil.agent.v1.Fingerprint
-	26, // 12: sigil.agent.v1.EnrollFingerprintEvent.progress:type_name -> sigil.agent.v1.FingerprintProgress
-	23, // 13: sigil.agent.v1.EnrollFingerprintEvent.result:type_name -> sigil.agent.v1.Fingerprint
-	3,  // 14: sigil.agent.v1.PivAlgorithm.kind:type_name -> sigil.agent.v1.PivAlgorithmKind
-	29, // 15: sigil.agent.v1.PivKeyMetadata.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
-	4,  // 16: sigil.agent.v1.PivKeyMetadata.pin_policy:type_name -> sigil.agent.v1.PinPolicy
-	5,  // 17: sigil.agent.v1.PivKeyMetadata.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
-	6,  // 18: sigil.agent.v1.PivKeyMetadata.origin:type_name -> sigil.agent.v1.KeyOrigin
-	30, // 19: sigil.agent.v1.KeyStatus.present:type_name -> sigil.agent.v1.PivKeyMetadata
-	29, // 20: sigil.agent.v1.CertificateSummary.public_key_algorithm:type_name -> sigil.agent.v1.PivAlgorithm
-	32, // 21: sigil.agent.v1.PivSlotInfo.certificate:type_name -> sigil.agent.v1.CertificateSummary
-	31, // 22: sigil.agent.v1.PivSlotInfo.key:type_name -> sigil.agent.v1.KeyStatus
-	33, // 23: sigil.agent.v1.PivSlotInfoList.slots:type_name -> sigil.agent.v1.PivSlotInfo
-	29, // 24: sigil.agent.v1.ManagementKeyStatus.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
-	5,  // 25: sigil.agent.v1.ManagementKeyStatus.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
-	13, // 26: sigil.agent.v1.PivInfo.version:type_name -> sigil.agent.v1.FirmwareVersion
-	35, // 27: sigil.agent.v1.PivInfo.pin:type_name -> sigil.agent.v1.RetryStatus
-	35, // 28: sigil.agent.v1.PivInfo.puk:type_name -> sigil.agent.v1.RetryStatus
-	36, // 29: sigil.agent.v1.PivInfo.management_key:type_name -> sigil.agent.v1.ManagementKeyStatus
-	32, // 30: sigil.agent.v1.GetPivCertificateResponse.summary:type_name -> sigil.agent.v1.CertificateSummary
-	7,  // 31: sigil.agent.v1.ChangePivManagementKeyRequest.current_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 32: sigil.agent.v1.ChangePivManagementKeyRequest.new_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 33: sigil.agent.v1.GeneratePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	8,  // 34: sigil.agent.v1.GeneratePivKeyRequest.algorithm:type_name -> sigil.agent.v1.PivKeyGenerationAlgorithm
-	4,  // 35: sigil.agent.v1.GeneratePivKeyRequest.pin_policy:type_name -> sigil.agent.v1.PinPolicy
-	5,  // 36: sigil.agent.v1.GeneratePivKeyRequest.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
-	7,  // 37: sigil.agent.v1.ImportPivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 38: sigil.agent.v1.DeletePivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	7,  // 39: sigil.agent.v1.DeletePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
-	9,  // 40: sigil.agent.v1.AgentError.kind:type_name -> sigil.agent.v1.ErrorKind
-	10, // 41: sigil.agent.v1.Agent.GetAgentInfo:input_type -> sigil.agent.v1.Empty
-	10, // 42: sigil.agent.v1.Agent.ListDevices:input_type -> sigil.agent.v1.Empty
-	16, // 43: sigil.agent.v1.Agent.GetDevice:input_type -> sigil.agent.v1.GetDeviceRequest
-	10, // 44: sigil.agent.v1.Agent.WatchDevices:input_type -> sigil.agent.v1.Empty
-	15, // 45: sigil.agent.v1.Agent.GetFidoStatus:input_type -> sigil.agent.v1.DeviceRequest
-	20, // 46: sigil.agent.v1.Agent.ListDiscoverableCredentials:input_type -> sigil.agent.v1.PinRequest
-	20, // 47: sigil.agent.v1.Agent.ListFingerprints:input_type -> sigil.agent.v1.PinRequest
-	25, // 48: sigil.agent.v1.Agent.EnrollFingerprint:input_type -> sigil.agent.v1.EnrollFingerprintRequest
-	28, // 49: sigil.agent.v1.Agent.RemoveFingerprint:input_type -> sigil.agent.v1.RemoveFingerprintRequest
-	15, // 50: sigil.agent.v1.Agent.GetPivInfo:input_type -> sigil.agent.v1.DeviceRequest
-	15, // 51: sigil.agent.v1.Agent.ListPivSlots:input_type -> sigil.agent.v1.DeviceRequest
-	38, // 52: sigil.agent.v1.Agent.GetPivCertificate:input_type -> sigil.agent.v1.GetPivCertificateRequest
-	40, // 53: sigil.agent.v1.Agent.ChangePivPin:input_type -> sigil.agent.v1.ChangePivPinRequest
-	41, // 54: sigil.agent.v1.Agent.ChangePivPuk:input_type -> sigil.agent.v1.ChangePivPukRequest
-	42, // 55: sigil.agent.v1.Agent.UnblockPivPin:input_type -> sigil.agent.v1.UnblockPivPinRequest
-	43, // 56: sigil.agent.v1.Agent.ChangePivManagementKey:input_type -> sigil.agent.v1.ChangePivManagementKeyRequest
-	44, // 57: sigil.agent.v1.Agent.GeneratePivKey:input_type -> sigil.agent.v1.GeneratePivKeyRequest
-	46, // 58: sigil.agent.v1.Agent.AttestPivKey:input_type -> sigil.agent.v1.AttestPivKeyRequest
-	48, // 59: sigil.agent.v1.Agent.SignPivCsr:input_type -> sigil.agent.v1.SignPivCsrRequest
-	50, // 60: sigil.agent.v1.Agent.ImportPivCertificate:input_type -> sigil.agent.v1.ImportPivCertificateRequest
-	51, // 61: sigil.agent.v1.Agent.DeletePivCertificate:input_type -> sigil.agent.v1.DeletePivCertificateRequest
-	52, // 62: sigil.agent.v1.Agent.DeletePivKey:input_type -> sigil.agent.v1.DeletePivKeyRequest
-	53, // 63: sigil.agent.v1.Agent.ResetPiv:input_type -> sigil.agent.v1.ResetPivRequest
-	12, // 64: sigil.agent.v1.Agent.GetAgentInfo:output_type -> sigil.agent.v1.GetAgentInfoResponse
-	17, // 65: sigil.agent.v1.Agent.ListDevices:output_type -> sigil.agent.v1.ListDevicesResponse
-	14, // 66: sigil.agent.v1.Agent.GetDevice:output_type -> sigil.agent.v1.DeviceInfo
-	18, // 67: sigil.agent.v1.Agent.WatchDevices:output_type -> sigil.agent.v1.DeviceEvent
-	19, // 68: sigil.agent.v1.Agent.GetFidoStatus:output_type -> sigil.agent.v1.FidoStatus
-	22, // 69: sigil.agent.v1.Agent.ListDiscoverableCredentials:output_type -> sigil.agent.v1.DiscoverableCredentialList
-	24, // 70: sigil.agent.v1.Agent.ListFingerprints:output_type -> sigil.agent.v1.FingerprintList
-	27, // 71: sigil.agent.v1.Agent.EnrollFingerprint:output_type -> sigil.agent.v1.EnrollFingerprintEvent
-	10, // 72: sigil.agent.v1.Agent.RemoveFingerprint:output_type -> sigil.agent.v1.Empty
-	37, // 73: sigil.agent.v1.Agent.GetPivInfo:output_type -> sigil.agent.v1.PivInfo
-	34, // 74: sigil.agent.v1.Agent.ListPivSlots:output_type -> sigil.agent.v1.PivSlotInfoList
-	39, // 75: sigil.agent.v1.Agent.GetPivCertificate:output_type -> sigil.agent.v1.GetPivCertificateResponse
-	10, // 76: sigil.agent.v1.Agent.ChangePivPin:output_type -> sigil.agent.v1.Empty
-	10, // 77: sigil.agent.v1.Agent.ChangePivPuk:output_type -> sigil.agent.v1.Empty
-	10, // 78: sigil.agent.v1.Agent.UnblockPivPin:output_type -> sigil.agent.v1.Empty
-	10, // 79: sigil.agent.v1.Agent.ChangePivManagementKey:output_type -> sigil.agent.v1.Empty
-	45, // 80: sigil.agent.v1.Agent.GeneratePivKey:output_type -> sigil.agent.v1.GeneratePivKeyResponse
-	47, // 81: sigil.agent.v1.Agent.AttestPivKey:output_type -> sigil.agent.v1.AttestPivKeyResponse
-	49, // 82: sigil.agent.v1.Agent.SignPivCsr:output_type -> sigil.agent.v1.SignPivCsrResponse
-	10, // 83: sigil.agent.v1.Agent.ImportPivCertificate:output_type -> sigil.agent.v1.Empty
-	10, // 84: sigil.agent.v1.Agent.DeletePivCertificate:output_type -> sigil.agent.v1.Empty
-	10, // 85: sigil.agent.v1.Agent.DeletePivKey:output_type -> sigil.agent.v1.Empty
-	10, // 86: sigil.agent.v1.Agent.ResetPiv:output_type -> sigil.agent.v1.Empty
-	64, // [64:87] is the sub-list for method output_type
-	41, // [41:64] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	1,  // 7: sigil.agent.v1.DeviceInfo.usb_enabled:type_name -> sigil.agent.v1.Application
+	1,  // 8: sigil.agent.v1.DeviceInfo.usb_supported:type_name -> sigil.agent.v1.Application
+	1,  // 9: sigil.agent.v1.DeviceInfo.nfc_enabled:type_name -> sigil.agent.v1.Application
+	1,  // 10: sigil.agent.v1.DeviceInfo.nfc_supported:type_name -> sigil.agent.v1.Application
+	1,  // 11: sigil.agent.v1.DeviceInfo.fips_approved:type_name -> sigil.agent.v1.Application
+	1,  // 12: sigil.agent.v1.SetEnabledApplicationsRequest.usb_enabled:type_name -> sigil.agent.v1.Application
+	1,  // 13: sigil.agent.v1.SetEnabledApplicationsRequest.nfc_enabled:type_name -> sigil.agent.v1.Application
+	14, // 14: sigil.agent.v1.ListDevicesResponse.devices:type_name -> sigil.agent.v1.DeviceInfo
+	14, // 15: sigil.agent.v1.DeviceEvent.connected:type_name -> sigil.agent.v1.DeviceInfo
+	14, // 16: sigil.agent.v1.DeviceEvent.updated:type_name -> sigil.agent.v1.DeviceInfo
+	22, // 17: sigil.agent.v1.DiscoverableCredentialList.credentials:type_name -> sigil.agent.v1.DiscoverableCredential
+	24, // 18: sigil.agent.v1.FingerprintList.fingerprints:type_name -> sigil.agent.v1.Fingerprint
+	27, // 19: sigil.agent.v1.EnrollFingerprintEvent.progress:type_name -> sigil.agent.v1.FingerprintProgress
+	24, // 20: sigil.agent.v1.EnrollFingerprintEvent.result:type_name -> sigil.agent.v1.Fingerprint
+	3,  // 21: sigil.agent.v1.PivAlgorithm.kind:type_name -> sigil.agent.v1.PivAlgorithmKind
+	30, // 22: sigil.agent.v1.PivKeyMetadata.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
+	4,  // 23: sigil.agent.v1.PivKeyMetadata.pin_policy:type_name -> sigil.agent.v1.PinPolicy
+	5,  // 24: sigil.agent.v1.PivKeyMetadata.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
+	6,  // 25: sigil.agent.v1.PivKeyMetadata.origin:type_name -> sigil.agent.v1.KeyOrigin
+	31, // 26: sigil.agent.v1.KeyStatus.present:type_name -> sigil.agent.v1.PivKeyMetadata
+	30, // 27: sigil.agent.v1.CertificateSummary.public_key_algorithm:type_name -> sigil.agent.v1.PivAlgorithm
+	33, // 28: sigil.agent.v1.PivSlotInfo.certificate:type_name -> sigil.agent.v1.CertificateSummary
+	32, // 29: sigil.agent.v1.PivSlotInfo.key:type_name -> sigil.agent.v1.KeyStatus
+	34, // 30: sigil.agent.v1.PivSlotInfoList.slots:type_name -> sigil.agent.v1.PivSlotInfo
+	30, // 31: sigil.agent.v1.ManagementKeyStatus.algorithm:type_name -> sigil.agent.v1.PivAlgorithm
+	5,  // 32: sigil.agent.v1.ManagementKeyStatus.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
+	13, // 33: sigil.agent.v1.PivInfo.version:type_name -> sigil.agent.v1.FirmwareVersion
+	36, // 34: sigil.agent.v1.PivInfo.pin:type_name -> sigil.agent.v1.RetryStatus
+	36, // 35: sigil.agent.v1.PivInfo.puk:type_name -> sigil.agent.v1.RetryStatus
+	37, // 36: sigil.agent.v1.PivInfo.management_key:type_name -> sigil.agent.v1.ManagementKeyStatus
+	33, // 37: sigil.agent.v1.GetPivCertificateResponse.summary:type_name -> sigil.agent.v1.CertificateSummary
+	7,  // 38: sigil.agent.v1.ChangePivManagementKeyRequest.current_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	7,  // 39: sigil.agent.v1.ChangePivManagementKeyRequest.new_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	7,  // 40: sigil.agent.v1.GeneratePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	8,  // 41: sigil.agent.v1.GeneratePivKeyRequest.algorithm:type_name -> sigil.agent.v1.PivKeyGenerationAlgorithm
+	4,  // 42: sigil.agent.v1.GeneratePivKeyRequest.pin_policy:type_name -> sigil.agent.v1.PinPolicy
+	5,  // 43: sigil.agent.v1.GeneratePivKeyRequest.touch_policy:type_name -> sigil.agent.v1.TouchPolicy
+	7,  // 44: sigil.agent.v1.ImportPivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	7,  // 45: sigil.agent.v1.DeletePivCertificateRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	7,  // 46: sigil.agent.v1.DeletePivKeyRequest.management_key_algorithm:type_name -> sigil.agent.v1.ManagementKeyAlgorithm
+	9,  // 47: sigil.agent.v1.AgentError.kind:type_name -> sigil.agent.v1.ErrorKind
+	10, // 48: sigil.agent.v1.Agent.GetAgentInfo:input_type -> sigil.agent.v1.Empty
+	10, // 49: sigil.agent.v1.Agent.ListDevices:input_type -> sigil.agent.v1.Empty
+	17, // 50: sigil.agent.v1.Agent.GetDevice:input_type -> sigil.agent.v1.GetDeviceRequest
+	16, // 51: sigil.agent.v1.Agent.SetEnabledApplications:input_type -> sigil.agent.v1.SetEnabledApplicationsRequest
+	10, // 52: sigil.agent.v1.Agent.WatchDevices:input_type -> sigil.agent.v1.Empty
+	15, // 53: sigil.agent.v1.Agent.GetFidoStatus:input_type -> sigil.agent.v1.DeviceRequest
+	21, // 54: sigil.agent.v1.Agent.ListDiscoverableCredentials:input_type -> sigil.agent.v1.PinRequest
+	21, // 55: sigil.agent.v1.Agent.ListFingerprints:input_type -> sigil.agent.v1.PinRequest
+	26, // 56: sigil.agent.v1.Agent.EnrollFingerprint:input_type -> sigil.agent.v1.EnrollFingerprintRequest
+	29, // 57: sigil.agent.v1.Agent.RemoveFingerprint:input_type -> sigil.agent.v1.RemoveFingerprintRequest
+	15, // 58: sigil.agent.v1.Agent.GetPivInfo:input_type -> sigil.agent.v1.DeviceRequest
+	15, // 59: sigil.agent.v1.Agent.ListPivSlots:input_type -> sigil.agent.v1.DeviceRequest
+	39, // 60: sigil.agent.v1.Agent.GetPivCertificate:input_type -> sigil.agent.v1.GetPivCertificateRequest
+	41, // 61: sigil.agent.v1.Agent.ChangePivPin:input_type -> sigil.agent.v1.ChangePivPinRequest
+	42, // 62: sigil.agent.v1.Agent.ChangePivPuk:input_type -> sigil.agent.v1.ChangePivPukRequest
+	43, // 63: sigil.agent.v1.Agent.UnblockPivPin:input_type -> sigil.agent.v1.UnblockPivPinRequest
+	44, // 64: sigil.agent.v1.Agent.ChangePivManagementKey:input_type -> sigil.agent.v1.ChangePivManagementKeyRequest
+	45, // 65: sigil.agent.v1.Agent.GeneratePivKey:input_type -> sigil.agent.v1.GeneratePivKeyRequest
+	47, // 66: sigil.agent.v1.Agent.AttestPivKey:input_type -> sigil.agent.v1.AttestPivKeyRequest
+	49, // 67: sigil.agent.v1.Agent.SignPivCsr:input_type -> sigil.agent.v1.SignPivCsrRequest
+	51, // 68: sigil.agent.v1.Agent.ImportPivCertificate:input_type -> sigil.agent.v1.ImportPivCertificateRequest
+	52, // 69: sigil.agent.v1.Agent.DeletePivCertificate:input_type -> sigil.agent.v1.DeletePivCertificateRequest
+	53, // 70: sigil.agent.v1.Agent.DeletePivKey:input_type -> sigil.agent.v1.DeletePivKeyRequest
+	54, // 71: sigil.agent.v1.Agent.ResetPiv:input_type -> sigil.agent.v1.ResetPivRequest
+	12, // 72: sigil.agent.v1.Agent.GetAgentInfo:output_type -> sigil.agent.v1.GetAgentInfoResponse
+	18, // 73: sigil.agent.v1.Agent.ListDevices:output_type -> sigil.agent.v1.ListDevicesResponse
+	14, // 74: sigil.agent.v1.Agent.GetDevice:output_type -> sigil.agent.v1.DeviceInfo
+	10, // 75: sigil.agent.v1.Agent.SetEnabledApplications:output_type -> sigil.agent.v1.Empty
+	19, // 76: sigil.agent.v1.Agent.WatchDevices:output_type -> sigil.agent.v1.DeviceEvent
+	20, // 77: sigil.agent.v1.Agent.GetFidoStatus:output_type -> sigil.agent.v1.FidoStatus
+	23, // 78: sigil.agent.v1.Agent.ListDiscoverableCredentials:output_type -> sigil.agent.v1.DiscoverableCredentialList
+	25, // 79: sigil.agent.v1.Agent.ListFingerprints:output_type -> sigil.agent.v1.FingerprintList
+	28, // 80: sigil.agent.v1.Agent.EnrollFingerprint:output_type -> sigil.agent.v1.EnrollFingerprintEvent
+	10, // 81: sigil.agent.v1.Agent.RemoveFingerprint:output_type -> sigil.agent.v1.Empty
+	38, // 82: sigil.agent.v1.Agent.GetPivInfo:output_type -> sigil.agent.v1.PivInfo
+	35, // 83: sigil.agent.v1.Agent.ListPivSlots:output_type -> sigil.agent.v1.PivSlotInfoList
+	40, // 84: sigil.agent.v1.Agent.GetPivCertificate:output_type -> sigil.agent.v1.GetPivCertificateResponse
+	10, // 85: sigil.agent.v1.Agent.ChangePivPin:output_type -> sigil.agent.v1.Empty
+	10, // 86: sigil.agent.v1.Agent.ChangePivPuk:output_type -> sigil.agent.v1.Empty
+	10, // 87: sigil.agent.v1.Agent.UnblockPivPin:output_type -> sigil.agent.v1.Empty
+	10, // 88: sigil.agent.v1.Agent.ChangePivManagementKey:output_type -> sigil.agent.v1.Empty
+	46, // 89: sigil.agent.v1.Agent.GeneratePivKey:output_type -> sigil.agent.v1.GeneratePivKeyResponse
+	48, // 90: sigil.agent.v1.Agent.AttestPivKey:output_type -> sigil.agent.v1.AttestPivKeyResponse
+	50, // 91: sigil.agent.v1.Agent.SignPivCsr:output_type -> sigil.agent.v1.SignPivCsrResponse
+	10, // 92: sigil.agent.v1.Agent.ImportPivCertificate:output_type -> sigil.agent.v1.Empty
+	10, // 93: sigil.agent.v1.Agent.DeletePivCertificate:output_type -> sigil.agent.v1.Empty
+	10, // 94: sigil.agent.v1.Agent.DeletePivKey:output_type -> sigil.agent.v1.Empty
+	10, // 95: sigil.agent.v1.Agent.ResetPiv:output_type -> sigil.agent.v1.Empty
+	72, // [72:96] is the sub-list for method output_type
+	48, // [48:72] is the sub-list for method input_type
+	48, // [48:48] is the sub-list for extension type_name
+	48, // [48:48] is the sub-list for extension extendee
+	0,  // [0:48] is the sub-list for field type_name
 }
 
 func init() { file_sigil_agent_v1_agent_proto_init() }
@@ -4102,36 +4286,36 @@ func file_sigil_agent_v1_agent_proto_init() {
 	}
 	file_sigil_agent_v1_agent_proto_msgTypes[1].OneofWrappers = []any{}
 	file_sigil_agent_v1_agent_proto_msgTypes[4].OneofWrappers = []any{}
-	file_sigil_agent_v1_agent_proto_msgTypes[8].OneofWrappers = []any{
+	file_sigil_agent_v1_agent_proto_msgTypes[9].OneofWrappers = []any{
 		(*DeviceEvent_Connected)(nil),
 		(*DeviceEvent_Updated)(nil),
 		(*DeviceEvent_DisconnectedId)(nil),
 	}
-	file_sigil_agent_v1_agent_proto_msgTypes[9].OneofWrappers = []any{}
-	file_sigil_agent_v1_agent_proto_msgTypes[13].OneofWrappers = []any{}
-	file_sigil_agent_v1_agent_proto_msgTypes[17].OneofWrappers = []any{
+	file_sigil_agent_v1_agent_proto_msgTypes[10].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[14].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[18].OneofWrappers = []any{
 		(*EnrollFingerprintEvent_Progress)(nil),
 		(*EnrollFingerprintEvent_Result)(nil),
 	}
-	file_sigil_agent_v1_agent_proto_msgTypes[20].OneofWrappers = []any{}
-	file_sigil_agent_v1_agent_proto_msgTypes[21].OneofWrappers = []any{
+	file_sigil_agent_v1_agent_proto_msgTypes[21].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[22].OneofWrappers = []any{
 		(*KeyStatus_Present)(nil),
 		(*KeyStatus_Absent)(nil),
 		(*KeyStatus_Unknown)(nil),
 	}
-	file_sigil_agent_v1_agent_proto_msgTypes[22].OneofWrappers = []any{}
 	file_sigil_agent_v1_agent_proto_msgTypes[23].OneofWrappers = []any{}
-	file_sigil_agent_v1_agent_proto_msgTypes[25].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[24].OneofWrappers = []any{}
 	file_sigil_agent_v1_agent_proto_msgTypes[26].OneofWrappers = []any{}
 	file_sigil_agent_v1_agent_proto_msgTypes[27].OneofWrappers = []any{}
-	file_sigil_agent_v1_agent_proto_msgTypes[29].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[28].OneofWrappers = []any{}
+	file_sigil_agent_v1_agent_proto_msgTypes[30].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sigil_agent_v1_agent_proto_rawDesc), len(file_sigil_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      10,
-			NumMessages:   45,
+			NumMessages:   46,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
