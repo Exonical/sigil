@@ -212,11 +212,23 @@ func TestVerifyAcceptsAnyTwoDigitSlotSubject(t *testing.T) {
 	}
 }
 
+// Yubico's PIV attestation documentation names the slot in uppercase ("YubiKey PIV Attestation 9A"). Both cases are
+// accepted; the device-confirmed form is still unverified because no per-slot attestation has been captured.
+func TestVerifyAcceptsUppercaseSlotSubject(t *testing.T) {
+	h, leaf := newHierarchyWithSubject(t, "YubiKey PIV Attestation 9A", validExtensions(t))
+	result, err := VerifyWith(h.trust, leaf.der, h.slot.der, h.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Slot != 0x9a {
+		t.Fatalf("slot = %#x, want 0x9a", result.Slot)
+	}
+}
+
 func TestVerifyRejectsMalformedAttestationSubjects(t *testing.T) {
 	for _, subject := range []string{
 		"YubiKey PIV Attestation",
 		"YubiKey PIV Attestation 9",
-		"YubiKey PIV Attestation 9A",
 		"YubiKey PIV Attestation 9a1",
 		"YubiKey PIV Attestation zz",
 		"Some Other Certificate 9a",

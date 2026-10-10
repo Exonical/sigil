@@ -53,7 +53,7 @@ type Trust struct {
 // Attestation is the verified content of an attestation certificate.
 type Attestation struct {
 	// Slot is the attested PIV slot, from the subject "YubiKey PIV Attestation <slot>" where <slot> is two
-	// lowercase hex digits, for example 9a. Yubico documents the subject as the attested slot appended to that string.
+	// hex digits in either case, for example 9A (the form in Yubico's PIV attestation documentation) or 9a.
 	Slot        byte
 	Serial      uint32
 	Firmware    string
@@ -126,12 +126,12 @@ func parseSlot(commonName string) (byte, error) {
 		return 0, errors.New("attestation subject is not a YubiKey PIV attestation")
 	}
 	digits := strings.TrimPrefix(commonName, slotSubjectPrefix)
-	if len(digits) != 2 || strings.ToLower(digits) != digits {
-		return 0, errors.New("attestation slot must be two lowercase hex digits")
+	if len(digits) != 2 {
+		return 0, errors.New("attestation slot must be two hex digits")
 	}
 	slot, err := hex.DecodeString(digits)
 	if err != nil {
-		return 0, errors.New("attestation slot must be two lowercase hex digits")
+		return 0, errors.New("attestation slot must be two hex digits")
 	}
 	return slot[0], nil
 }

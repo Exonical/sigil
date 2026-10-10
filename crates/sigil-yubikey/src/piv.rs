@@ -1,3 +1,4 @@
+use crate::attestation::{self, AttestationTrust};
 use p256::ecdsa::{
     Signature as P256Signature, VerifyingKey as P256VerifyingKey,
     signature::hazmat::PrehashVerifier,
@@ -572,6 +573,7 @@ pub fn verify_certificate_matches_key(certificate_der: &[u8], expected_spki: &[u
     Ok(())
 }
 
+/// Verifies an attestation against the Yubico roots embedded in this build.
 pub fn verify_attestation(
     attestation_der: &[u8],
     intermediate_der: &[u8],
@@ -581,11 +583,48 @@ pub fn verify_attestation(
     pin_policy: PinPolicy,
     touch_policy: TouchPolicy,
 ) -> Result<()> {
-    // TODO: validate against Yubico roots; 5.7.4 uses the newer attestation hierarchy.
+    verify_attestation_with(
+        &AttestationTrust::embedded()?,
+        attestation::now_unix(),
+        attestation_der,
+        intermediate_der,
+        expected_spki,
+        expected_serial,
+        slot,
+        pin_policy,
+        touch_policy,
+    )
+}
+
+/// Verifies an attestation chain against `trust` at `now_unix`, then the key, serial, slot and policies.
+/// The chain is attestation → slot F9 → intermediates → root, and must end at a root in `trust`.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_attestation_with(
+    trust: &AttestationTrust,
+    now_unix: u64,
+    attestation_der: &[u8],
+    intermediate_der: &[u8],
+    expected_spki: &[u8],
+    expected_serial: &str,
+    slot: PivSlot,
+    pin_policy: PinPolicy,
+    touch_policy: TouchPolicy,
+) -> Result<()> {
     let attestation = Certificate::from_der(attestation_der)
         .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
     let intermediate = Certificate::from_der(intermediate_der)
         .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
+    attestation::verify_path(
+        &attestation,
+        std::slice::from_ref(&intermediate),
+        trust,
+        now_unix,
+    )
+    .map_err(|error| {
+        CredentialError::CertificateParse(format!(
+            "attestation does not verify to a Yubico root: {error}"
+        ))
+    })?;
     let attested_spki = attestation
         .tbs_certificate()
         .subject_public_key_info()
@@ -1242,7 +1281,14 @@ mod tests {
                 test_extension(YUBICO_POLICY_OID, &[0x02, 0x01]),
             ],
         );
-        verify_attestation(
+        let trust = AttestationTrust::from_parts(
+            vec![x509_cert::Certificate::from_der(&f9).expect("F9 as trust anchor")],
+            Vec::new(),
+        );
+        let now = attestation::now_unix();
+        verify_attestation_with(
+            &trust,
+            now,
             &attestation,
             &f9,
             attested_spki.as_bytes(),
@@ -1253,7 +1299,9 @@ mod tests {
         )
         .expect("valid attestation");
         assert_eq!(
-            verify_attestation(
+            verify_attestation_with(
+                &trust,
+                now,
                 &attestation,
                 &f9,
                 attested_spki.as_bytes(),
@@ -1265,7 +1313,9 @@ mod tests {
             Err(CredentialError::DeviceMismatch)
         );
         assert_eq!(
-            verify_attestation(
+            verify_attestation_with(
+                &trust,
+                now,
                 &attestation,
                 &f9,
                 attested_spki.as_bytes(),
