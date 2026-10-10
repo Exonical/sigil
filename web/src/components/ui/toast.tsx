@@ -42,15 +42,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               if (!open) dismiss(message.id);
             }}
             className={cn(
-              "pointer-events-auto grid w-[min(92vw,24rem)] gap-1 rounded-md border p-4 shadow-lg",
-              message.tone === "error"
-                ? "border-destructive bg-card text-destructive"
-                : "border-border bg-card text-foreground",
+              "pointer-events-auto grid w-[min(92vw,24rem)] gap-1 border bg-panel p-4",
+              message.tone === "error" ? "border-danger" : "border-line-strong",
             )}
           >
-            <ToastPrimitive.Title className="text-sm font-semibold">{message.title}</ToastPrimitive.Title>
+            <ToastPrimitive.Title
+              className={cn(
+                "font-mono text-[11px] font-medium uppercase tracking-[0.12em]",
+                message.tone === "error" ? "text-danger" : "text-text",
+              )}
+            >
+              {message.title}
+            </ToastPrimitive.Title>
             {message.description ? (
-              <ToastPrimitive.Description className="text-sm text-muted-foreground">
+              <ToastPrimitive.Description className="text-sm text-text-2">
                 {message.description}
               </ToastPrimitive.Description>
             ) : null}

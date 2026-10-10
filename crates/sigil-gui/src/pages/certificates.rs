@@ -179,8 +179,8 @@ fn SlotRow(slot_info: PivSlotInfo, selected: bool, onclick: EventHandler<MouseEv
                 strong { "{slot_info.slot.name()}" }
                 span { class: if slot_info.certificate.is_some() { "slot-subject" } else { "muted slot-subject" }, "{subject}" }
             }
-            if present { span { class: "slot-key-state", Icon { name: "key", size: 16 } "Key present" }
-            } else { span { class: "slot-key-state muted", "Empty" } }
+            if present { span { class: "slot-key-state", "Key present" }
+            } else { span { class: "slot-key-state neutral", "Empty" } }
             Icon { name: "chevron-right", size: 17 }
         }
     }

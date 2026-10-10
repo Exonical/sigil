@@ -7,6 +7,7 @@ use thiserror::Error;
 
 pub mod piv;
 pub mod secrets;
+pub mod time;
 pub use piv::{
     CertificateFormat, CertificateSummary, KeyOrigin, KeyStatus, ManagementKeyStatus, PinPolicy,
     PivAlgorithm, PivAttestation, PivCertificate, PivInfo, PivKeyAlgorithm, PivKeyConfiguration,

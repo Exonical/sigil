@@ -3,7 +3,8 @@ import * as React from "react";
 import { Link } from "react-router";
 
 import { errorMessage, useApi } from "@/api/client";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status";
+import { statusTone } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -70,17 +71,17 @@ export function Tokens() {
           {(query.data?.tokens ?? []).map((token) => (
             <TableRow key={token.serial}>
               <TableCell>
-                <Link className="underline" to={`/tokens/${encodeURIComponent(token.serial)}`}>
+                <Link className="font-mono underline" to={`/tokens/${encodeURIComponent(token.serial)}`}>
                   {token.serial}
                 </Link>
                 {token.nickname ? <span className="ml-2 text-muted-foreground">{token.nickname}</span> : null}
               </TableCell>
               <TableCell>{token.model}</TableCell>
               <TableCell>
-                <Badge>{token.status}</Badge>
+                <StatusBadge tone={statusTone(token.status)}>{token.status}</StatusBadge>
               </TableCell>
               <TableCell>{token.assignedUser?.username || token.assignedUser?.email || "—"}</TableCell>
-              <TableCell>{String(token.activeCertificates)}</TableCell>
+              <TableCell className="font-mono text-[12px] tabular-nums">{String(token.activeCertificates)}</TableCell>
             </TableRow>
           ))}
         </TableBody>

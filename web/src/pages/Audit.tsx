@@ -7,6 +7,8 @@ import { errorMessage, useApi } from "@/api/client";
 import { PageHeader } from "@/app/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { StatusBadge } from "@/components/ui/status";
+import { statusTone } from "@/lib/status";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
 import { formatUnix, fromDateInput } from "@/lib/format";
@@ -104,16 +106,16 @@ export function Audit() {
         <TableBody>
           {(query.data?.events ?? []).map((event) => (
             <TableRow key={String(event.seq)}>
-              <TableCell>{String(event.seq)}</TableCell>
-              <TableCell>{formatUnix(event.occurredAtUnix)}</TableCell>
-              <TableCell>
+              <TableCell className="font-mono text-[12px] tabular-nums">{String(event.seq)}</TableCell>
+              <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(event.occurredAtUnix)}</TableCell>
+              <TableCell className="font-mono text-[12px]">
                 {event.actorType}:{event.actorId}
               </TableCell>
               <TableCell>{event.action}</TableCell>
-              <TableCell>
+              <TableCell className="font-mono text-[12px]">
                 {event.targetType} {event.targetId}
               </TableCell>
-              <TableCell>{event.outcome}</TableCell>
+              <TableCell><StatusBadge tone={statusTone(event.outcome)}>{event.outcome}</StatusBadge></TableCell>
             </TableRow>
           ))}
         </TableBody>

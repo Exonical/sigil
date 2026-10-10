@@ -866,8 +866,8 @@ mod tests {
             subject: "CN=test".into(),
             issuer: "CN=issuer".into(),
             serial: "01ab".into(),
-            not_before: "2025-01-01T00:00:00Z".into(),
-            not_after: "2035-01-01T00:00:00Z".into(),
+            not_before: "2025-01-01 00:00Z".into(),
+            not_after: "2035-01-01 00:00Z".into(),
             public_key_algorithm: Some(PivAlgorithm::EccP256),
             sha256_fingerprint: "00".repeat(32),
         }

@@ -21,9 +21,13 @@ export function Layout() {
   const role = isAdmin(auth.roles) ? "Admin" : "Helpdesk";
   return (
     <div className="min-h-screen md:grid md:grid-cols-[14rem_1fr]">
-      <aside className="border-b border-border bg-card p-4 md:border-b-0 md:border-r">
-        <div className="mb-4 font-semibold tracking-tight">Sigil admin</div>
-        <nav aria-label="Main" className="flex flex-wrap gap-1 md:flex-col">
+      <aside className="flex flex-col border-b border-line-strong bg-panel md:border-b-0 md:border-r">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-4">
+          <span className="h-2 w-2 bg-accent" aria-hidden="true" />
+          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.16em] text-text">Sigil</span>
+          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-text-3">Admin</span>
+        </div>
+        <nav aria-label="Main" className="flex flex-wrap gap-px p-2 md:flex-col">
           {links.map((link) => (
             <NavLink
               key={link.to}
@@ -31,8 +35,8 @@ export function Layout() {
               end={link.to === "/"}
               className={({ isActive }) =>
                 cn(
-                  "rounded-md px-3 py-2 text-sm hover:bg-muted",
-                  isActive ? "bg-muted font-medium" : "text-muted-foreground",
+                  "border-l-2 px-3 py-2 font-mono text-[11px] font-medium uppercase tracking-[0.12em] hover:bg-raised hover:text-text",
+                  isActive ? "border-accent bg-raised text-text" : "border-transparent text-text-2",
                 )
               }
             >
@@ -40,14 +44,15 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="mt-6 space-y-2 text-sm">
-          <div className="flex items-center gap-2">
-            <span className="truncate" title={auth.displayName}>
+        <div className="mt-auto space-y-3 border-t border-line p-4">
+          <div className="space-y-1">
+            <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-text-3">Signed in</div>
+            <div className="truncate text-sm text-text" title={auth.displayName}>
               {auth.displayName}
-            </span>
+            </div>
             <Badge>{role}</Badge>
           </div>
-          <Button variant="outline" size="sm" onClick={() => void auth.signOut()}>
+          <Button variant="outline" size="sm" className="w-full" onClick={() => void auth.signOut()}>
             Sign out
           </Button>
         </div>
@@ -62,8 +67,8 @@ export function Layout() {
 // Shows a heading and an optional action area on every page.
 export function PageHeader({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-      <h1 className="text-xl font-semibold">{title}</h1>
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-2 border-b border-line pb-3">
+      <h1 className="font-sans text-[28px] font-semibold leading-none tracking-[-0.02em] text-text">{title}</h1>
       {children}
     </div>
   );

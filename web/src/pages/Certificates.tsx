@@ -6,7 +6,8 @@ import { useAuth } from "@/auth/AuthProvider";
 import { isAdmin } from "@/auth/roles";
 import { errorMessage, useApi } from "@/api/client";
 import { PageHeader } from "@/app/Layout";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status";
+import { statusTone } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -120,16 +121,16 @@ export function Certificates() {
           {(query.data?.certificates ?? []).map((certificate) => (
             <TableRow key={certificate.id}>
               <TableCell>
-                <Link className="underline" to={`/tokens/${encodeURIComponent(certificate.tokenSerial)}`}>
+                <Link className="font-mono underline" to={`/tokens/${encodeURIComponent(certificate.tokenSerial)}`}>
                   {certificate.tokenSerial}
                 </Link>
               </TableCell>
-              <TableCell>{certificate.slot}</TableCell>
+              <TableCell className="font-mono text-[12px] tabular-nums">{certificate.slot}</TableCell>
               <TableCell>{certificate.subject}</TableCell>
               <TableCell>
-                <Badge>{certificate.status}</Badge>
+                <StatusBadge tone={statusTone(certificate.status)}>{certificate.status}</StatusBadge>
               </TableCell>
-              <TableCell>{formatUnix(certificate.notAfterUnix)}</TableCell>
+              <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(certificate.notAfterUnix)}</TableCell>
               {admin ? (
                 <TableCell>
                   {certificate.status !== "revoked" ? (

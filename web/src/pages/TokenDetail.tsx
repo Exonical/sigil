@@ -6,7 +6,8 @@ import { useAuth } from "@/auth/AuthProvider";
 import { isAdmin } from "@/auth/roles";
 import { errorMessage, useApi } from "@/api/client";
 import { PageHeader } from "@/app/Layout";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status";
+import { statusTone } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -63,7 +64,7 @@ export function TokenDetail() {
     <>
       <PageHeader title={`Token ${token.serial}`}>
         <div className="flex items-center gap-2">
-          <Badge>{token.status}</Badge>
+          <StatusBadge tone={statusTone(token.status)}>{token.status}</StatusBadge>
           {token.nickname ? <span className="text-muted-foreground">{token.nickname}</span> : null}
         </div>
       </PageHeader>
@@ -90,7 +91,7 @@ export function TokenDetail() {
       </section>
 
       <section className="mb-6 space-y-3">
-        <h2 className="font-medium">Actions</h2>
+        <h2 className="sg-label mb-2 text-text-2">Actions</h2>
         <div className="flex flex-wrap items-end gap-2">
           <Input
             aria-label="Username or email to assign"
@@ -159,7 +160,7 @@ export function TokenDetail() {
       </section>
 
       <section className="mb-6">
-        <h2 className="mb-2 font-medium">Certificates</h2>
+        <h2 className="sg-label mb-2 text-text-2">Certificates</h2>
         <Table>
           <TableHeader>
             <TableRow>
@@ -173,11 +174,11 @@ export function TokenDetail() {
           <TableBody>
             {certificates.map((certificate) => (
               <TableRow key={certificate.id}>
-                <TableCell>{certificate.slot}</TableCell>
+                <TableCell className="font-mono text-[12px] tabular-nums">{certificate.slot}</TableCell>
                 <TableCell>{certificate.profile}</TableCell>
                 <TableCell>{certificate.subject}</TableCell>
-                <TableCell>{certificate.status}</TableCell>
-                <TableCell>{formatUnix(certificate.notAfterUnix)}</TableCell>
+                <TableCell><StatusBadge tone={statusTone(certificate.status)}>{certificate.status}</StatusBadge></TableCell>
+                <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(certificate.notAfterUnix)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -185,7 +186,7 @@ export function TokenDetail() {
       </section>
 
       <section className="mb-6">
-        <h2 className="mb-2 font-medium">Escrow</h2>
+        <h2 className="sg-label mb-2 text-text-2">Escrow</h2>
         <p className="mb-2 text-xs text-muted-foreground">Metadata only. Escrowed values are never shown.</p>
         <Table>
           <TableHeader>
@@ -201,10 +202,10 @@ export function TokenDetail() {
             {escrow.map((version) => (
               <TableRow key={`${version.kind}-${version.version}`}>
                 <TableCell>{version.kind}</TableCell>
-                <TableCell>{String(version.version)}</TableCell>
-                <TableCell>{version.state}</TableCell>
-                <TableCell>{formatUnix(version.createdAtUnix)}</TableCell>
-                <TableCell>{formatUnix(version.activatedAtUnix)}</TableCell>
+                <TableCell className="font-mono text-[12px] tabular-nums">{String(version.version)}</TableCell>
+                <TableCell><StatusBadge tone={statusTone(version.state)}>{version.state}</StatusBadge></TableCell>
+                <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(version.createdAtUnix)}</TableCell>
+                <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(version.activatedAtUnix)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -212,7 +213,7 @@ export function TokenDetail() {
       </section>
 
       <section className="mb-6">
-        <h2 className="mb-2 font-medium">Recent audit</h2>
+        <h2 className="sg-label mb-2 text-text-2">Recent audit</h2>
         <Table>
           <TableHeader>
             <TableRow>
@@ -225,10 +226,10 @@ export function TokenDetail() {
           <TableBody>
             {audit.map((event) => (
               <TableRow key={String(event.seq)}>
-                <TableCell>{formatUnix(event.occurredAtUnix)}</TableCell>
+                <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(event.occurredAtUnix ?? event.occurredAtUnix)}</TableCell>
                 <TableCell>{event.actorId}</TableCell>
                 <TableCell>{event.action}</TableCell>
-                <TableCell>{event.outcome}</TableCell>
+                <TableCell><StatusBadge tone={statusTone(event.outcome)}>{event.outcome}</StatusBadge></TableCell>
               </TableRow>
             ))}
           </TableBody>

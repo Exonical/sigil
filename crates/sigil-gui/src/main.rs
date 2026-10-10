@@ -6,6 +6,7 @@ mod layout;
 mod managed;
 mod pages;
 mod state;
+mod theme;
 mod windows;
 
 fn main() {

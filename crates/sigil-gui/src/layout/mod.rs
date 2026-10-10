@@ -55,7 +55,7 @@ pub fn AppShell() -> Element {
     };
 
     rsx! {
-        style { {include_str!("../theme.css")} }
+        style { {crate::theme::stylesheet()} }
         div { class: "{shell_class}",
             nav::LeftNav {}
             section { class: "center-pane",

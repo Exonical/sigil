@@ -197,8 +197,8 @@ pub fn summarize_certificate(der: &[u8]) -> Result<CertificateSummary> {
         subject: tbs.subject().to_string(),
         issuer: tbs.issuer().to_string(),
         serial: hex(tbs.serial_number().as_bytes()),
-        not_before: tbs.validity().not_before.to_string(),
-        not_after: tbs.validity().not_after.to_string(),
+        not_before: sigil_core::time::format_utc_minute(unix_seconds(tbs.validity().not_before)),
+        not_after: sigil_core::time::format_utc_minute(unix_seconds(tbs.validity().not_after)),
         public_key_algorithm,
         sha256_fingerprint: hex(&digest),
     })
@@ -231,6 +231,10 @@ fn certificate_parse(error: CredentialError) -> CredentialError {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn unix_seconds(time: x509_cert::time::Time) -> i64 {
+    i64::try_from(time.to_unix_duration().as_secs()).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

@@ -33,7 +33,7 @@ pub fn app() -> Element {
                 "Sigil could not connect to hardware"
             };
             rsx! {
-                style { {include_str!("theme.css")} }
+                style { {crate::theme::stylesheet()} }
                 div { class: "offline-shell",
                     header { h1 { "Sigil" } }
                     section { class: "offline-card",

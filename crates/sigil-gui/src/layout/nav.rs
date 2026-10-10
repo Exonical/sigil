@@ -37,7 +37,8 @@ pub fn LeftNav() -> Element {
                     Icon { name: "menu", size: 19 }
                 }
                 if !collapsed {
-                    span { class: "brand-name", "Sigil" }
+                    span { class: "brand-mark", aria_hidden: "true" }
+                    span { class: "brand-name", "SIGIL" }
                 }
             }
             div { class: if collapsed { "device-pill device-pill-collapsed" } else { "device-pill" },

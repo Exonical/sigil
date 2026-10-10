@@ -77,7 +77,7 @@ pub fn EnrollDialog(device: DeviceInfo, preselected: Option<PivSlot>) -> Element
                             p { strong { "Certificate installed" } }
                             p { class: "muted small", "Subject: {done.subject}" }
                             p { class: "muted small", "Serial: {done.serial_number}" }
-                            p { class: "muted small", "Valid until: {format_unix_date(done.not_after_unix)}" }
+                            p { class: "muted small", "Valid until: {sigil_core::time::format_utc_minute(done.not_after_unix)}" }
                         }
                     } else if busy() {
                         div { class: "enroll-progress",
@@ -213,37 +213,5 @@ pub fn EnrollDialog(device: DeviceInfo, preselected: Option<PivSlot>) -> Element
                 }
             }
         }
-    }
-}
-
-/// Formats a Unix timestamp as a UTC calendar date, for example 2023-11-14.
-pub fn format_unix_date(seconds: i64) -> String {
-    let days = seconds.div_euclid(86_400);
-    let shifted = days + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    format!("{year:04}-{month:02}-{day:02}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::format_unix_date;
-
-    #[test]
-    fn unix_timestamps_format_as_utc_dates() {
-        assert_eq!(format_unix_date(0), "1970-01-01");
-        assert_eq!(format_unix_date(1_700_000_000), "2023-11-14");
-        assert_eq!(format_unix_date(951_782_400), "2000-02-29");
     }
 }

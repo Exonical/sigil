@@ -1,7 +1,8 @@
 // Protobuf 64-bit integers arrive as bigint. Zero means "not set" for the timestamp fields.
 export function formatUnix(value: bigint | number | undefined): string {
   if (value === undefined || Number(value) === 0) return "—";
-  return new Date(Number(value) * 1000).toLocaleString();
+  const iso = new Date(Number(value) * 1000).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`;
 }
 
 export function unixSeconds(date: Date): bigint {

@@ -1,31 +1,97 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "../../design/fonts.css";
+@import "../../design/tokens.css";
 
-/* Dark palette, close to the Sigil desktop agent UI. Colors are HSL channels used by tailwind.config.js. */
-:root {
-  --background: 222 22% 8%;
-  --foreground: 210 20% 92%;
-  --muted: 222 16% 15%;
-  --muted-foreground: 215 14% 66%;
-  --card: 222 20% 11%;
-  --border: 222 14% 22%;
-  --input: 222 14% 26%;
-  --primary: 205 85% 58%;
-  --primary-foreground: 222 30% 8%;
-  --destructive: 0 70% 56%;
-  --destructive-foreground: 0 0% 100%;
-  --ring: 205 85% 58%;
-  color-scheme: dark;
+/* Tokens from design/tokens.css, exposed as Tailwind utilities. The --color-* names with shadcn aliases below
+   keep the component classes working. Changing a value here changes the token mapping, not the tokens. */
+@theme {
+  --color-bg: var(--sg-bg);
+  --color-panel: var(--sg-panel);
+  --color-raised: var(--sg-raised);
+  --color-line: var(--sg-line);
+  --color-line-strong: var(--sg-line-strong);
+  --color-text: var(--sg-text);
+  --color-text-2: var(--sg-text-2);
+  --color-text-3: var(--sg-text-3);
+  --color-accent: var(--sg-accent);
+  --color-accent-ink: var(--sg-accent-ink);
+  --color-accent-tint: var(--sg-accent-tint);
+  --color-ok: var(--sg-ok);
+  --color-ok-tint: var(--sg-ok-tint);
+  --color-warn: var(--sg-warn);
+  --color-warn-tint: var(--sg-warn-tint);
+  --color-danger: var(--sg-danger);
+  --color-danger-tint: var(--sg-danger-tint);
+  --color-info: var(--sg-info);
+  --color-info-tint: var(--sg-info-tint);
+  --color-focus: var(--sg-focus);
+
+  --color-background: var(--sg-bg);
+  --color-foreground: var(--sg-text);
+  --color-card: var(--sg-panel);
+  --color-muted: var(--sg-raised);
+  --color-muted-foreground: var(--sg-text-2);
+  --color-border: var(--sg-line);
+  --color-input: var(--sg-line-strong);
+  --color-primary: var(--sg-accent);
+  --color-primary-foreground: var(--sg-accent-ink);
+  --color-destructive: var(--sg-danger);
+  --color-destructive-foreground: var(--sg-bg);
+  --color-ring: var(--sg-focus);
+
+  --font-sans: var(--sg-font-sans);
+  --font-mono: var(--sg-font-mono);
+
+  --radius-sm: var(--sg-radius);
+  --radius-md: var(--sg-radius);
+  --radius-lg: var(--sg-radius);
+  --radius-xl: var(--sg-radius);
+  --radius-input: var(--sg-radius-input);
 }
 
-html,
-body,
-#root {
-  min-height: 100%;
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  *,
+  ::before,
+  ::after {
+    border-color: var(--sg-line);
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--sg-bg);
+    color: var(--sg-text);
+    font-family: var(--sg-font-sans);
+    font-size: var(--sg-text-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: var(--sg-focus-width) solid var(--sg-focus);
+    outline-offset: var(--sg-focus-offset);
+  }
+
+  ::selection {
+    background: var(--sg-accent-tint);
+  }
 }
 
-body {
-  margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+@layer components {
+  /* Uppercase mono micro-label: section titles, table headers, badges, metadata. */
+  .sg-label {
+    font-family: var(--sg-font-mono);
+    font-size: var(--sg-text-label);
+    font-weight: 500;
+    letter-spacing: var(--sg-tracking-label);
+    text-transform: uppercase;
+  }
 }

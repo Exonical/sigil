@@ -5,7 +5,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { isAdmin } from "@/auth/roles";
 import { errorMessage, useApi } from "@/api/client";
 import { PageHeader } from "@/app/Layout";
-import { Badge } from "@/components/ui/badge";
+import { StatusBadge } from "@/components/ui/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -81,7 +81,7 @@ export function Stations() {
               <TableCell>{station.dnsName}</TableCell>
               <TableCell>{station.mode}</TableCell>
               <TableCell>
-                <Badge>{station.status}</Badge>
+                <StatusBadge tone={station.status === "active" ? "ok" : "neutral"}>{station.status}</StatusBadge>
               </TableCell>
               {admin ? (
                 <TableCell>

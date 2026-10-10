@@ -362,7 +362,7 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                 DetailValue { label: "VALID", value: format!("{} – {}", certificate.not_before, certificate.not_after) }
                 DetailValue { label: "FINGERPRINT", value: certificate.sha256_fingerprint.clone() }
             } else if metadata.is_some() {
-                p { class: "panel-detail muted", "Key without certificate loaded" }
+                span { class: "slot-key-state warn", "Key without certificate loaded" }
             } else {
                 p { class: "panel-detail muted", "No certificate loaded" }
             }
