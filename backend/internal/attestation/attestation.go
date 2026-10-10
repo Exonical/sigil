@@ -47,6 +47,7 @@ var (
 // Intermediates are never trust anchors; a chain must end at one of Roots.
 type Trust struct {
 	Roots         *x509.CertPool
+	RootCerts     []*x509.Certificate
 	Intermediates []*x509.Certificate
 }
 
@@ -65,16 +66,31 @@ type Attestation struct {
 	Root string
 }
 
+// Describe reads the attested fields from a DER attestation certificate without checking its chain. Use it only on
+// certificates whose chain was verified when they were issued.
+func Describe(attestationDER []byte) (Attestation, error) {
+	leaf, err := x509.ParseCertificate(attestationDER)
+	if err != nil {
+		return Attestation{}, errors.New("attestation certificate is not valid DER")
+	}
+	return parseExtensions(leaf)
+}
+
 // EmbeddedTrust returns the Yubico roots and intermediates compiled into the backend.
 func EmbeddedTrust() (Trust, error) {
 	roots := x509.NewCertPool()
+	var rootCerts []*x509.Certificate
 	for _, source := range [][]byte{legacyRootPEM, currentRootPEM} {
 		certs, err := parsePEMCertificates(source)
 		if err != nil {
 			return Trust{}, fmt.Errorf("parse embedded Yubico root: %w", err)
 		}
 		for _, cert := range certs {
+			if err := requireCA(cert, "embedded Yubico root "+cert.Subject.CommonName); err != nil {
+				return Trust{}, err
+			}
 			roots.AddCert(cert)
+			rootCerts = append(rootCerts, cert)
 		}
 	}
 	intermediates, err := parsePEMCertificates(intermediatesPEM)
@@ -86,7 +102,7 @@ func EmbeddedTrust() (Trust, error) {
 			return Trust{}, err
 		}
 	}
-	return Trust{Roots: roots, Intermediates: intermediates}, nil
+	return Trust{Roots: roots, RootCerts: rootCerts, Intermediates: intermediates}, nil
 }
 
 // Verify checks an attestation certificate against the embedded Yubico trust at time now.

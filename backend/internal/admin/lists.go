@@ -50,6 +50,9 @@ func (s *Service) ListCertificates(ctx context.Context, req *connect.Request[adm
 	if err := rows.Err(); err != nil {
 		return nil, internal("could not read certificates", err)
 	}
+	if err := s.attachAttestations(ctx, response.Certificates); err != nil {
+		return nil, err
+	}
 	return connect.NewResponse(response), nil
 }
 

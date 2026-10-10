@@ -51,6 +51,12 @@ const client = {
   markFound: () => ok({ reEnrollmentRequired: false }),
   deleteKey: () => ok({ revoked: 0, failedCertificateIds: [] }),
   revokeCertificate: () => ok({}),
+  getCertificateAttestation: () =>
+    ok({
+      attestationDer: new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x01]),
+      attestationIntermediateDer: new Uint8Array([0x30, 0x03, 0x02, 0x01, 0x02]),
+      summary: mockData.certificates[0]?.attestation,
+    }),
   addStation: () => ok({}),
   setStationStatus: () => ok({}),
 } as unknown as AdminClient;

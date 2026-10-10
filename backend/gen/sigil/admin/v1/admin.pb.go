@@ -323,8 +323,11 @@ type CertificateSummary struct {
 	Status           string                 `protobuf:"bytes,10,opt,name=status,proto3" json:"status,omitempty"`
 	RevokedAtUnix    int64                  `protobuf:"varint,11,opt,name=revoked_at_unix,json=revokedAtUnix,proto3" json:"revoked_at_unix,omitempty"`
 	RevocationReason string                 `protobuf:"bytes,12,opt,name=revocation_reason,json=revocationReason,proto3" json:"revocation_reason,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Summary of the verified attestation stored with the certificate. Absent for certificates issued before
+	// migration 005, or issued without an attestation.
+	Attestation   *AttestationSummary `protobuf:"bytes,13,opt,name=attestation,proto3" json:"attestation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CertificateSummary) Reset() {
@@ -441,6 +444,211 @@ func (x *CertificateSummary) GetRevocationReason() string {
 	return ""
 }
 
+func (x *CertificateSummary) GetAttestation() *AttestationSummary {
+	if x != nil {
+		return x.Attestation
+	}
+	return nil
+}
+
+// What the backend stored for a certificate's attestation. The chain was verified at issuance.
+type AttestationSummary struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Present        bool                   `protobuf:"varint,1,opt,name=present,proto3" json:"present,omitempty"`
+	AttestedSerial string                 `protobuf:"bytes,2,opt,name=attested_serial,json=attestedSerial,proto3" json:"attested_serial,omitempty"`
+	Firmware       string                 `protobuf:"bytes,3,opt,name=firmware,proto3" json:"firmware,omitempty"`
+	Slot           string                 `protobuf:"bytes,4,opt,name=slot,proto3" json:"slot,omitempty"`
+	PinPolicy      string                 `protobuf:"bytes,5,opt,name=pin_policy,json=pinPolicy,proto3" json:"pin_policy,omitempty"`
+	TouchPolicy    string                 `protobuf:"bytes,6,opt,name=touch_policy,json=touchPolicy,proto3" json:"touch_policy,omitempty"`
+	Root           string                 `protobuf:"bytes,7,opt,name=root,proto3" json:"root,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AttestationSummary) Reset() {
+	*x = AttestationSummary{}
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AttestationSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AttestationSummary) ProtoMessage() {}
+
+func (x *AttestationSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AttestationSummary.ProtoReflect.Descriptor instead.
+func (*AttestationSummary) Descriptor() ([]byte, []int) {
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *AttestationSummary) GetPresent() bool {
+	if x != nil {
+		return x.Present
+	}
+	return false
+}
+
+func (x *AttestationSummary) GetAttestedSerial() string {
+	if x != nil {
+		return x.AttestedSerial
+	}
+	return ""
+}
+
+func (x *AttestationSummary) GetFirmware() string {
+	if x != nil {
+		return x.Firmware
+	}
+	return ""
+}
+
+func (x *AttestationSummary) GetSlot() string {
+	if x != nil {
+		return x.Slot
+	}
+	return ""
+}
+
+func (x *AttestationSummary) GetPinPolicy() string {
+	if x != nil {
+		return x.PinPolicy
+	}
+	return ""
+}
+
+func (x *AttestationSummary) GetTouchPolicy() string {
+	if x != nil {
+		return x.TouchPolicy
+	}
+	return ""
+}
+
+func (x *AttestationSummary) GetRoot() string {
+	if x != nil {
+		return x.Root
+	}
+	return ""
+}
+
+type CertificateAttestationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CertificateId string                 `protobuf:"bytes,1,opt,name=certificate_id,json=certificateId,proto3" json:"certificate_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CertificateAttestationRequest) Reset() {
+	*x = CertificateAttestationRequest{}
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateAttestationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateAttestationRequest) ProtoMessage() {}
+
+func (x *CertificateAttestationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateAttestationRequest.ProtoReflect.Descriptor instead.
+func (*CertificateAttestationRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CertificateAttestationRequest) GetCertificateId() string {
+	if x != nil {
+		return x.CertificateId
+	}
+	return ""
+}
+
+type CertificateAttestationResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The attestation certificate and the slot F9 certificate that signed it, DER encoded.
+	AttestationDer             []byte              `protobuf:"bytes,1,opt,name=attestation_der,json=attestationDer,proto3" json:"attestation_der,omitempty"`
+	AttestationIntermediateDer []byte              `protobuf:"bytes,2,opt,name=attestation_intermediate_der,json=attestationIntermediateDer,proto3" json:"attestation_intermediate_der,omitempty"`
+	Summary                    *AttestationSummary `protobuf:"bytes,3,opt,name=summary,proto3" json:"summary,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *CertificateAttestationResponse) Reset() {
+	*x = CertificateAttestationResponse{}
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CertificateAttestationResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CertificateAttestationResponse) ProtoMessage() {}
+
+func (x *CertificateAttestationResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CertificateAttestationResponse.ProtoReflect.Descriptor instead.
+func (*CertificateAttestationResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CertificateAttestationResponse) GetAttestationDer() []byte {
+	if x != nil {
+		return x.AttestationDer
+	}
+	return nil
+}
+
+func (x *CertificateAttestationResponse) GetAttestationIntermediateDer() []byte {
+	if x != nil {
+		return x.AttestationIntermediateDer
+	}
+	return nil
+}
+
+func (x *CertificateAttestationResponse) GetSummary() *AttestationSummary {
+	if x != nil {
+		return x.Summary
+	}
+	return nil
+}
+
 type EscrowVersion struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Kind            string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
@@ -454,7 +662,7 @@ type EscrowVersion struct {
 
 func (x *EscrowVersion) Reset() {
 	*x = EscrowVersion{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -466,7 +674,7 @@ func (x *EscrowVersion) String() string {
 func (*EscrowVersion) ProtoMessage() {}
 
 func (x *EscrowVersion) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -479,7 +687,7 @@ func (x *EscrowVersion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EscrowVersion.ProtoReflect.Descriptor instead.
 func (*EscrowVersion) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *EscrowVersion) GetKind() string {
@@ -534,7 +742,7 @@ type AuditEvent struct {
 
 func (x *AuditEvent) Reset() {
 	*x = AuditEvent{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -546,7 +754,7 @@ func (x *AuditEvent) String() string {
 func (*AuditEvent) ProtoMessage() {}
 
 func (x *AuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -559,7 +767,7 @@ func (x *AuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
 func (*AuditEvent) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *AuditEvent) GetSeq() int64 {
@@ -638,7 +846,7 @@ type DashboardResponse struct {
 
 func (x *DashboardResponse) Reset() {
 	*x = DashboardResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[7]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -650,7 +858,7 @@ func (x *DashboardResponse) String() string {
 func (*DashboardResponse) ProtoMessage() {}
 
 func (x *DashboardResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[7]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -663,7 +871,7 @@ func (x *DashboardResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DashboardResponse.ProtoReflect.Descriptor instead.
 func (*DashboardResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{7}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DashboardResponse) GetTokensByStatus() map[string]int64 {
@@ -713,7 +921,7 @@ type ListTokensRequest struct {
 
 func (x *ListTokensRequest) Reset() {
 	*x = ListTokensRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -725,7 +933,7 @@ func (x *ListTokensRequest) String() string {
 func (*ListTokensRequest) ProtoMessage() {}
 
 func (x *ListTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -738,7 +946,7 @@ func (x *ListTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTokensRequest.ProtoReflect.Descriptor instead.
 func (*ListTokensRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{8}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListTokensRequest) GetSearch() string {
@@ -779,7 +987,7 @@ type ListTokensResponse struct {
 
 func (x *ListTokensResponse) Reset() {
 	*x = ListTokensResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -791,7 +999,7 @@ func (x *ListTokensResponse) String() string {
 func (*ListTokensResponse) ProtoMessage() {}
 
 func (x *ListTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -804,7 +1012,7 @@ func (x *ListTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTokensResponse.ProtoReflect.Descriptor instead.
 func (*ListTokensResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{9}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListTokensResponse) GetTokens() []*TokenSummary {
@@ -833,7 +1041,7 @@ type GetTokenResponse struct {
 
 func (x *GetTokenResponse) Reset() {
 	*x = GetTokenResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -845,7 +1053,7 @@ func (x *GetTokenResponse) String() string {
 func (*GetTokenResponse) ProtoMessage() {}
 
 func (x *GetTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -858,7 +1066,7 @@ func (x *GetTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTokenResponse.ProtoReflect.Descriptor instead.
 func (*GetTokenResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{10}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *GetTokenResponse) GetToken() *TokenSummary {
@@ -899,7 +1107,7 @@ type AssignTokenRequest struct {
 
 func (x *AssignTokenRequest) Reset() {
 	*x = AssignTokenRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -911,7 +1119,7 @@ func (x *AssignTokenRequest) String() string {
 func (*AssignTokenRequest) ProtoMessage() {}
 
 func (x *AssignTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -924,7 +1132,7 @@ func (x *AssignTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignTokenRequest.ProtoReflect.Descriptor instead.
 func (*AssignTokenRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{11}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AssignTokenRequest) GetToken() *TokenRef {
@@ -952,7 +1160,7 @@ type SetNicknameRequest struct {
 
 func (x *SetNicknameRequest) Reset() {
 	*x = SetNicknameRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -964,7 +1172,7 @@ func (x *SetNicknameRequest) String() string {
 func (*SetNicknameRequest) ProtoMessage() {}
 
 func (x *SetNicknameRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -977,7 +1185,7 @@ func (x *SetNicknameRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetNicknameRequest.ProtoReflect.Descriptor instead.
 func (*SetNicknameRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{12}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *SetNicknameRequest) GetToken() *TokenRef {
@@ -1004,7 +1212,7 @@ type MarkFoundResponse struct {
 
 func (x *MarkFoundResponse) Reset() {
 	*x = MarkFoundResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1016,7 +1224,7 @@ func (x *MarkFoundResponse) String() string {
 func (*MarkFoundResponse) ProtoMessage() {}
 
 func (x *MarkFoundResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1029,7 +1237,7 @@ func (x *MarkFoundResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkFoundResponse.ProtoReflect.Descriptor instead.
 func (*MarkFoundResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{13}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *MarkFoundResponse) GetReEnrollmentRequired() bool {
@@ -1050,7 +1258,7 @@ type DeleteKeyRequest struct {
 
 func (x *DeleteKeyRequest) Reset() {
 	*x = DeleteKeyRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1062,7 +1270,7 @@ func (x *DeleteKeyRequest) String() string {
 func (*DeleteKeyRequest) ProtoMessage() {}
 
 func (x *DeleteKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1075,7 +1283,7 @@ func (x *DeleteKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeyRequest.ProtoReflect.Descriptor instead.
 func (*DeleteKeyRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{14}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DeleteKeyRequest) GetToken() *TokenRef {
@@ -1103,7 +1311,7 @@ type DeleteKeyResponse struct {
 
 func (x *DeleteKeyResponse) Reset() {
 	*x = DeleteKeyResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1115,7 +1323,7 @@ func (x *DeleteKeyResponse) String() string {
 func (*DeleteKeyResponse) ProtoMessage() {}
 
 func (x *DeleteKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1128,7 +1336,7 @@ func (x *DeleteKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteKeyResponse.ProtoReflect.Descriptor instead.
 func (*DeleteKeyResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{15}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DeleteKeyResponse) GetRevoked() int32 {
@@ -1160,7 +1368,7 @@ type ListCertificatesRequest struct {
 
 func (x *ListCertificatesRequest) Reset() {
 	*x = ListCertificatesRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1380,7 @@ func (x *ListCertificatesRequest) String() string {
 func (*ListCertificatesRequest) ProtoMessage() {}
 
 func (x *ListCertificatesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1393,7 @@ func (x *ListCertificatesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCertificatesRequest.ProtoReflect.Descriptor instead.
 func (*ListCertificatesRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{16}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListCertificatesRequest) GetStatus() string {
@@ -1240,7 +1448,7 @@ type ListCertificatesResponse struct {
 
 func (x *ListCertificatesResponse) Reset() {
 	*x = ListCertificatesResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1252,7 +1460,7 @@ func (x *ListCertificatesResponse) String() string {
 func (*ListCertificatesResponse) ProtoMessage() {}
 
 func (x *ListCertificatesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1265,7 +1473,7 @@ func (x *ListCertificatesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListCertificatesResponse.ProtoReflect.Descriptor instead.
 func (*ListCertificatesResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{17}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ListCertificatesResponse) GetCertificates() []*CertificateSummary {
@@ -1293,7 +1501,7 @@ type RevokeCertificateRequest struct {
 
 func (x *RevokeCertificateRequest) Reset() {
 	*x = RevokeCertificateRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1305,7 +1513,7 @@ func (x *RevokeCertificateRequest) String() string {
 func (*RevokeCertificateRequest) ProtoMessage() {}
 
 func (x *RevokeCertificateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1318,7 +1526,7 @@ func (x *RevokeCertificateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeCertificateRequest.ProtoReflect.Descriptor instead.
 func (*RevokeCertificateRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{18}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *RevokeCertificateRequest) GetCertificateId() string {
@@ -1344,7 +1552,7 @@ type ListStationsResponse struct {
 
 func (x *ListStationsResponse) Reset() {
 	*x = ListStationsResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1356,7 +1564,7 @@ func (x *ListStationsResponse) String() string {
 func (*ListStationsResponse) ProtoMessage() {}
 
 func (x *ListStationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1369,7 +1577,7 @@ func (x *ListStationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListStationsResponse.ProtoReflect.Descriptor instead.
 func (*ListStationsResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{19}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ListStationsResponse) GetStations() []*StationSummary {
@@ -1392,7 +1600,7 @@ type StationSummary struct {
 
 func (x *StationSummary) Reset() {
 	*x = StationSummary{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1404,7 +1612,7 @@ func (x *StationSummary) String() string {
 func (*StationSummary) ProtoMessage() {}
 
 func (x *StationSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1417,7 +1625,7 @@ func (x *StationSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StationSummary.ProtoReflect.Descriptor instead.
 func (*StationSummary) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{20}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *StationSummary) GetId() string {
@@ -1465,7 +1673,7 @@ type AddStationRequest struct {
 
 func (x *AddStationRequest) Reset() {
 	*x = AddStationRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1477,7 +1685,7 @@ func (x *AddStationRequest) String() string {
 func (*AddStationRequest) ProtoMessage() {}
 
 func (x *AddStationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1490,7 +1698,7 @@ func (x *AddStationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddStationRequest.ProtoReflect.Descriptor instead.
 func (*AddStationRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{21}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AddStationRequest) GetDnsName() string {
@@ -1517,7 +1725,7 @@ type SetStationStatusRequest struct {
 
 func (x *SetStationStatusRequest) Reset() {
 	*x = SetStationStatusRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1529,7 +1737,7 @@ func (x *SetStationStatusRequest) String() string {
 func (*SetStationStatusRequest) ProtoMessage() {}
 
 func (x *SetStationStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1542,7 +1750,7 @@ func (x *SetStationStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetStationStatusRequest.ProtoReflect.Descriptor instead.
 func (*SetStationStatusRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{22}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SetStationStatusRequest) GetId() string {
@@ -1570,7 +1778,7 @@ type ListUsersRequest struct {
 
 func (x *ListUsersRequest) Reset() {
 	*x = ListUsersRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1582,7 +1790,7 @@ func (x *ListUsersRequest) String() string {
 func (*ListUsersRequest) ProtoMessage() {}
 
 func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1595,7 +1803,7 @@ func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersRequest.ProtoReflect.Descriptor instead.
 func (*ListUsersRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{23}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ListUsersRequest) GetSearch() string {
@@ -1629,7 +1837,7 @@ type UserWithTokens struct {
 
 func (x *UserWithTokens) Reset() {
 	*x = UserWithTokens{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1641,7 +1849,7 @@ func (x *UserWithTokens) String() string {
 func (*UserWithTokens) ProtoMessage() {}
 
 func (x *UserWithTokens) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1654,7 +1862,7 @@ func (x *UserWithTokens) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UserWithTokens.ProtoReflect.Descriptor instead.
 func (*UserWithTokens) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{24}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *UserWithTokens) GetUser() *UserSummary {
@@ -1681,7 +1889,7 @@ type ListUsersResponse struct {
 
 func (x *ListUsersResponse) Reset() {
 	*x = ListUsersResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1693,7 +1901,7 @@ func (x *ListUsersResponse) String() string {
 func (*ListUsersResponse) ProtoMessage() {}
 
 func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1706,7 +1914,7 @@ func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListUsersResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{25}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListUsersResponse) GetUsers() []*UserWithTokens {
@@ -1740,7 +1948,7 @@ type ListAuditRequest struct {
 
 func (x *ListAuditRequest) Reset() {
 	*x = ListAuditRequest{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1752,7 +1960,7 @@ func (x *ListAuditRequest) String() string {
 func (*ListAuditRequest) ProtoMessage() {}
 
 func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1765,7 +1973,7 @@ func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAuditRequest.ProtoReflect.Descriptor instead.
 func (*ListAuditRequest) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{26}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListAuditRequest) GetActorType() string {
@@ -1835,7 +2043,7 @@ type ListAuditResponse struct {
 
 func (x *ListAuditResponse) Reset() {
 	*x = ListAuditResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1847,7 +2055,7 @@ func (x *ListAuditResponse) String() string {
 func (*ListAuditResponse) ProtoMessage() {}
 
 func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1860,7 +2068,7 @@ func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAuditResponse.ProtoReflect.Descriptor instead.
 func (*ListAuditResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{27}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ListAuditResponse) GetEvents() []*AuditEvent {
@@ -1888,7 +2096,7 @@ type VerifyAuditResponse struct {
 
 func (x *VerifyAuditResponse) Reset() {
 	*x = VerifyAuditResponse{}
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1900,7 +2108,7 @@ func (x *VerifyAuditResponse) String() string {
 func (*VerifyAuditResponse) ProtoMessage() {}
 
 func (x *VerifyAuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_sigil_admin_v1_admin_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1913,7 +2121,7 @@ func (x *VerifyAuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyAuditResponse.ProtoReflect.Descriptor instead.
 func (*VerifyAuditResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{28}
+	return file_sigil_admin_v1_admin_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *VerifyAuditResponse) GetOk() bool {
@@ -1966,7 +2174,7 @@ const file_sigil_admin_v1_admin_proto_rawDesc = "" +
 	" \x01(\x03R\n" +
 	"lostAtUnix\x12$\n" +
 	"\x0elast_seen_unix\x18\v \x01(\x03R\flastSeenUnix\x12/\n" +
-	"\x13active_certificates\x18\f \x01(\x03R\x12activeCertificates\"\x92\x03\n" +
+	"\x13active_certificates\x18\f \x01(\x03R\x12activeCertificates\"\xd8\x03\n" +
 	"\x12CertificateSummary\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12!\n" +
 	"\ftoken_serial\x18\x02 \x01(\tR\vtokenSerial\x12\x12\n" +
@@ -1980,7 +2188,23 @@ const file_sigil_admin_v1_admin_proto_rawDesc = "" +
 	"\x06status\x18\n" +
 	" \x01(\tR\x06status\x12&\n" +
 	"\x0frevoked_at_unix\x18\v \x01(\x03R\rrevokedAtUnix\x12+\n" +
-	"\x11revocation_reason\x18\f \x01(\tR\x10revocationReason\"\xa7\x01\n" +
+	"\x11revocation_reason\x18\f \x01(\tR\x10revocationReason\x12D\n" +
+	"\vattestation\x18\r \x01(\v2\".sigil.admin.v1.AttestationSummaryR\vattestation\"\xdd\x01\n" +
+	"\x12AttestationSummary\x12\x18\n" +
+	"\apresent\x18\x01 \x01(\bR\apresent\x12'\n" +
+	"\x0fattested_serial\x18\x02 \x01(\tR\x0eattestedSerial\x12\x1a\n" +
+	"\bfirmware\x18\x03 \x01(\tR\bfirmware\x12\x12\n" +
+	"\x04slot\x18\x04 \x01(\tR\x04slot\x12\x1d\n" +
+	"\n" +
+	"pin_policy\x18\x05 \x01(\tR\tpinPolicy\x12!\n" +
+	"\ftouch_policy\x18\x06 \x01(\tR\vtouchPolicy\x12\x12\n" +
+	"\x04root\x18\a \x01(\tR\x04root\"F\n" +
+	"\x1dCertificateAttestationRequest\x12%\n" +
+	"\x0ecertificate_id\x18\x01 \x01(\tR\rcertificateId\"\xc9\x01\n" +
+	"\x1eCertificateAttestationResponse\x12'\n" +
+	"\x0fattestation_der\x18\x01 \x01(\fR\x0eattestationDer\x12@\n" +
+	"\x1cattestation_intermediate_der\x18\x02 \x01(\fR\x1aattestationIntermediateDer\x12<\n" +
+	"\asummary\x18\x03 \x01(\v2\".sigil.admin.v1.AttestationSummaryR\asummary\"\xa7\x01\n" +
 	"\rEscrowVersion\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x05R\aversion\x12\x14\n" +
@@ -2095,8 +2319,7 @@ const file_sigil_admin_v1_admin_proto_rawDesc = "" +
 	"\x13VerifyAuditResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12%\n" +
 	"\x0eevents_checked\x18\x02 \x01(\x03R\reventsChecked\x12\x18\n" +
-	"\afailure\x18\x03 \x01(\tR\afailure2\xbb\n" +
-	"\n" +
+	"\afailure\x18\x03 \x01(\tR\afailure2\xb7\v\n" +
 	"\fAdminService\x12H\n" +
 	"\fGetDashboard\x12\x15.sigil.admin.v1.Empty\x1a!.sigil.admin.v1.DashboardResponse\x12S\n" +
 	"\n" +
@@ -2110,7 +2333,8 @@ const file_sigil_admin_v1_admin_proto_rawDesc = "" +
 	"\tMarkFound\x12\x18.sigil.admin.v1.TokenRef\x1a!.sigil.admin.v1.MarkFoundResponse\x12P\n" +
 	"\tDeleteKey\x12 .sigil.admin.v1.DeleteKeyRequest\x1a!.sigil.admin.v1.DeleteKeyResponse\x12e\n" +
 	"\x10ListCertificates\x12'.sigil.admin.v1.ListCertificatesRequest\x1a(.sigil.admin.v1.ListCertificatesResponse\x12T\n" +
-	"\x11RevokeCertificate\x12(.sigil.admin.v1.RevokeCertificateRequest\x1a\x15.sigil.admin.v1.Empty\x12K\n" +
+	"\x11RevokeCertificate\x12(.sigil.admin.v1.RevokeCertificateRequest\x1a\x15.sigil.admin.v1.Empty\x12z\n" +
+	"\x19GetCertificateAttestation\x12-.sigil.admin.v1.CertificateAttestationRequest\x1a..sigil.admin.v1.CertificateAttestationResponse\x12K\n" +
 	"\fListStations\x12\x15.sigil.admin.v1.Empty\x1a$.sigil.admin.v1.ListStationsResponse\x12F\n" +
 	"\n" +
 	"AddStation\x12!.sigil.admin.v1.AddStationRequest\x1a\x15.sigil.admin.v1.Empty\x12R\n" +
@@ -2131,96 +2355,103 @@ func file_sigil_admin_v1_admin_proto_rawDescGZIP() []byte {
 	return file_sigil_admin_v1_admin_proto_rawDescData
 }
 
-var file_sigil_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 31)
+var file_sigil_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_sigil_admin_v1_admin_proto_goTypes = []any{
-	(*Empty)(nil),                    // 0: sigil.admin.v1.Empty
-	(*TokenRef)(nil),                 // 1: sigil.admin.v1.TokenRef
-	(*UserSummary)(nil),              // 2: sigil.admin.v1.UserSummary
-	(*TokenSummary)(nil),             // 3: sigil.admin.v1.TokenSummary
-	(*CertificateSummary)(nil),       // 4: sigil.admin.v1.CertificateSummary
-	(*EscrowVersion)(nil),            // 5: sigil.admin.v1.EscrowVersion
-	(*AuditEvent)(nil),               // 6: sigil.admin.v1.AuditEvent
-	(*DashboardResponse)(nil),        // 7: sigil.admin.v1.DashboardResponse
-	(*ListTokensRequest)(nil),        // 8: sigil.admin.v1.ListTokensRequest
-	(*ListTokensResponse)(nil),       // 9: sigil.admin.v1.ListTokensResponse
-	(*GetTokenResponse)(nil),         // 10: sigil.admin.v1.GetTokenResponse
-	(*AssignTokenRequest)(nil),       // 11: sigil.admin.v1.AssignTokenRequest
-	(*SetNicknameRequest)(nil),       // 12: sigil.admin.v1.SetNicknameRequest
-	(*MarkFoundResponse)(nil),        // 13: sigil.admin.v1.MarkFoundResponse
-	(*DeleteKeyRequest)(nil),         // 14: sigil.admin.v1.DeleteKeyRequest
-	(*DeleteKeyResponse)(nil),        // 15: sigil.admin.v1.DeleteKeyResponse
-	(*ListCertificatesRequest)(nil),  // 16: sigil.admin.v1.ListCertificatesRequest
-	(*ListCertificatesResponse)(nil), // 17: sigil.admin.v1.ListCertificatesResponse
-	(*RevokeCertificateRequest)(nil), // 18: sigil.admin.v1.RevokeCertificateRequest
-	(*ListStationsResponse)(nil),     // 19: sigil.admin.v1.ListStationsResponse
-	(*StationSummary)(nil),           // 20: sigil.admin.v1.StationSummary
-	(*AddStationRequest)(nil),        // 21: sigil.admin.v1.AddStationRequest
-	(*SetStationStatusRequest)(nil),  // 22: sigil.admin.v1.SetStationStatusRequest
-	(*ListUsersRequest)(nil),         // 23: sigil.admin.v1.ListUsersRequest
-	(*UserWithTokens)(nil),           // 24: sigil.admin.v1.UserWithTokens
-	(*ListUsersResponse)(nil),        // 25: sigil.admin.v1.ListUsersResponse
-	(*ListAuditRequest)(nil),         // 26: sigil.admin.v1.ListAuditRequest
-	(*ListAuditResponse)(nil),        // 27: sigil.admin.v1.ListAuditResponse
-	(*VerifyAuditResponse)(nil),      // 28: sigil.admin.v1.VerifyAuditResponse
-	nil,                              // 29: sigil.admin.v1.DashboardResponse.TokensByStatusEntry
-	nil,                              // 30: sigil.admin.v1.DashboardResponse.StationsByStatusEntry
+	(*Empty)(nil),                          // 0: sigil.admin.v1.Empty
+	(*TokenRef)(nil),                       // 1: sigil.admin.v1.TokenRef
+	(*UserSummary)(nil),                    // 2: sigil.admin.v1.UserSummary
+	(*TokenSummary)(nil),                   // 3: sigil.admin.v1.TokenSummary
+	(*CertificateSummary)(nil),             // 4: sigil.admin.v1.CertificateSummary
+	(*AttestationSummary)(nil),             // 5: sigil.admin.v1.AttestationSummary
+	(*CertificateAttestationRequest)(nil),  // 6: sigil.admin.v1.CertificateAttestationRequest
+	(*CertificateAttestationResponse)(nil), // 7: sigil.admin.v1.CertificateAttestationResponse
+	(*EscrowVersion)(nil),                  // 8: sigil.admin.v1.EscrowVersion
+	(*AuditEvent)(nil),                     // 9: sigil.admin.v1.AuditEvent
+	(*DashboardResponse)(nil),              // 10: sigil.admin.v1.DashboardResponse
+	(*ListTokensRequest)(nil),              // 11: sigil.admin.v1.ListTokensRequest
+	(*ListTokensResponse)(nil),             // 12: sigil.admin.v1.ListTokensResponse
+	(*GetTokenResponse)(nil),               // 13: sigil.admin.v1.GetTokenResponse
+	(*AssignTokenRequest)(nil),             // 14: sigil.admin.v1.AssignTokenRequest
+	(*SetNicknameRequest)(nil),             // 15: sigil.admin.v1.SetNicknameRequest
+	(*MarkFoundResponse)(nil),              // 16: sigil.admin.v1.MarkFoundResponse
+	(*DeleteKeyRequest)(nil),               // 17: sigil.admin.v1.DeleteKeyRequest
+	(*DeleteKeyResponse)(nil),              // 18: sigil.admin.v1.DeleteKeyResponse
+	(*ListCertificatesRequest)(nil),        // 19: sigil.admin.v1.ListCertificatesRequest
+	(*ListCertificatesResponse)(nil),       // 20: sigil.admin.v1.ListCertificatesResponse
+	(*RevokeCertificateRequest)(nil),       // 21: sigil.admin.v1.RevokeCertificateRequest
+	(*ListStationsResponse)(nil),           // 22: sigil.admin.v1.ListStationsResponse
+	(*StationSummary)(nil),                 // 23: sigil.admin.v1.StationSummary
+	(*AddStationRequest)(nil),              // 24: sigil.admin.v1.AddStationRequest
+	(*SetStationStatusRequest)(nil),        // 25: sigil.admin.v1.SetStationStatusRequest
+	(*ListUsersRequest)(nil),               // 26: sigil.admin.v1.ListUsersRequest
+	(*UserWithTokens)(nil),                 // 27: sigil.admin.v1.UserWithTokens
+	(*ListUsersResponse)(nil),              // 28: sigil.admin.v1.ListUsersResponse
+	(*ListAuditRequest)(nil),               // 29: sigil.admin.v1.ListAuditRequest
+	(*ListAuditResponse)(nil),              // 30: sigil.admin.v1.ListAuditResponse
+	(*VerifyAuditResponse)(nil),            // 31: sigil.admin.v1.VerifyAuditResponse
+	nil,                                    // 32: sigil.admin.v1.DashboardResponse.TokensByStatusEntry
+	nil,                                    // 33: sigil.admin.v1.DashboardResponse.StationsByStatusEntry
 }
 var file_sigil_admin_v1_admin_proto_depIdxs = []int32{
 	2,  // 0: sigil.admin.v1.TokenSummary.assigned_user:type_name -> sigil.admin.v1.UserSummary
-	29, // 1: sigil.admin.v1.DashboardResponse.tokens_by_status:type_name -> sigil.admin.v1.DashboardResponse.TokensByStatusEntry
-	30, // 2: sigil.admin.v1.DashboardResponse.stations_by_status:type_name -> sigil.admin.v1.DashboardResponse.StationsByStatusEntry
-	3,  // 3: sigil.admin.v1.ListTokensResponse.tokens:type_name -> sigil.admin.v1.TokenSummary
-	3,  // 4: sigil.admin.v1.GetTokenResponse.token:type_name -> sigil.admin.v1.TokenSummary
-	4,  // 5: sigil.admin.v1.GetTokenResponse.certificates:type_name -> sigil.admin.v1.CertificateSummary
-	5,  // 6: sigil.admin.v1.GetTokenResponse.escrow:type_name -> sigil.admin.v1.EscrowVersion
-	6,  // 7: sigil.admin.v1.GetTokenResponse.audit:type_name -> sigil.admin.v1.AuditEvent
-	1,  // 8: sigil.admin.v1.AssignTokenRequest.token:type_name -> sigil.admin.v1.TokenRef
-	1,  // 9: sigil.admin.v1.SetNicknameRequest.token:type_name -> sigil.admin.v1.TokenRef
-	1,  // 10: sigil.admin.v1.DeleteKeyRequest.token:type_name -> sigil.admin.v1.TokenRef
-	4,  // 11: sigil.admin.v1.ListCertificatesResponse.certificates:type_name -> sigil.admin.v1.CertificateSummary
-	20, // 12: sigil.admin.v1.ListStationsResponse.stations:type_name -> sigil.admin.v1.StationSummary
-	2,  // 13: sigil.admin.v1.UserWithTokens.user:type_name -> sigil.admin.v1.UserSummary
-	24, // 14: sigil.admin.v1.ListUsersResponse.users:type_name -> sigil.admin.v1.UserWithTokens
-	6,  // 15: sigil.admin.v1.ListAuditResponse.events:type_name -> sigil.admin.v1.AuditEvent
-	0,  // 16: sigil.admin.v1.AdminService.GetDashboard:input_type -> sigil.admin.v1.Empty
-	8,  // 17: sigil.admin.v1.AdminService.ListTokens:input_type -> sigil.admin.v1.ListTokensRequest
-	1,  // 18: sigil.admin.v1.AdminService.GetToken:input_type -> sigil.admin.v1.TokenRef
-	11, // 19: sigil.admin.v1.AdminService.AssignToken:input_type -> sigil.admin.v1.AssignTokenRequest
-	1,  // 20: sigil.admin.v1.AdminService.UnassignToken:input_type -> sigil.admin.v1.TokenRef
-	12, // 21: sigil.admin.v1.AdminService.SetNickname:input_type -> sigil.admin.v1.SetNicknameRequest
-	1,  // 22: sigil.admin.v1.AdminService.ReportLost:input_type -> sigil.admin.v1.TokenRef
-	1,  // 23: sigil.admin.v1.AdminService.MarkFound:input_type -> sigil.admin.v1.TokenRef
-	14, // 24: sigil.admin.v1.AdminService.DeleteKey:input_type -> sigil.admin.v1.DeleteKeyRequest
-	16, // 25: sigil.admin.v1.AdminService.ListCertificates:input_type -> sigil.admin.v1.ListCertificatesRequest
-	18, // 26: sigil.admin.v1.AdminService.RevokeCertificate:input_type -> sigil.admin.v1.RevokeCertificateRequest
-	0,  // 27: sigil.admin.v1.AdminService.ListStations:input_type -> sigil.admin.v1.Empty
-	21, // 28: sigil.admin.v1.AdminService.AddStation:input_type -> sigil.admin.v1.AddStationRequest
-	22, // 29: sigil.admin.v1.AdminService.SetStationStatus:input_type -> sigil.admin.v1.SetStationStatusRequest
-	23, // 30: sigil.admin.v1.AdminService.ListUsers:input_type -> sigil.admin.v1.ListUsersRequest
-	26, // 31: sigil.admin.v1.AdminService.ListAudit:input_type -> sigil.admin.v1.ListAuditRequest
-	0,  // 32: sigil.admin.v1.AdminService.VerifyAudit:input_type -> sigil.admin.v1.Empty
-	7,  // 33: sigil.admin.v1.AdminService.GetDashboard:output_type -> sigil.admin.v1.DashboardResponse
-	9,  // 34: sigil.admin.v1.AdminService.ListTokens:output_type -> sigil.admin.v1.ListTokensResponse
-	10, // 35: sigil.admin.v1.AdminService.GetToken:output_type -> sigil.admin.v1.GetTokenResponse
-	0,  // 36: sigil.admin.v1.AdminService.AssignToken:output_type -> sigil.admin.v1.Empty
-	0,  // 37: sigil.admin.v1.AdminService.UnassignToken:output_type -> sigil.admin.v1.Empty
-	0,  // 38: sigil.admin.v1.AdminService.SetNickname:output_type -> sigil.admin.v1.Empty
-	0,  // 39: sigil.admin.v1.AdminService.ReportLost:output_type -> sigil.admin.v1.Empty
-	13, // 40: sigil.admin.v1.AdminService.MarkFound:output_type -> sigil.admin.v1.MarkFoundResponse
-	15, // 41: sigil.admin.v1.AdminService.DeleteKey:output_type -> sigil.admin.v1.DeleteKeyResponse
-	17, // 42: sigil.admin.v1.AdminService.ListCertificates:output_type -> sigil.admin.v1.ListCertificatesResponse
-	0,  // 43: sigil.admin.v1.AdminService.RevokeCertificate:output_type -> sigil.admin.v1.Empty
-	19, // 44: sigil.admin.v1.AdminService.ListStations:output_type -> sigil.admin.v1.ListStationsResponse
-	0,  // 45: sigil.admin.v1.AdminService.AddStation:output_type -> sigil.admin.v1.Empty
-	0,  // 46: sigil.admin.v1.AdminService.SetStationStatus:output_type -> sigil.admin.v1.Empty
-	25, // 47: sigil.admin.v1.AdminService.ListUsers:output_type -> sigil.admin.v1.ListUsersResponse
-	27, // 48: sigil.admin.v1.AdminService.ListAudit:output_type -> sigil.admin.v1.ListAuditResponse
-	28, // 49: sigil.admin.v1.AdminService.VerifyAudit:output_type -> sigil.admin.v1.VerifyAuditResponse
-	33, // [33:50] is the sub-list for method output_type
-	16, // [16:33] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	5,  // 1: sigil.admin.v1.CertificateSummary.attestation:type_name -> sigil.admin.v1.AttestationSummary
+	5,  // 2: sigil.admin.v1.CertificateAttestationResponse.summary:type_name -> sigil.admin.v1.AttestationSummary
+	32, // 3: sigil.admin.v1.DashboardResponse.tokens_by_status:type_name -> sigil.admin.v1.DashboardResponse.TokensByStatusEntry
+	33, // 4: sigil.admin.v1.DashboardResponse.stations_by_status:type_name -> sigil.admin.v1.DashboardResponse.StationsByStatusEntry
+	3,  // 5: sigil.admin.v1.ListTokensResponse.tokens:type_name -> sigil.admin.v1.TokenSummary
+	3,  // 6: sigil.admin.v1.GetTokenResponse.token:type_name -> sigil.admin.v1.TokenSummary
+	4,  // 7: sigil.admin.v1.GetTokenResponse.certificates:type_name -> sigil.admin.v1.CertificateSummary
+	8,  // 8: sigil.admin.v1.GetTokenResponse.escrow:type_name -> sigil.admin.v1.EscrowVersion
+	9,  // 9: sigil.admin.v1.GetTokenResponse.audit:type_name -> sigil.admin.v1.AuditEvent
+	1,  // 10: sigil.admin.v1.AssignTokenRequest.token:type_name -> sigil.admin.v1.TokenRef
+	1,  // 11: sigil.admin.v1.SetNicknameRequest.token:type_name -> sigil.admin.v1.TokenRef
+	1,  // 12: sigil.admin.v1.DeleteKeyRequest.token:type_name -> sigil.admin.v1.TokenRef
+	4,  // 13: sigil.admin.v1.ListCertificatesResponse.certificates:type_name -> sigil.admin.v1.CertificateSummary
+	23, // 14: sigil.admin.v1.ListStationsResponse.stations:type_name -> sigil.admin.v1.StationSummary
+	2,  // 15: sigil.admin.v1.UserWithTokens.user:type_name -> sigil.admin.v1.UserSummary
+	27, // 16: sigil.admin.v1.ListUsersResponse.users:type_name -> sigil.admin.v1.UserWithTokens
+	9,  // 17: sigil.admin.v1.ListAuditResponse.events:type_name -> sigil.admin.v1.AuditEvent
+	0,  // 18: sigil.admin.v1.AdminService.GetDashboard:input_type -> sigil.admin.v1.Empty
+	11, // 19: sigil.admin.v1.AdminService.ListTokens:input_type -> sigil.admin.v1.ListTokensRequest
+	1,  // 20: sigil.admin.v1.AdminService.GetToken:input_type -> sigil.admin.v1.TokenRef
+	14, // 21: sigil.admin.v1.AdminService.AssignToken:input_type -> sigil.admin.v1.AssignTokenRequest
+	1,  // 22: sigil.admin.v1.AdminService.UnassignToken:input_type -> sigil.admin.v1.TokenRef
+	15, // 23: sigil.admin.v1.AdminService.SetNickname:input_type -> sigil.admin.v1.SetNicknameRequest
+	1,  // 24: sigil.admin.v1.AdminService.ReportLost:input_type -> sigil.admin.v1.TokenRef
+	1,  // 25: sigil.admin.v1.AdminService.MarkFound:input_type -> sigil.admin.v1.TokenRef
+	17, // 26: sigil.admin.v1.AdminService.DeleteKey:input_type -> sigil.admin.v1.DeleteKeyRequest
+	19, // 27: sigil.admin.v1.AdminService.ListCertificates:input_type -> sigil.admin.v1.ListCertificatesRequest
+	21, // 28: sigil.admin.v1.AdminService.RevokeCertificate:input_type -> sigil.admin.v1.RevokeCertificateRequest
+	6,  // 29: sigil.admin.v1.AdminService.GetCertificateAttestation:input_type -> sigil.admin.v1.CertificateAttestationRequest
+	0,  // 30: sigil.admin.v1.AdminService.ListStations:input_type -> sigil.admin.v1.Empty
+	24, // 31: sigil.admin.v1.AdminService.AddStation:input_type -> sigil.admin.v1.AddStationRequest
+	25, // 32: sigil.admin.v1.AdminService.SetStationStatus:input_type -> sigil.admin.v1.SetStationStatusRequest
+	26, // 33: sigil.admin.v1.AdminService.ListUsers:input_type -> sigil.admin.v1.ListUsersRequest
+	29, // 34: sigil.admin.v1.AdminService.ListAudit:input_type -> sigil.admin.v1.ListAuditRequest
+	0,  // 35: sigil.admin.v1.AdminService.VerifyAudit:input_type -> sigil.admin.v1.Empty
+	10, // 36: sigil.admin.v1.AdminService.GetDashboard:output_type -> sigil.admin.v1.DashboardResponse
+	12, // 37: sigil.admin.v1.AdminService.ListTokens:output_type -> sigil.admin.v1.ListTokensResponse
+	13, // 38: sigil.admin.v1.AdminService.GetToken:output_type -> sigil.admin.v1.GetTokenResponse
+	0,  // 39: sigil.admin.v1.AdminService.AssignToken:output_type -> sigil.admin.v1.Empty
+	0,  // 40: sigil.admin.v1.AdminService.UnassignToken:output_type -> sigil.admin.v1.Empty
+	0,  // 41: sigil.admin.v1.AdminService.SetNickname:output_type -> sigil.admin.v1.Empty
+	0,  // 42: sigil.admin.v1.AdminService.ReportLost:output_type -> sigil.admin.v1.Empty
+	16, // 43: sigil.admin.v1.AdminService.MarkFound:output_type -> sigil.admin.v1.MarkFoundResponse
+	18, // 44: sigil.admin.v1.AdminService.DeleteKey:output_type -> sigil.admin.v1.DeleteKeyResponse
+	20, // 45: sigil.admin.v1.AdminService.ListCertificates:output_type -> sigil.admin.v1.ListCertificatesResponse
+	0,  // 46: sigil.admin.v1.AdminService.RevokeCertificate:output_type -> sigil.admin.v1.Empty
+	7,  // 47: sigil.admin.v1.AdminService.GetCertificateAttestation:output_type -> sigil.admin.v1.CertificateAttestationResponse
+	22, // 48: sigil.admin.v1.AdminService.ListStations:output_type -> sigil.admin.v1.ListStationsResponse
+	0,  // 49: sigil.admin.v1.AdminService.AddStation:output_type -> sigil.admin.v1.Empty
+	0,  // 50: sigil.admin.v1.AdminService.SetStationStatus:output_type -> sigil.admin.v1.Empty
+	28, // 51: sigil.admin.v1.AdminService.ListUsers:output_type -> sigil.admin.v1.ListUsersResponse
+	30, // 52: sigil.admin.v1.AdminService.ListAudit:output_type -> sigil.admin.v1.ListAuditResponse
+	31, // 53: sigil.admin.v1.AdminService.VerifyAudit:output_type -> sigil.admin.v1.VerifyAuditResponse
+	36, // [36:54] is the sub-list for method output_type
+	18, // [18:36] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_sigil_admin_v1_admin_proto_init() }
@@ -2234,7 +2465,7 @@ func file_sigil_admin_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sigil_admin_v1_admin_proto_rawDesc), len(file_sigil_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   31,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

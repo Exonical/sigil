@@ -21,6 +21,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/components/ui/toast";
 import { formatUnix } from "@/lib/format";
 
+import { AttestationDialog } from "./AttestationDialog";
+
 const VENDOR = "Yubico";
 
 export function TokenDetail() {
@@ -34,6 +36,7 @@ export function TokenDetail() {
   const [nickname, setNickname] = React.useState("");
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [confirmSerial, setConfirmSerial] = React.useState("");
+  const [attestingId, setAttestingId] = React.useState<string | null>(null);
 
   const detail = useQuery({
     queryKey: ["token", serial],
@@ -168,6 +171,7 @@ export function TokenDetail() {
               <TableHead>Profile</TableHead>
               <TableHead>Subject</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead>Attestation</TableHead>
               <TableHead>Expires</TableHead>
             </TableRow>
           </TableHeader>
@@ -178,11 +182,32 @@ export function TokenDetail() {
                 <TableCell>{certificate.profile}</TableCell>
                 <TableCell>{certificate.subject}</TableCell>
                 <TableCell><StatusBadge tone={statusTone(certificate.status)}>{certificate.status}</StatusBadge></TableCell>
+                <TableCell>
+                  {certificate.attestation?.present ? (
+                    <button
+                      type="button"
+                      className="flex items-center gap-2 text-left"
+                      onClick={() => setAttestingId(certificate.id)}
+                    >
+                      <StatusBadge tone="ok">Verified</StatusBadge>
+                      <span className="font-mono text-[12px] text-text-2">{certificate.attestation.root}</span>
+                    </button>
+                  ) : (
+                    <span className="text-text-3">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="font-mono text-[12px] tabular-nums">{formatUnix(certificate.notAfterUnix)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        <AttestationDialog
+          certificateId={attestingId}
+          open={attestingId !== null}
+          onOpenChange={(open) => {
+            if (!open) setAttestingId(null);
+          }}
+        />
       </section>
 
       <section className="mb-6">

@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sigil/admin/v1/admin.proto.
  */
 export const file_sigil_admin_v1_admin: GenFile = /*@__PURE__*/
-  fileDesc("ChpzaWdpbC9hZG1pbi92MS9hZG1pbi5wcm90bxIOc2lnaWwuYWRtaW4udjEiBwoFRW1wdHkiKgoIVG9rZW5SZWYSDgoGdmVuZG9yGAEgASgJEg4KBnNlcmlhbBgCIAEoCSJQCgtVc2VyU3VtbWFyeRIKCgJpZBgBIAEoCRIQCgh1c2VybmFtZRgCIAEoCRINCgVlbWFpbBgDIAEoCRIUCgxkaXNwbGF5X25hbWUYBCABKAkikQIKDFRva2VuU3VtbWFyeRIKCgJpZBgBIAEoCRIOCgZ2ZW5kb3IYAiABKAkSDQoFbW9kZWwYAyABKAkSDgoGc2VyaWFsGAQgASgJEhAKCGZpcm13YXJlGAUgASgJEhMKC2Zvcm1fZmFjdG9yGAYgASgJEhAKCG5pY2tuYW1lGAcgASgJEg4KBnN0YXR1cxgIIAEoCRIyCg1hc3NpZ25lZF91c2VyGAkgASgLMhsuc2lnaWwuYWRtaW4udjEuVXNlclN1bW1hcnkSFAoMbG9zdF9hdF91bml4GAogASgDEhYKDmxhc3Rfc2Vlbl91bml4GAsgASgDEhsKE2FjdGl2ZV9jZXJ0aWZpY2F0ZXMYDCABKAMiiAIKEkNlcnRpZmljYXRlU3VtbWFyeRIKCgJpZBgBIAEoCRIUCgx0b2tlbl9zZXJpYWwYAiABKAkSDAoEc2xvdBgDIAEoCRIPCgdwcm9maWxlGAQgASgJEhQKDHVzZXJfZGlzcGxheRgFIAEoCRIVCg1zZXJpYWxfbnVtYmVyGAYgASgJEg8KB3N1YmplY3QYByABKAkSFwoPbm90X2JlZm9yZV91bml4GAggASgDEhYKDm5vdF9hZnRlcl91bml4GAkgASgDEg4KBnN0YXR1cxgKIAEoCRIXCg9yZXZva2VkX2F0X3VuaXgYCyABKAMSGQoRcmV2b2NhdGlvbl9yZWFzb24YDCABKAkicQoNRXNjcm93VmVyc2lvbhIMCgRraW5kGAEgASgJEg8KB3ZlcnNpb24YAiABKAUSDQoFc3RhdGUYAyABKAkSFwoPY3JlYXRlZF9hdF91bml4GAQgASgDEhkKEWFjdGl2YXRlZF9hdF91bml4GAUgASgDIrcBCgpBdWRpdEV2ZW50EgsKA3NlcRgBIAEoAxIYChBvY2N1cnJlZF9hdF91bml4GAIgASgDEhIKCmFjdG9yX3R5cGUYAyABKAkSEAoIYWN0b3JfaWQYBCABKAkSDgoGYWN0aW9uGAUgASgJEhMKC3RhcmdldF90eXBlGAYgASgJEhEKCXRhcmdldF9pZBgHIAEoCRIPCgdvdXRjb21lGAggASgJEhMKC2RldGFpbF9qc29uGAkgASgJIpUDChFEYXNoYm9hcmRSZXNwb25zZRJPChB0b2tlbnNfYnlfc3RhdHVzGAEgAygLMjUuc2lnaWwuYWRtaW4udjEuRGFzaGJvYXJkUmVzcG9uc2UuVG9rZW5zQnlTdGF0dXNFbnRyeRIbChNhY3RpdmVfY2VydGlmaWNhdGVzGAIgASgDEiUKHWNlcnRpZmljYXRlc19leHBpcmluZ18zMF9kYXlzGAMgASgDElMKEnN0YXRpb25zX2J5X3N0YXR1cxgEIAMoCzI3LnNpZ2lsLmFkbWluLnYxLkRhc2hib2FyZFJlc3BvbnNlLlN0YXRpb25zQnlTdGF0dXNFbnRyeRImCh5sb3N0X3Rva2Vuc19wZW5kaW5nX3Jldm9jYXRpb24YBSABKAMaNQoTVG9rZW5zQnlTdGF0dXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAM6AjgBGjcKFVN0YXRpb25zQnlTdGF0dXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAM6AjgBIlQKEUxpc3RUb2tlbnNSZXF1ZXN0Eg4KBnNlYXJjaBgBIAEoCRIOCgZzdGF0dXMYAiABKAkSEQoJcGFnZV9zaXplGAMgASgFEgwKBHBhZ2UYBCABKAUiUQoSTGlzdFRva2Vuc1Jlc3BvbnNlEiwKBnRva2VucxgBIAMoCzIcLnNpZ2lsLmFkbWluLnYxLlRva2VuU3VtbWFyeRINCgV0b3RhbBgCIAEoAyLTAQoQR2V0VG9rZW5SZXNwb25zZRIrCgV0b2tlbhgBIAEoCzIcLnNpZ2lsLmFkbWluLnYxLlRva2VuU3VtbWFyeRI4CgxjZXJ0aWZpY2F0ZXMYAiADKAsyIi5zaWdpbC5hZG1pbi52MS5DZXJ0aWZpY2F0ZVN1bW1hcnkSLQoGZXNjcm93GAMgAygLMh0uc2lnaWwuYWRtaW4udjEuRXNjcm93VmVyc2lvbhIpCgVhdWRpdBgEIAMoCzIaLnNpZ2lsLmFkbWluLnYxLkF1ZGl0RXZlbnQiWAoSQXNzaWduVG9rZW5SZXF1ZXN0EicKBXRva2VuGAEgASgLMhguc2lnaWwuYWRtaW4udjEuVG9rZW5SZWYSGQoRdXNlcm5hbWVfb3JfZW1haWwYAiABKAkiTwoSU2V0Tmlja25hbWVSZXF1ZXN0EicKBXRva2VuGAEgASgLMhguc2lnaWwuYWRtaW4udjEuVG9rZW5SZWYSEAoIbmlja25hbWUYAiABKAkiMwoRTWFya0ZvdW5kUmVzcG9uc2USHgoWcmVfZW5yb2xsbWVudF9yZXF1aXJlZBgBIAEoCCJTChBEZWxldGVLZXlSZXF1ZXN0EicKBXRva2VuGAEgASgLMhguc2lnaWwuYWRtaW4udjEuVG9rZW5SZWYSFgoOY29uZmlybV9zZXJpYWwYAiABKAkiRAoRRGVsZXRlS2V5UmVzcG9uc2USDwoHcmV2b2tlZBgBIAEoBRIeChZmYWlsZWRfY2VydGlmaWNhdGVfaWRzGAIgAygJIo8BChdMaXN0Q2VydGlmaWNhdGVzUmVxdWVzdBIOCgZzdGF0dXMYASABKAkSHAoUZXhwaXJpbmdfYmVmb3JlX3VuaXgYAiABKAMSDwoHcHJvZmlsZRgDIAEoCRIUCgx0b2tlbl9zZXJpYWwYBCABKAkSEQoJcGFnZV9zaXplGAUgASgFEgwKBHBhZ2UYBiABKAUiYwoYTGlzdENlcnRpZmljYXRlc1Jlc3BvbnNlEjgKDGNlcnRpZmljYXRlcxgBIAMoCzIiLnNpZ2lsLmFkbWluLnYxLkNlcnRpZmljYXRlU3VtbWFyeRINCgV0b3RhbBgCIAEoAyJCChhSZXZva2VDZXJ0aWZpY2F0ZVJlcXVlc3QSFgoOY2VydGlmaWNhdGVfaWQYASABKAkSDgoGcmVhc29uGAIgASgJIkgKFExpc3RTdGF0aW9uc1Jlc3BvbnNlEjAKCHN0YXRpb25zGAEgAygLMh4uc2lnaWwuYWRtaW4udjEuU3RhdGlvblN1bW1hcnkiYgoOU3RhdGlvblN1bW1hcnkSCgoCaWQYASABKAkSEAoIZG5zX25hbWUYAiABKAkSFAoMZGlzcGxheV9uYW1lGAMgASgJEgwKBG1vZGUYBCABKAkSDgoGc3RhdHVzGAUgASgJIjMKEUFkZFN0YXRpb25SZXF1ZXN0EhAKCGRuc19uYW1lGAEgASgJEgwKBG1vZGUYAiABKAkiNQoXU2V0U3RhdGlvblN0YXR1c1JlcXVlc3QSCgoCaWQYASABKAkSDgoGc3RhdHVzGAIgASgJIkMKEExpc3RVc2Vyc1JlcXVlc3QSDgoGc2VhcmNoGAEgASgJEhEKCXBhZ2Vfc2l6ZRgCIAEoBRIMCgRwYWdlGAMgASgFIlAKDlVzZXJXaXRoVG9rZW5zEikKBHVzZXIYASABKAsyGy5zaWdpbC5hZG1pbi52MS5Vc2VyU3VtbWFyeRITCgt0b2tlbl9jb3VudBgCIAEoAyJRChFMaXN0VXNlcnNSZXNwb25zZRItCgV1c2VycxgBIAMoCzIeLnNpZ2lsLmFkbWluLnYxLlVzZXJXaXRoVG9rZW5zEg0KBXRvdGFsGAIgASgDIqMBChBMaXN0QXVkaXRSZXF1ZXN0EhIKCmFjdG9yX3R5cGUYASABKAkSEAoIYWN0b3JfaWQYAiABKAkSDgoGYWN0aW9uGAMgASgJEg4KBnRhcmdldBgEIAEoCRIRCglmcm9tX3VuaXgYBSABKAMSDwoHdG9fdW5peBgGIAEoAxISCgpiZWZvcmVfc2VxGAcgASgDEhEKCXBhZ2Vfc2l6ZRgIIAEoBSJYChFMaXN0QXVkaXRSZXNwb25zZRIqCgZldmVudHMYASADKAsyGi5zaWdpbC5hZG1pbi52MS5BdWRpdEV2ZW50EhcKD25leHRfYmVmb3JlX3NlcRgCIAEoAyJKChNWZXJpZnlBdWRpdFJlc3BvbnNlEgoKAm9rGAEgASgIEhYKDmV2ZW50c19jaGVja2VkGAIgASgDEg8KB2ZhaWx1cmUYAyABKAkyuwoKDEFkbWluU2VydmljZRJICgxHZXREYXNoYm9hcmQSFS5zaWdpbC5hZG1pbi52MS5FbXB0eRohLnNpZ2lsLmFkbWluLnYxLkRhc2hib2FyZFJlc3BvbnNlElMKCkxpc3RUb2tlbnMSIS5zaWdpbC5hZG1pbi52MS5MaXN0VG9rZW5zUmVxdWVzdBoiLnNpZ2lsLmFkbWluLnYxLkxpc3RUb2tlbnNSZXNwb25zZRJGCghHZXRUb2tlbhIYLnNpZ2lsLmFkbWluLnYxLlRva2VuUmVmGiAuc2lnaWwuYWRtaW4udjEuR2V0VG9rZW5SZXNwb25zZRJICgtBc3NpZ25Ub2tlbhIiLnNpZ2lsLmFkbWluLnYxLkFzc2lnblRva2VuUmVxdWVzdBoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5EkAKDVVuYXNzaWduVG9rZW4SGC5zaWdpbC5hZG1pbi52MS5Ub2tlblJlZhoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5EkgKC1NldE5pY2tuYW1lEiIuc2lnaWwuYWRtaW4udjEuU2V0Tmlja25hbWVSZXF1ZXN0GhUuc2lnaWwuYWRtaW4udjEuRW1wdHkSPQoKUmVwb3J0TG9zdBIYLnNpZ2lsLmFkbWluLnYxLlRva2VuUmVmGhUuc2lnaWwuYWRtaW4udjEuRW1wdHkSSAoJTWFya0ZvdW5kEhguc2lnaWwuYWRtaW4udjEuVG9rZW5SZWYaIS5zaWdpbC5hZG1pbi52MS5NYXJrRm91bmRSZXNwb25zZRJQCglEZWxldGVLZXkSIC5zaWdpbC5hZG1pbi52MS5EZWxldGVLZXlSZXF1ZXN0GiEuc2lnaWwuYWRtaW4udjEuRGVsZXRlS2V5UmVzcG9uc2USZQoQTGlzdENlcnRpZmljYXRlcxInLnNpZ2lsLmFkbWluLnYxLkxpc3RDZXJ0aWZpY2F0ZXNSZXF1ZXN0Giguc2lnaWwuYWRtaW4udjEuTGlzdENlcnRpZmljYXRlc1Jlc3BvbnNlElQKEVJldm9rZUNlcnRpZmljYXRlEiguc2lnaWwuYWRtaW4udjEuUmV2b2tlQ2VydGlmaWNhdGVSZXF1ZXN0GhUuc2lnaWwuYWRtaW4udjEuRW1wdHkSSwoMTGlzdFN0YXRpb25zEhUuc2lnaWwuYWRtaW4udjEuRW1wdHkaJC5zaWdpbC5hZG1pbi52MS5MaXN0U3RhdGlvbnNSZXNwb25zZRJGCgpBZGRTdGF0aW9uEiEuc2lnaWwuYWRtaW4udjEuQWRkU3RhdGlvblJlcXVlc3QaFS5zaWdpbC5hZG1pbi52MS5FbXB0eRJSChBTZXRTdGF0aW9uU3RhdHVzEicuc2lnaWwuYWRtaW4udjEuU2V0U3RhdGlvblN0YXR1c1JlcXVlc3QaFS5zaWdpbC5hZG1pbi52MS5FbXB0eRJQCglMaXN0VXNlcnMSIC5zaWdpbC5hZG1pbi52MS5MaXN0VXNlcnNSZXF1ZXN0GiEuc2lnaWwuYWRtaW4udjEuTGlzdFVzZXJzUmVzcG9uc2USUAoJTGlzdEF1ZGl0EiAuc2lnaWwuYWRtaW4udjEuTGlzdEF1ZGl0UmVxdWVzdBohLnNpZ2lsLmFkbWluLnYxLkxpc3RBdWRpdFJlc3BvbnNlEkkKC1ZlcmlmeUF1ZGl0EhUuc2lnaWwuYWRtaW4udjEuRW1wdHkaIy5zaWdpbC5hZG1pbi52MS5WZXJpZnlBdWRpdFJlc3BvbnNlQj5aPGdpdGh1Yi5jb20vRXhvbmljYWwvc2lnaWwvYmFja2VuZC9nZW4vc2lnaWwvYWRtaW4vdjE7YWRtaW52MWIGcHJvdG8z");
+  fileDesc("ChpzaWdpbC9hZG1pbi92MS9hZG1pbi5wcm90bxIOc2lnaWwuYWRtaW4udjEiBwoFRW1wdHkiKgoIVG9rZW5SZWYSDgoGdmVuZG9yGAEgASgJEg4KBnNlcmlhbBgCIAEoCSJQCgtVc2VyU3VtbWFyeRIKCgJpZBgBIAEoCRIQCgh1c2VybmFtZRgCIAEoCRINCgVlbWFpbBgDIAEoCRIUCgxkaXNwbGF5X25hbWUYBCABKAkikQIKDFRva2VuU3VtbWFyeRIKCgJpZBgBIAEoCRIOCgZ2ZW5kb3IYAiABKAkSDQoFbW9kZWwYAyABKAkSDgoGc2VyaWFsGAQgASgJEhAKCGZpcm13YXJlGAUgASgJEhMKC2Zvcm1fZmFjdG9yGAYgASgJEhAKCG5pY2tuYW1lGAcgASgJEg4KBnN0YXR1cxgIIAEoCRIyCg1hc3NpZ25lZF91c2VyGAkgASgLMhsuc2lnaWwuYWRtaW4udjEuVXNlclN1bW1hcnkSFAoMbG9zdF9hdF91bml4GAogASgDEhYKDmxhc3Rfc2Vlbl91bml4GAsgASgDEhsKE2FjdGl2ZV9jZXJ0aWZpY2F0ZXMYDCABKAMiwQIKEkNlcnRpZmljYXRlU3VtbWFyeRIKCgJpZBgBIAEoCRIUCgx0b2tlbl9zZXJpYWwYAiABKAkSDAoEc2xvdBgDIAEoCRIPCgdwcm9maWxlGAQgASgJEhQKDHVzZXJfZGlzcGxheRgFIAEoCRIVCg1zZXJpYWxfbnVtYmVyGAYgASgJEg8KB3N1YmplY3QYByABKAkSFwoPbm90X2JlZm9yZV91bml4GAggASgDEhYKDm5vdF9hZnRlcl91bml4GAkgASgDEg4KBnN0YXR1cxgKIAEoCRIXCg9yZXZva2VkX2F0X3VuaXgYCyABKAMSGQoRcmV2b2NhdGlvbl9yZWFzb24YDCABKAkSNwoLYXR0ZXN0YXRpb24YDSABKAsyIi5zaWdpbC5hZG1pbi52MS5BdHRlc3RhdGlvblN1bW1hcnkilgEKEkF0dGVzdGF0aW9uU3VtbWFyeRIPCgdwcmVzZW50GAEgASgIEhcKD2F0dGVzdGVkX3NlcmlhbBgCIAEoCRIQCghmaXJtd2FyZRgDIAEoCRIMCgRzbG90GAQgASgJEhIKCnBpbl9wb2xpY3kYBSABKAkSFAoMdG91Y2hfcG9saWN5GAYgASgJEgwKBHJvb3QYByABKAkiNwodQ2VydGlmaWNhdGVBdHRlc3RhdGlvblJlcXVlc3QSFgoOY2VydGlmaWNhdGVfaWQYASABKAkilAEKHkNlcnRpZmljYXRlQXR0ZXN0YXRpb25SZXNwb25zZRIXCg9hdHRlc3RhdGlvbl9kZXIYASABKAwSJAocYXR0ZXN0YXRpb25faW50ZXJtZWRpYXRlX2RlchgCIAEoDBIzCgdzdW1tYXJ5GAMgASgLMiIuc2lnaWwuYWRtaW4udjEuQXR0ZXN0YXRpb25TdW1tYXJ5InEKDUVzY3Jvd1ZlcnNpb24SDAoEa2luZBgBIAEoCRIPCgd2ZXJzaW9uGAIgASgFEg0KBXN0YXRlGAMgASgJEhcKD2NyZWF0ZWRfYXRfdW5peBgEIAEoAxIZChFhY3RpdmF0ZWRfYXRfdW5peBgFIAEoAyK3AQoKQXVkaXRFdmVudBILCgNzZXEYASABKAMSGAoQb2NjdXJyZWRfYXRfdW5peBgCIAEoAxISCgphY3Rvcl90eXBlGAMgASgJEhAKCGFjdG9yX2lkGAQgASgJEg4KBmFjdGlvbhgFIAEoCRITCgt0YXJnZXRfdHlwZRgGIAEoCRIRCgl0YXJnZXRfaWQYByABKAkSDwoHb3V0Y29tZRgIIAEoCRITCgtkZXRhaWxfanNvbhgJIAEoCSKVAwoRRGFzaGJvYXJkUmVzcG9uc2USTwoQdG9rZW5zX2J5X3N0YXR1cxgBIAMoCzI1LnNpZ2lsLmFkbWluLnYxLkRhc2hib2FyZFJlc3BvbnNlLlRva2Vuc0J5U3RhdHVzRW50cnkSGwoTYWN0aXZlX2NlcnRpZmljYXRlcxgCIAEoAxIlCh1jZXJ0aWZpY2F0ZXNfZXhwaXJpbmdfMzBfZGF5cxgDIAEoAxJTChJzdGF0aW9uc19ieV9zdGF0dXMYBCADKAsyNy5zaWdpbC5hZG1pbi52MS5EYXNoYm9hcmRSZXNwb25zZS5TdGF0aW9uc0J5U3RhdHVzRW50cnkSJgoebG9zdF90b2tlbnNfcGVuZGluZ19yZXZvY2F0aW9uGAUgASgDGjUKE1Rva2Vuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ARo3ChVTdGF0aW9uc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASJUChFMaXN0VG9rZW5zUmVxdWVzdBIOCgZzZWFyY2gYASABKAkSDgoGc3RhdHVzGAIgASgJEhEKCXBhZ2Vfc2l6ZRgDIAEoBRIMCgRwYWdlGAQgASgFIlEKEkxpc3RUb2tlbnNSZXNwb25zZRIsCgZ0b2tlbnMYASADKAsyHC5zaWdpbC5hZG1pbi52MS5Ub2tlblN1bW1hcnkSDQoFdG90YWwYAiABKAMi0wEKEEdldFRva2VuUmVzcG9uc2USKwoFdG9rZW4YASABKAsyHC5zaWdpbC5hZG1pbi52MS5Ub2tlblN1bW1hcnkSOAoMY2VydGlmaWNhdGVzGAIgAygLMiIuc2lnaWwuYWRtaW4udjEuQ2VydGlmaWNhdGVTdW1tYXJ5Ei0KBmVzY3JvdxgDIAMoCzIdLnNpZ2lsLmFkbWluLnYxLkVzY3Jvd1ZlcnNpb24SKQoFYXVkaXQYBCADKAsyGi5zaWdpbC5hZG1pbi52MS5BdWRpdEV2ZW50IlgKEkFzc2lnblRva2VuUmVxdWVzdBInCgV0b2tlbhgBIAEoCzIYLnNpZ2lsLmFkbWluLnYxLlRva2VuUmVmEhkKEXVzZXJuYW1lX29yX2VtYWlsGAIgASgJIk8KElNldE5pY2tuYW1lUmVxdWVzdBInCgV0b2tlbhgBIAEoCzIYLnNpZ2lsLmFkbWluLnYxLlRva2VuUmVmEhAKCG5pY2tuYW1lGAIgASgJIjMKEU1hcmtGb3VuZFJlc3BvbnNlEh4KFnJlX2Vucm9sbG1lbnRfcmVxdWlyZWQYASABKAgiUwoQRGVsZXRlS2V5UmVxdWVzdBInCgV0b2tlbhgBIAEoCzIYLnNpZ2lsLmFkbWluLnYxLlRva2VuUmVmEhYKDmNvbmZpcm1fc2VyaWFsGAIgASgJIkQKEURlbGV0ZUtleVJlc3BvbnNlEg8KB3Jldm9rZWQYASABKAUSHgoWZmFpbGVkX2NlcnRpZmljYXRlX2lkcxgCIAMoCSKPAQoXTGlzdENlcnRpZmljYXRlc1JlcXVlc3QSDgoGc3RhdHVzGAEgASgJEhwKFGV4cGlyaW5nX2JlZm9yZV91bml4GAIgASgDEg8KB3Byb2ZpbGUYAyABKAkSFAoMdG9rZW5fc2VyaWFsGAQgASgJEhEKCXBhZ2Vfc2l6ZRgFIAEoBRIMCgRwYWdlGAYgASgFImMKGExpc3RDZXJ0aWZpY2F0ZXNSZXNwb25zZRI4CgxjZXJ0aWZpY2F0ZXMYASADKAsyIi5zaWdpbC5hZG1pbi52MS5DZXJ0aWZpY2F0ZVN1bW1hcnkSDQoFdG90YWwYAiABKAMiQgoYUmV2b2tlQ2VydGlmaWNhdGVSZXF1ZXN0EhYKDmNlcnRpZmljYXRlX2lkGAEgASgJEg4KBnJlYXNvbhgCIAEoCSJIChRMaXN0U3RhdGlvbnNSZXNwb25zZRIwCghzdGF0aW9ucxgBIAMoCzIeLnNpZ2lsLmFkbWluLnYxLlN0YXRpb25TdW1tYXJ5ImIKDlN0YXRpb25TdW1tYXJ5EgoKAmlkGAEgASgJEhAKCGRuc19uYW1lGAIgASgJEhQKDGRpc3BsYXlfbmFtZRgDIAEoCRIMCgRtb2RlGAQgASgJEg4KBnN0YXR1cxgFIAEoCSIzChFBZGRTdGF0aW9uUmVxdWVzdBIQCghkbnNfbmFtZRgBIAEoCRIMCgRtb2RlGAIgASgJIjUKF1NldFN0YXRpb25TdGF0dXNSZXF1ZXN0EgoKAmlkGAEgASgJEg4KBnN0YXR1cxgCIAEoCSJDChBMaXN0VXNlcnNSZXF1ZXN0Eg4KBnNlYXJjaBgBIAEoCRIRCglwYWdlX3NpemUYAiABKAUSDAoEcGFnZRgDIAEoBSJQCg5Vc2VyV2l0aFRva2VucxIpCgR1c2VyGAEgASgLMhsuc2lnaWwuYWRtaW4udjEuVXNlclN1bW1hcnkSEwoLdG9rZW5fY291bnQYAiABKAMiUQoRTGlzdFVzZXJzUmVzcG9uc2USLQoFdXNlcnMYASADKAsyHi5zaWdpbC5hZG1pbi52MS5Vc2VyV2l0aFRva2VucxINCgV0b3RhbBgCIAEoAyKjAQoQTGlzdEF1ZGl0UmVxdWVzdBISCgphY3Rvcl90eXBlGAEgASgJEhAKCGFjdG9yX2lkGAIgASgJEg4KBmFjdGlvbhgDIAEoCRIOCgZ0YXJnZXQYBCABKAkSEQoJZnJvbV91bml4GAUgASgDEg8KB3RvX3VuaXgYBiABKAMSEgoKYmVmb3JlX3NlcRgHIAEoAxIRCglwYWdlX3NpemUYCCABKAUiWAoRTGlzdEF1ZGl0UmVzcG9uc2USKgoGZXZlbnRzGAEgAygLMhouc2lnaWwuYWRtaW4udjEuQXVkaXRFdmVudBIXCg9uZXh0X2JlZm9yZV9zZXEYAiABKAMiSgoTVmVyaWZ5QXVkaXRSZXNwb25zZRIKCgJvaxgBIAEoCBIWCg5ldmVudHNfY2hlY2tlZBgCIAEoAxIPCgdmYWlsdXJlGAMgASgJMrcLCgxBZG1pblNlcnZpY2USSAoMR2V0RGFzaGJvYXJkEhUuc2lnaWwuYWRtaW4udjEuRW1wdHkaIS5zaWdpbC5hZG1pbi52MS5EYXNoYm9hcmRSZXNwb25zZRJTCgpMaXN0VG9rZW5zEiEuc2lnaWwuYWRtaW4udjEuTGlzdFRva2Vuc1JlcXVlc3QaIi5zaWdpbC5hZG1pbi52MS5MaXN0VG9rZW5zUmVzcG9uc2USRgoIR2V0VG9rZW4SGC5zaWdpbC5hZG1pbi52MS5Ub2tlblJlZhogLnNpZ2lsLmFkbWluLnYxLkdldFRva2VuUmVzcG9uc2USSAoLQXNzaWduVG9rZW4SIi5zaWdpbC5hZG1pbi52MS5Bc3NpZ25Ub2tlblJlcXVlc3QaFS5zaWdpbC5hZG1pbi52MS5FbXB0eRJACg1VbmFzc2lnblRva2VuEhguc2lnaWwuYWRtaW4udjEuVG9rZW5SZWYaFS5zaWdpbC5hZG1pbi52MS5FbXB0eRJICgtTZXROaWNrbmFtZRIiLnNpZ2lsLmFkbWluLnYxLlNldE5pY2tuYW1lUmVxdWVzdBoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5Ej0KClJlcG9ydExvc3QSGC5zaWdpbC5hZG1pbi52MS5Ub2tlblJlZhoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5EkgKCU1hcmtGb3VuZBIYLnNpZ2lsLmFkbWluLnYxLlRva2VuUmVmGiEuc2lnaWwuYWRtaW4udjEuTWFya0ZvdW5kUmVzcG9uc2USUAoJRGVsZXRlS2V5EiAuc2lnaWwuYWRtaW4udjEuRGVsZXRlS2V5UmVxdWVzdBohLnNpZ2lsLmFkbWluLnYxLkRlbGV0ZUtleVJlc3BvbnNlEmUKEExpc3RDZXJ0aWZpY2F0ZXMSJy5zaWdpbC5hZG1pbi52MS5MaXN0Q2VydGlmaWNhdGVzUmVxdWVzdBooLnNpZ2lsLmFkbWluLnYxLkxpc3RDZXJ0aWZpY2F0ZXNSZXNwb25zZRJUChFSZXZva2VDZXJ0aWZpY2F0ZRIoLnNpZ2lsLmFkbWluLnYxLlJldm9rZUNlcnRpZmljYXRlUmVxdWVzdBoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5EnoKGUdldENlcnRpZmljYXRlQXR0ZXN0YXRpb24SLS5zaWdpbC5hZG1pbi52MS5DZXJ0aWZpY2F0ZUF0dGVzdGF0aW9uUmVxdWVzdBouLnNpZ2lsLmFkbWluLnYxLkNlcnRpZmljYXRlQXR0ZXN0YXRpb25SZXNwb25zZRJLCgxMaXN0U3RhdGlvbnMSFS5zaWdpbC5hZG1pbi52MS5FbXB0eRokLnNpZ2lsLmFkbWluLnYxLkxpc3RTdGF0aW9uc1Jlc3BvbnNlEkYKCkFkZFN0YXRpb24SIS5zaWdpbC5hZG1pbi52MS5BZGRTdGF0aW9uUmVxdWVzdBoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5ElIKEFNldFN0YXRpb25TdGF0dXMSJy5zaWdpbC5hZG1pbi52MS5TZXRTdGF0aW9uU3RhdHVzUmVxdWVzdBoVLnNpZ2lsLmFkbWluLnYxLkVtcHR5ElAKCUxpc3RVc2VycxIgLnNpZ2lsLmFkbWluLnYxLkxpc3RVc2Vyc1JlcXVlc3QaIS5zaWdpbC5hZG1pbi52MS5MaXN0VXNlcnNSZXNwb25zZRJQCglMaXN0QXVkaXQSIC5zaWdpbC5hZG1pbi52MS5MaXN0QXVkaXRSZXF1ZXN0GiEuc2lnaWwuYWRtaW4udjEuTGlzdEF1ZGl0UmVzcG9uc2USSQoLVmVyaWZ5QXVkaXQSFS5zaWdpbC5hZG1pbi52MS5FbXB0eRojLnNpZ2lsLmFkbWluLnYxLlZlcmlmeUF1ZGl0UmVzcG9uc2VCPlo8Z2l0aHViLmNvbS9FeG9uaWNhbC9zaWdpbC9iYWNrZW5kL2dlbi9zaWdpbC9hZG1pbi92MTthZG1pbnYxYgZwcm90bzM");
 
 /**
  * @generated from message sigil.admin.v1.Empty
@@ -214,6 +214,14 @@ export type CertificateSummary = Message<"sigil.admin.v1.CertificateSummary"> & 
    * @generated from field: string revocation_reason = 12;
    */
   revocationReason: string;
+
+  /**
+   * Summary of the verified attestation stored with the certificate. Absent for certificates issued before
+   * migration 005, or issued without an attestation.
+   *
+   * @generated from field: sigil.admin.v1.AttestationSummary attestation = 13;
+   */
+  attestation?: AttestationSummary | undefined;
 };
 
 /**
@@ -222,6 +230,101 @@ export type CertificateSummary = Message<"sigil.admin.v1.CertificateSummary"> & 
  */
 export const CertificateSummarySchema: GenMessage<CertificateSummary> = /*@__PURE__*/
   messageDesc(file_sigil_admin_v1_admin, 4);
+
+/**
+ * What the backend stored for a certificate's attestation. The chain was verified at issuance.
+ *
+ * @generated from message sigil.admin.v1.AttestationSummary
+ */
+export type AttestationSummary = Message<"sigil.admin.v1.AttestationSummary"> & {
+  /**
+   * @generated from field: bool present = 1;
+   */
+  present: boolean;
+
+  /**
+   * @generated from field: string attested_serial = 2;
+   */
+  attestedSerial: string;
+
+  /**
+   * @generated from field: string firmware = 3;
+   */
+  firmware: string;
+
+  /**
+   * @generated from field: string slot = 4;
+   */
+  slot: string;
+
+  /**
+   * @generated from field: string pin_policy = 5;
+   */
+  pinPolicy: string;
+
+  /**
+   * @generated from field: string touch_policy = 6;
+   */
+  touchPolicy: string;
+
+  /**
+   * @generated from field: string root = 7;
+   */
+  root: string;
+};
+
+/**
+ * Describes the message sigil.admin.v1.AttestationSummary.
+ * Use `create(AttestationSummarySchema)` to create a new message.
+ */
+export const AttestationSummarySchema: GenMessage<AttestationSummary> = /*@__PURE__*/
+  messageDesc(file_sigil_admin_v1_admin, 5);
+
+/**
+ * @generated from message sigil.admin.v1.CertificateAttestationRequest
+ */
+export type CertificateAttestationRequest = Message<"sigil.admin.v1.CertificateAttestationRequest"> & {
+  /**
+   * @generated from field: string certificate_id = 1;
+   */
+  certificateId: string;
+};
+
+/**
+ * Describes the message sigil.admin.v1.CertificateAttestationRequest.
+ * Use `create(CertificateAttestationRequestSchema)` to create a new message.
+ */
+export const CertificateAttestationRequestSchema: GenMessage<CertificateAttestationRequest> = /*@__PURE__*/
+  messageDesc(file_sigil_admin_v1_admin, 6);
+
+/**
+ * @generated from message sigil.admin.v1.CertificateAttestationResponse
+ */
+export type CertificateAttestationResponse = Message<"sigil.admin.v1.CertificateAttestationResponse"> & {
+  /**
+   * The attestation certificate and the slot F9 certificate that signed it, DER encoded.
+   *
+   * @generated from field: bytes attestation_der = 1;
+   */
+  attestationDer: Uint8Array;
+
+  /**
+   * @generated from field: bytes attestation_intermediate_der = 2;
+   */
+  attestationIntermediateDer: Uint8Array;
+
+  /**
+   * @generated from field: sigil.admin.v1.AttestationSummary summary = 3;
+   */
+  summary?: AttestationSummary | undefined;
+};
+
+/**
+ * Describes the message sigil.admin.v1.CertificateAttestationResponse.
+ * Use `create(CertificateAttestationResponseSchema)` to create a new message.
+ */
+export const CertificateAttestationResponseSchema: GenMessage<CertificateAttestationResponse> = /*@__PURE__*/
+  messageDesc(file_sigil_admin_v1_admin, 7);
 
 /**
  * @generated from message sigil.admin.v1.EscrowVersion
@@ -258,7 +361,7 @@ export type EscrowVersion = Message<"sigil.admin.v1.EscrowVersion"> & {
  * Use `create(EscrowVersionSchema)` to create a new message.
  */
 export const EscrowVersionSchema: GenMessage<EscrowVersion> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 5);
+  messageDesc(file_sigil_admin_v1_admin, 8);
 
 /**
  * @generated from message sigil.admin.v1.AuditEvent
@@ -315,7 +418,7 @@ export type AuditEvent = Message<"sigil.admin.v1.AuditEvent"> & {
  * Use `create(AuditEventSchema)` to create a new message.
  */
 export const AuditEventSchema: GenMessage<AuditEvent> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 6);
+  messageDesc(file_sigil_admin_v1_admin, 9);
 
 /**
  * @generated from message sigil.admin.v1.DashboardResponse
@@ -352,7 +455,7 @@ export type DashboardResponse = Message<"sigil.admin.v1.DashboardResponse"> & {
  * Use `create(DashboardResponseSchema)` to create a new message.
  */
 export const DashboardResponseSchema: GenMessage<DashboardResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 7);
+  messageDesc(file_sigil_admin_v1_admin, 10);
 
 /**
  * @generated from message sigil.admin.v1.ListTokensRequest
@@ -384,7 +487,7 @@ export type ListTokensRequest = Message<"sigil.admin.v1.ListTokensRequest"> & {
  * Use `create(ListTokensRequestSchema)` to create a new message.
  */
 export const ListTokensRequestSchema: GenMessage<ListTokensRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 8);
+  messageDesc(file_sigil_admin_v1_admin, 11);
 
 /**
  * @generated from message sigil.admin.v1.ListTokensResponse
@@ -406,7 +509,7 @@ export type ListTokensResponse = Message<"sigil.admin.v1.ListTokensResponse"> & 
  * Use `create(ListTokensResponseSchema)` to create a new message.
  */
 export const ListTokensResponseSchema: GenMessage<ListTokensResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 9);
+  messageDesc(file_sigil_admin_v1_admin, 12);
 
 /**
  * @generated from message sigil.admin.v1.GetTokenResponse
@@ -438,7 +541,7 @@ export type GetTokenResponse = Message<"sigil.admin.v1.GetTokenResponse"> & {
  * Use `create(GetTokenResponseSchema)` to create a new message.
  */
 export const GetTokenResponseSchema: GenMessage<GetTokenResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 10);
+  messageDesc(file_sigil_admin_v1_admin, 13);
 
 /**
  * @generated from message sigil.admin.v1.AssignTokenRequest
@@ -460,7 +563,7 @@ export type AssignTokenRequest = Message<"sigil.admin.v1.AssignTokenRequest"> & 
  * Use `create(AssignTokenRequestSchema)` to create a new message.
  */
 export const AssignTokenRequestSchema: GenMessage<AssignTokenRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 11);
+  messageDesc(file_sigil_admin_v1_admin, 14);
 
 /**
  * @generated from message sigil.admin.v1.SetNicknameRequest
@@ -484,7 +587,7 @@ export type SetNicknameRequest = Message<"sigil.admin.v1.SetNicknameRequest"> & 
  * Use `create(SetNicknameRequestSchema)` to create a new message.
  */
 export const SetNicknameRequestSchema: GenMessage<SetNicknameRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 12);
+  messageDesc(file_sigil_admin_v1_admin, 15);
 
 /**
  * @generated from message sigil.admin.v1.MarkFoundResponse
@@ -503,7 +606,7 @@ export type MarkFoundResponse = Message<"sigil.admin.v1.MarkFoundResponse"> & {
  * Use `create(MarkFoundResponseSchema)` to create a new message.
  */
 export const MarkFoundResponseSchema: GenMessage<MarkFoundResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 13);
+  messageDesc(file_sigil_admin_v1_admin, 16);
 
 /**
  * @generated from message sigil.admin.v1.DeleteKeyRequest
@@ -527,7 +630,7 @@ export type DeleteKeyRequest = Message<"sigil.admin.v1.DeleteKeyRequest"> & {
  * Use `create(DeleteKeyRequestSchema)` to create a new message.
  */
 export const DeleteKeyRequestSchema: GenMessage<DeleteKeyRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 14);
+  messageDesc(file_sigil_admin_v1_admin, 17);
 
 /**
  * @generated from message sigil.admin.v1.DeleteKeyResponse
@@ -551,7 +654,7 @@ export type DeleteKeyResponse = Message<"sigil.admin.v1.DeleteKeyResponse"> & {
  * Use `create(DeleteKeyResponseSchema)` to create a new message.
  */
 export const DeleteKeyResponseSchema: GenMessage<DeleteKeyResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 15);
+  messageDesc(file_sigil_admin_v1_admin, 18);
 
 /**
  * @generated from message sigil.admin.v1.ListCertificatesRequest
@@ -595,7 +698,7 @@ export type ListCertificatesRequest = Message<"sigil.admin.v1.ListCertificatesRe
  * Use `create(ListCertificatesRequestSchema)` to create a new message.
  */
 export const ListCertificatesRequestSchema: GenMessage<ListCertificatesRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 16);
+  messageDesc(file_sigil_admin_v1_admin, 19);
 
 /**
  * @generated from message sigil.admin.v1.ListCertificatesResponse
@@ -617,7 +720,7 @@ export type ListCertificatesResponse = Message<"sigil.admin.v1.ListCertificatesR
  * Use `create(ListCertificatesResponseSchema)` to create a new message.
  */
 export const ListCertificatesResponseSchema: GenMessage<ListCertificatesResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 17);
+  messageDesc(file_sigil_admin_v1_admin, 20);
 
 /**
  * @generated from message sigil.admin.v1.RevokeCertificateRequest
@@ -641,7 +744,7 @@ export type RevokeCertificateRequest = Message<"sigil.admin.v1.RevokeCertificate
  * Use `create(RevokeCertificateRequestSchema)` to create a new message.
  */
 export const RevokeCertificateRequestSchema: GenMessage<RevokeCertificateRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 18);
+  messageDesc(file_sigil_admin_v1_admin, 21);
 
 /**
  * @generated from message sigil.admin.v1.ListStationsResponse
@@ -658,7 +761,7 @@ export type ListStationsResponse = Message<"sigil.admin.v1.ListStationsResponse"
  * Use `create(ListStationsResponseSchema)` to create a new message.
  */
 export const ListStationsResponseSchema: GenMessage<ListStationsResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 19);
+  messageDesc(file_sigil_admin_v1_admin, 22);
 
 /**
  * @generated from message sigil.admin.v1.StationSummary
@@ -695,7 +798,7 @@ export type StationSummary = Message<"sigil.admin.v1.StationSummary"> & {
  * Use `create(StationSummarySchema)` to create a new message.
  */
 export const StationSummarySchema: GenMessage<StationSummary> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 20);
+  messageDesc(file_sigil_admin_v1_admin, 23);
 
 /**
  * @generated from message sigil.admin.v1.AddStationRequest
@@ -717,7 +820,7 @@ export type AddStationRequest = Message<"sigil.admin.v1.AddStationRequest"> & {
  * Use `create(AddStationRequestSchema)` to create a new message.
  */
 export const AddStationRequestSchema: GenMessage<AddStationRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 21);
+  messageDesc(file_sigil_admin_v1_admin, 24);
 
 /**
  * @generated from message sigil.admin.v1.SetStationStatusRequest
@@ -739,7 +842,7 @@ export type SetStationStatusRequest = Message<"sigil.admin.v1.SetStationStatusRe
  * Use `create(SetStationStatusRequestSchema)` to create a new message.
  */
 export const SetStationStatusRequestSchema: GenMessage<SetStationStatusRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 22);
+  messageDesc(file_sigil_admin_v1_admin, 25);
 
 /**
  * @generated from message sigil.admin.v1.ListUsersRequest
@@ -766,7 +869,7 @@ export type ListUsersRequest = Message<"sigil.admin.v1.ListUsersRequest"> & {
  * Use `create(ListUsersRequestSchema)` to create a new message.
  */
 export const ListUsersRequestSchema: GenMessage<ListUsersRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 23);
+  messageDesc(file_sigil_admin_v1_admin, 26);
 
 /**
  * @generated from message sigil.admin.v1.UserWithTokens
@@ -788,7 +891,7 @@ export type UserWithTokens = Message<"sigil.admin.v1.UserWithTokens"> & {
  * Use `create(UserWithTokensSchema)` to create a new message.
  */
 export const UserWithTokensSchema: GenMessage<UserWithTokens> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 24);
+  messageDesc(file_sigil_admin_v1_admin, 27);
 
 /**
  * @generated from message sigil.admin.v1.ListUsersResponse
@@ -810,7 +913,7 @@ export type ListUsersResponse = Message<"sigil.admin.v1.ListUsersResponse"> & {
  * Use `create(ListUsersResponseSchema)` to create a new message.
  */
 export const ListUsersResponseSchema: GenMessage<ListUsersResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 25);
+  messageDesc(file_sigil_admin_v1_admin, 28);
 
 /**
  * @generated from message sigil.admin.v1.ListAuditRequest
@@ -864,7 +967,7 @@ export type ListAuditRequest = Message<"sigil.admin.v1.ListAuditRequest"> & {
  * Use `create(ListAuditRequestSchema)` to create a new message.
  */
 export const ListAuditRequestSchema: GenMessage<ListAuditRequest> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 26);
+  messageDesc(file_sigil_admin_v1_admin, 29);
 
 /**
  * @generated from message sigil.admin.v1.ListAuditResponse
@@ -888,7 +991,7 @@ export type ListAuditResponse = Message<"sigil.admin.v1.ListAuditResponse"> & {
  * Use `create(ListAuditResponseSchema)` to create a new message.
  */
 export const ListAuditResponseSchema: GenMessage<ListAuditResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 27);
+  messageDesc(file_sigil_admin_v1_admin, 30);
 
 /**
  * @generated from message sigil.admin.v1.VerifyAuditResponse
@@ -915,7 +1018,7 @@ export type VerifyAuditResponse = Message<"sigil.admin.v1.VerifyAuditResponse"> 
  * Use `create(VerifyAuditResponseSchema)` to create a new message.
  */
 export const VerifyAuditResponseSchema: GenMessage<VerifyAuditResponse> = /*@__PURE__*/
-  messageDesc(file_sigil_admin_v1_admin, 28);
+  messageDesc(file_sigil_admin_v1_admin, 31);
 
 /**
  * AdminService is the Connect API for the admin web portal. Every RPC requires a bearer access token
@@ -1012,6 +1115,14 @@ export const AdminService: GenService<{
     methodKind: "unary";
     input: typeof RevokeCertificateRequestSchema;
     output: typeof EmptySchema;
+  },
+  /**
+   * @generated from rpc sigil.admin.v1.AdminService.GetCertificateAttestation
+   */
+  getCertificateAttestation: {
+    methodKind: "unary";
+    input: typeof CertificateAttestationRequestSchema;
+    output: typeof CertificateAttestationResponseSchema;
   },
   /**
    * @generated from rpc sigil.admin.v1.AdminService.ListStations

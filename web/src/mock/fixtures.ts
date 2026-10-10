@@ -72,6 +72,7 @@ const certificates = [
     profile: "piv-authentication",
     userDisplay: "admin1",
     serialNumber: "5e1a7c02",
+    attestation: { present: true, attestedSerial: "39192733", firmware: "5.7.4", slot: "9a", pinPolicy: "02", touchPolicy: "01", root: "Yubico Attestation Root 1" },
     subject: "CN=admin1",
     notBeforeUnix: T(-86400),
     notAfterUnix: T(86400 * 30),

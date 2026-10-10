@@ -89,7 +89,7 @@ func stubAttestation(serial uint32, slot byte, attestedKey []byte) func([]byte, 
 		if string(attestationDER) != "attestation-ok" || string(intermediate) != "f9-ok" {
 			return attestation.Attestation{}, errors.New("attestation chain does not verify")
 		}
-		return attestation.Attestation{Serial: serial, Slot: slot, PinPolicy: 0x02, TouchPolicy: 0x01, SubjectPublicKeyInfo: attestedKey}, nil
+		return attestation.Attestation{Serial: serial, Slot: slot, Firmware: "5.7.4", PinPolicy: 0x02, TouchPolicy: 0x01, SubjectPublicKeyInfo: attestedKey, Root: "Yubico Attestation Root 1"}, nil
 	}
 }
 
@@ -281,6 +281,21 @@ func TestIssueCertificateOperatorEnrollsAssignedTokenAndSupersedes(t *testing.T)
 	}
 	if active, superseded := f.certificateCounts(t, "39192733"); active != 1 || superseded != 0 {
 		t.Fatalf("after first issue active=%d superseded=%d", active, superseded)
+	}
+
+	var attestationDER, intermediateDER []byte
+	var firmware, root *string
+	if err := f.store.Pool.QueryRow(f.ctx, `
+		SELECT attestation_der, attestation_intermediate_der, attested_firmware, attestation_root
+		FROM certificates WHERE serial_number = $1
+	`, first.SerialNumber).Scan(&attestationDER, &intermediateDER, &firmware, &root); err != nil {
+		t.Fatal(err)
+	}
+	if string(attestationDER) != "attestation-ok" || string(intermediateDER) != "f9-ok" {
+		t.Fatalf("stored attestation = %q / %q", attestationDER, intermediateDER)
+	}
+	if firmware == nil || *firmware != "5.7.4" || root == nil || *root != "Yubico Attestation Root 1" {
+		t.Fatalf("stored firmware/root = %v / %v", firmware, root)
 	}
 
 	second, err := f.issue(t, f.operatorCert, "bob", []string{"helpdesk"}, "39192733", key,

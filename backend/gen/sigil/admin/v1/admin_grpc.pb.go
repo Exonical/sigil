@@ -19,23 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AdminService_GetDashboard_FullMethodName      = "/sigil.admin.v1.AdminService/GetDashboard"
-	AdminService_ListTokens_FullMethodName        = "/sigil.admin.v1.AdminService/ListTokens"
-	AdminService_GetToken_FullMethodName          = "/sigil.admin.v1.AdminService/GetToken"
-	AdminService_AssignToken_FullMethodName       = "/sigil.admin.v1.AdminService/AssignToken"
-	AdminService_UnassignToken_FullMethodName     = "/sigil.admin.v1.AdminService/UnassignToken"
-	AdminService_SetNickname_FullMethodName       = "/sigil.admin.v1.AdminService/SetNickname"
-	AdminService_ReportLost_FullMethodName        = "/sigil.admin.v1.AdminService/ReportLost"
-	AdminService_MarkFound_FullMethodName         = "/sigil.admin.v1.AdminService/MarkFound"
-	AdminService_DeleteKey_FullMethodName         = "/sigil.admin.v1.AdminService/DeleteKey"
-	AdminService_ListCertificates_FullMethodName  = "/sigil.admin.v1.AdminService/ListCertificates"
-	AdminService_RevokeCertificate_FullMethodName = "/sigil.admin.v1.AdminService/RevokeCertificate"
-	AdminService_ListStations_FullMethodName      = "/sigil.admin.v1.AdminService/ListStations"
-	AdminService_AddStation_FullMethodName        = "/sigil.admin.v1.AdminService/AddStation"
-	AdminService_SetStationStatus_FullMethodName  = "/sigil.admin.v1.AdminService/SetStationStatus"
-	AdminService_ListUsers_FullMethodName         = "/sigil.admin.v1.AdminService/ListUsers"
-	AdminService_ListAudit_FullMethodName         = "/sigil.admin.v1.AdminService/ListAudit"
-	AdminService_VerifyAudit_FullMethodName       = "/sigil.admin.v1.AdminService/VerifyAudit"
+	AdminService_GetDashboard_FullMethodName              = "/sigil.admin.v1.AdminService/GetDashboard"
+	AdminService_ListTokens_FullMethodName                = "/sigil.admin.v1.AdminService/ListTokens"
+	AdminService_GetToken_FullMethodName                  = "/sigil.admin.v1.AdminService/GetToken"
+	AdminService_AssignToken_FullMethodName               = "/sigil.admin.v1.AdminService/AssignToken"
+	AdminService_UnassignToken_FullMethodName             = "/sigil.admin.v1.AdminService/UnassignToken"
+	AdminService_SetNickname_FullMethodName               = "/sigil.admin.v1.AdminService/SetNickname"
+	AdminService_ReportLost_FullMethodName                = "/sigil.admin.v1.AdminService/ReportLost"
+	AdminService_MarkFound_FullMethodName                 = "/sigil.admin.v1.AdminService/MarkFound"
+	AdminService_DeleteKey_FullMethodName                 = "/sigil.admin.v1.AdminService/DeleteKey"
+	AdminService_ListCertificates_FullMethodName          = "/sigil.admin.v1.AdminService/ListCertificates"
+	AdminService_RevokeCertificate_FullMethodName         = "/sigil.admin.v1.AdminService/RevokeCertificate"
+	AdminService_GetCertificateAttestation_FullMethodName = "/sigil.admin.v1.AdminService/GetCertificateAttestation"
+	AdminService_ListStations_FullMethodName              = "/sigil.admin.v1.AdminService/ListStations"
+	AdminService_AddStation_FullMethodName                = "/sigil.admin.v1.AdminService/AddStation"
+	AdminService_SetStationStatus_FullMethodName          = "/sigil.admin.v1.AdminService/SetStationStatus"
+	AdminService_ListUsers_FullMethodName                 = "/sigil.admin.v1.AdminService/ListUsers"
+	AdminService_ListAudit_FullMethodName                 = "/sigil.admin.v1.AdminService/ListAudit"
+	AdminService_VerifyAudit_FullMethodName               = "/sigil.admin.v1.AdminService/VerifyAudit"
 )
 
 // AdminServiceClient is the client API for AdminService service.
@@ -57,6 +58,7 @@ type AdminServiceClient interface {
 	DeleteKey(ctx context.Context, in *DeleteKeyRequest, opts ...grpc.CallOption) (*DeleteKeyResponse, error)
 	ListCertificates(ctx context.Context, in *ListCertificatesRequest, opts ...grpc.CallOption) (*ListCertificatesResponse, error)
 	RevokeCertificate(ctx context.Context, in *RevokeCertificateRequest, opts ...grpc.CallOption) (*Empty, error)
+	GetCertificateAttestation(ctx context.Context, in *CertificateAttestationRequest, opts ...grpc.CallOption) (*CertificateAttestationResponse, error)
 	ListStations(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListStationsResponse, error)
 	AddStation(ctx context.Context, in *AddStationRequest, opts ...grpc.CallOption) (*Empty, error)
 	SetStationStatus(ctx context.Context, in *SetStationStatusRequest, opts ...grpc.CallOption) (*Empty, error)
@@ -183,6 +185,16 @@ func (c *adminServiceClient) RevokeCertificate(ctx context.Context, in *RevokeCe
 	return out, nil
 }
 
+func (c *adminServiceClient) GetCertificateAttestation(ctx context.Context, in *CertificateAttestationRequest, opts ...grpc.CallOption) (*CertificateAttestationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CertificateAttestationResponse)
+	err := c.cc.Invoke(ctx, AdminService_GetCertificateAttestation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adminServiceClient) ListStations(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ListStationsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListStationsResponse)
@@ -262,6 +274,7 @@ type AdminServiceServer interface {
 	DeleteKey(context.Context, *DeleteKeyRequest) (*DeleteKeyResponse, error)
 	ListCertificates(context.Context, *ListCertificatesRequest) (*ListCertificatesResponse, error)
 	RevokeCertificate(context.Context, *RevokeCertificateRequest) (*Empty, error)
+	GetCertificateAttestation(context.Context, *CertificateAttestationRequest) (*CertificateAttestationResponse, error)
 	ListStations(context.Context, *Empty) (*ListStationsResponse, error)
 	AddStation(context.Context, *AddStationRequest) (*Empty, error)
 	SetStationStatus(context.Context, *SetStationStatusRequest) (*Empty, error)
@@ -310,6 +323,9 @@ func (UnimplementedAdminServiceServer) ListCertificates(context.Context, *ListCe
 }
 func (UnimplementedAdminServiceServer) RevokeCertificate(context.Context, *RevokeCertificateRequest) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCertificate not implemented")
+}
+func (UnimplementedAdminServiceServer) GetCertificateAttestation(context.Context, *CertificateAttestationRequest) (*CertificateAttestationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCertificateAttestation not implemented")
 }
 func (UnimplementedAdminServiceServer) ListStations(context.Context, *Empty) (*ListStationsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListStations not implemented")
@@ -548,6 +564,24 @@ func _AdminService_RevokeCertificate_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AdminService_GetCertificateAttestation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CertificateAttestationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdminServiceServer).GetCertificateAttestation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AdminService_GetCertificateAttestation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdminServiceServer).GetCertificateAttestation(ctx, req.(*CertificateAttestationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _AdminService_ListStations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -706,6 +740,10 @@ var AdminService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RevokeCertificate",
 			Handler:    _AdminService_RevokeCertificate_Handler,
+		},
+		{
+			MethodName: "GetCertificateAttestation",
+			Handler:    _AdminService_GetCertificateAttestation_Handler,
 		},
 		{
 			MethodName: "ListStations",

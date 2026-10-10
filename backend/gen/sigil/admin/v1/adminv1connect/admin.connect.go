@@ -61,6 +61,9 @@ const (
 	// AdminServiceRevokeCertificateProcedure is the fully-qualified name of the AdminService's
 	// RevokeCertificate RPC.
 	AdminServiceRevokeCertificateProcedure = "/sigil.admin.v1.AdminService/RevokeCertificate"
+	// AdminServiceGetCertificateAttestationProcedure is the fully-qualified name of the AdminService's
+	// GetCertificateAttestation RPC.
+	AdminServiceGetCertificateAttestationProcedure = "/sigil.admin.v1.AdminService/GetCertificateAttestation"
 	// AdminServiceListStationsProcedure is the fully-qualified name of the AdminService's ListStations
 	// RPC.
 	AdminServiceListStationsProcedure = "/sigil.admin.v1.AdminService/ListStations"
@@ -91,6 +94,7 @@ type AdminServiceClient interface {
 	DeleteKey(context.Context, *connect.Request[v1.DeleteKeyRequest]) (*connect.Response[v1.DeleteKeyResponse], error)
 	ListCertificates(context.Context, *connect.Request[v1.ListCertificatesRequest]) (*connect.Response[v1.ListCertificatesResponse], error)
 	RevokeCertificate(context.Context, *connect.Request[v1.RevokeCertificateRequest]) (*connect.Response[v1.Empty], error)
+	GetCertificateAttestation(context.Context, *connect.Request[v1.CertificateAttestationRequest]) (*connect.Response[v1.CertificateAttestationResponse], error)
 	ListStations(context.Context, *connect.Request[v1.Empty]) (*connect.Response[v1.ListStationsResponse], error)
 	AddStation(context.Context, *connect.Request[v1.AddStationRequest]) (*connect.Response[v1.Empty], error)
 	SetStationStatus(context.Context, *connect.Request[v1.SetStationStatusRequest]) (*connect.Response[v1.Empty], error)
@@ -176,6 +180,12 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(adminServiceMethods.ByName("RevokeCertificate")),
 			connect.WithClientOptions(opts...),
 		),
+		getCertificateAttestation: connect.NewClient[v1.CertificateAttestationRequest, v1.CertificateAttestationResponse](
+			httpClient,
+			baseURL+AdminServiceGetCertificateAttestationProcedure,
+			connect.WithSchema(adminServiceMethods.ByName("GetCertificateAttestation")),
+			connect.WithClientOptions(opts...),
+		),
 		listStations: connect.NewClient[v1.Empty, v1.ListStationsResponse](
 			httpClient,
 			baseURL+AdminServiceListStationsProcedure,
@@ -217,23 +227,24 @@ func NewAdminServiceClient(httpClient connect.HTTPClient, baseURL string, opts .
 
 // adminServiceClient implements AdminServiceClient.
 type adminServiceClient struct {
-	getDashboard      *connect.Client[v1.Empty, v1.DashboardResponse]
-	listTokens        *connect.Client[v1.ListTokensRequest, v1.ListTokensResponse]
-	getToken          *connect.Client[v1.TokenRef, v1.GetTokenResponse]
-	assignToken       *connect.Client[v1.AssignTokenRequest, v1.Empty]
-	unassignToken     *connect.Client[v1.TokenRef, v1.Empty]
-	setNickname       *connect.Client[v1.SetNicknameRequest, v1.Empty]
-	reportLost        *connect.Client[v1.TokenRef, v1.Empty]
-	markFound         *connect.Client[v1.TokenRef, v1.MarkFoundResponse]
-	deleteKey         *connect.Client[v1.DeleteKeyRequest, v1.DeleteKeyResponse]
-	listCertificates  *connect.Client[v1.ListCertificatesRequest, v1.ListCertificatesResponse]
-	revokeCertificate *connect.Client[v1.RevokeCertificateRequest, v1.Empty]
-	listStations      *connect.Client[v1.Empty, v1.ListStationsResponse]
-	addStation        *connect.Client[v1.AddStationRequest, v1.Empty]
-	setStationStatus  *connect.Client[v1.SetStationStatusRequest, v1.Empty]
-	listUsers         *connect.Client[v1.ListUsersRequest, v1.ListUsersResponse]
-	listAudit         *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
-	verifyAudit       *connect.Client[v1.Empty, v1.VerifyAuditResponse]
+	getDashboard              *connect.Client[v1.Empty, v1.DashboardResponse]
+	listTokens                *connect.Client[v1.ListTokensRequest, v1.ListTokensResponse]
+	getToken                  *connect.Client[v1.TokenRef, v1.GetTokenResponse]
+	assignToken               *connect.Client[v1.AssignTokenRequest, v1.Empty]
+	unassignToken             *connect.Client[v1.TokenRef, v1.Empty]
+	setNickname               *connect.Client[v1.SetNicknameRequest, v1.Empty]
+	reportLost                *connect.Client[v1.TokenRef, v1.Empty]
+	markFound                 *connect.Client[v1.TokenRef, v1.MarkFoundResponse]
+	deleteKey                 *connect.Client[v1.DeleteKeyRequest, v1.DeleteKeyResponse]
+	listCertificates          *connect.Client[v1.ListCertificatesRequest, v1.ListCertificatesResponse]
+	revokeCertificate         *connect.Client[v1.RevokeCertificateRequest, v1.Empty]
+	getCertificateAttestation *connect.Client[v1.CertificateAttestationRequest, v1.CertificateAttestationResponse]
+	listStations              *connect.Client[v1.Empty, v1.ListStationsResponse]
+	addStation                *connect.Client[v1.AddStationRequest, v1.Empty]
+	setStationStatus          *connect.Client[v1.SetStationStatusRequest, v1.Empty]
+	listUsers                 *connect.Client[v1.ListUsersRequest, v1.ListUsersResponse]
+	listAudit                 *connect.Client[v1.ListAuditRequest, v1.ListAuditResponse]
+	verifyAudit               *connect.Client[v1.Empty, v1.VerifyAuditResponse]
 }
 
 // GetDashboard calls sigil.admin.v1.AdminService.GetDashboard.
@@ -291,6 +302,11 @@ func (c *adminServiceClient) RevokeCertificate(ctx context.Context, req *connect
 	return c.revokeCertificate.CallUnary(ctx, req)
 }
 
+// GetCertificateAttestation calls sigil.admin.v1.AdminService.GetCertificateAttestation.
+func (c *adminServiceClient) GetCertificateAttestation(ctx context.Context, req *connect.Request[v1.CertificateAttestationRequest]) (*connect.Response[v1.CertificateAttestationResponse], error) {
+	return c.getCertificateAttestation.CallUnary(ctx, req)
+}
+
 // ListStations calls sigil.admin.v1.AdminService.ListStations.
 func (c *adminServiceClient) ListStations(ctx context.Context, req *connect.Request[v1.Empty]) (*connect.Response[v1.ListStationsResponse], error) {
 	return c.listStations.CallUnary(ctx, req)
@@ -334,6 +350,7 @@ type AdminServiceHandler interface {
 	DeleteKey(context.Context, *connect.Request[v1.DeleteKeyRequest]) (*connect.Response[v1.DeleteKeyResponse], error)
 	ListCertificates(context.Context, *connect.Request[v1.ListCertificatesRequest]) (*connect.Response[v1.ListCertificatesResponse], error)
 	RevokeCertificate(context.Context, *connect.Request[v1.RevokeCertificateRequest]) (*connect.Response[v1.Empty], error)
+	GetCertificateAttestation(context.Context, *connect.Request[v1.CertificateAttestationRequest]) (*connect.Response[v1.CertificateAttestationResponse], error)
 	ListStations(context.Context, *connect.Request[v1.Empty]) (*connect.Response[v1.ListStationsResponse], error)
 	AddStation(context.Context, *connect.Request[v1.AddStationRequest]) (*connect.Response[v1.Empty], error)
 	SetStationStatus(context.Context, *connect.Request[v1.SetStationStatusRequest]) (*connect.Response[v1.Empty], error)
@@ -415,6 +432,12 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(adminServiceMethods.ByName("RevokeCertificate")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminServiceGetCertificateAttestationHandler := connect.NewUnaryHandler(
+		AdminServiceGetCertificateAttestationProcedure,
+		svc.GetCertificateAttestation,
+		connect.WithSchema(adminServiceMethods.ByName("GetCertificateAttestation")),
+		connect.WithHandlerOptions(opts...),
+	)
 	adminServiceListStationsHandler := connect.NewUnaryHandler(
 		AdminServiceListStationsProcedure,
 		svc.ListStations,
@@ -475,6 +498,8 @@ func NewAdminServiceHandler(svc AdminServiceHandler, opts ...connect.HandlerOpti
 			adminServiceListCertificatesHandler.ServeHTTP(w, r)
 		case AdminServiceRevokeCertificateProcedure:
 			adminServiceRevokeCertificateHandler.ServeHTTP(w, r)
+		case AdminServiceGetCertificateAttestationProcedure:
+			adminServiceGetCertificateAttestationHandler.ServeHTTP(w, r)
 		case AdminServiceListStationsProcedure:
 			adminServiceListStationsHandler.ServeHTTP(w, r)
 		case AdminServiceAddStationProcedure:
@@ -538,6 +563,10 @@ func (UnimplementedAdminServiceHandler) ListCertificates(context.Context, *conne
 
 func (UnimplementedAdminServiceHandler) RevokeCertificate(context.Context, *connect.Request[v1.RevokeCertificateRequest]) (*connect.Response[v1.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("sigil.admin.v1.AdminService.RevokeCertificate is not implemented"))
+}
+
+func (UnimplementedAdminServiceHandler) GetCertificateAttestation(context.Context, *connect.Request[v1.CertificateAttestationRequest]) (*connect.Response[v1.CertificateAttestationResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("sigil.admin.v1.AdminService.GetCertificateAttestation is not implemented"))
 }
 
 func (UnimplementedAdminServiceHandler) ListStations(context.Context, *connect.Request[v1.Empty]) (*connect.Response[v1.ListStationsResponse], error) {

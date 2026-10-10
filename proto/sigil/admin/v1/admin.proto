@@ -19,6 +19,7 @@ service AdminService {
   rpc DeleteKey(DeleteKeyRequest) returns (DeleteKeyResponse);
   rpc ListCertificates(ListCertificatesRequest) returns (ListCertificatesResponse);
   rpc RevokeCertificate(RevokeCertificateRequest) returns (Empty);
+  rpc GetCertificateAttestation(CertificateAttestationRequest) returns (CertificateAttestationResponse);
   rpc ListStations(Empty) returns (ListStationsResponse);
   rpc AddStation(AddStationRequest) returns (Empty);
   rpc SetStationStatus(SetStationStatusRequest) returns (Empty);
@@ -69,6 +70,31 @@ message CertificateSummary {
   string status = 10;
   int64 revoked_at_unix = 11;
   string revocation_reason = 12;
+  // Summary of the verified attestation stored with the certificate. Absent for certificates issued before
+  // migration 005, or issued without an attestation.
+  AttestationSummary attestation = 13;
+}
+
+// What the backend stored for a certificate's attestation. The chain was verified at issuance.
+message AttestationSummary {
+  bool present = 1;
+  string attested_serial = 2;
+  string firmware = 3;
+  string slot = 4;
+  string pin_policy = 5;
+  string touch_policy = 6;
+  string root = 7;
+}
+
+message CertificateAttestationRequest {
+  string certificate_id = 1;
+}
+
+message CertificateAttestationResponse {
+  // The attestation certificate and the slot F9 certificate that signed it, DER encoded.
+  bytes attestation_der = 1;
+  bytes attestation_intermediate_der = 2;
+  AttestationSummary summary = 3;
 }
 
 message EscrowVersion {
