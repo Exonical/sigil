@@ -40,11 +40,12 @@ func (fakeAuthenticator) Authenticate(_ context.Context, token string) (authn.Pr
 }
 
 type adminFixture struct {
-	ctx    context.Context
-	store  *db.Store
-	client adminv1connect.AdminServiceClient
-	server *httptest.Server
-	userID string
+	ctx     context.Context
+	service *Service
+	store   *db.Store
+	client  adminv1connect.AdminServiceClient
+	server  *httptest.Server
+	userID  string
 }
 
 func newAdminFixture(t *testing.T) adminFixture {
@@ -84,11 +85,12 @@ func newAdminFixture(t *testing.T) adminFixture {
 		t.Fatal(err)
 	}
 	return adminFixture{
-		ctx:    ctx,
-		store:  store,
-		server: server,
-		userID: userID,
-		client: adminv1connect.NewAdminServiceClient(server.Client(), server.URL),
+		ctx:     ctx,
+		service: service,
+		store:   store,
+		server:  server,
+		userID:  userID,
+		client:  adminv1connect.NewAdminServiceClient(server.Client(), server.URL),
 	}
 }
 
@@ -160,13 +162,14 @@ func TestHelpdeskAndAdminReadTheDashboardWithCounts(t *testing.T) {
 	}
 }
 
-func TestUnimplementedRPCsReturnUnimplementedForOperators(t *testing.T) {
+func TestDeleteKeyOfAnUnknownTokenIsNotFound(t *testing.T) {
 	f := newAdminFixture(t)
+	f.useCA(newFakeRevoker())
 	_, err := call(f, "admin-token", adminv1connect.AdminServiceClient.DeleteKey, &adminv1.DeleteKeyRequest{
 		Token: &adminv1.TokenRef{Vendor: "Yubico", Serial: "1"}, ConfirmSerial: "1",
 	})
-	if codeOf(err) != connect.CodeUnimplemented {
-		t.Fatalf("DeleteKey code = %v, want Unimplemented in this slice", codeOf(err))
+	if codeOf(err) != connect.CodeNotFound {
+		t.Fatalf("DeleteKey code = %v, want NotFound", codeOf(err))
 	}
 }
 

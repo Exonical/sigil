@@ -4,18 +4,20 @@ package admin
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"strings"
 
 	"connectrpc.com/connect"
-	adminv1 "github.com/Exonical/sigil/backend/gen/sigil/admin/v1"
 	"github.com/Exonical/sigil/backend/gen/sigil/admin/v1/adminv1connect"
 	"github.com/Exonical/sigil/backend/internal/authn"
+	"github.com/Exonical/sigil/backend/internal/ca"
 	"github.com/Exonical/sigil/backend/internal/config"
 	"github.com/Exonical/sigil/backend/internal/db"
 )
+
+// ServicePrefix is the URL prefix of the Connect service.
+const ServicePrefix = "/sigil.admin.v1.AdminService/"
 
 // Authenticator verifies an OIDC access token and upserts the user, as the agent gateway does.
 type Authenticator interface {
@@ -27,6 +29,8 @@ type Service struct {
 	store         *db.Store
 	authenticator Authenticator
 	roles         config.RoleGroups
+	cas           map[string]ca.CA
+	profileCA     map[string]string
 }
 
 // NewService builds the admin service.
@@ -34,19 +38,28 @@ func NewService(store *db.Store, authenticator Authenticator, roles config.RoleG
 	return &Service{store: store, authenticator: authenticator, roles: roles}
 }
 
+// WithCertificateAuthorities installs the CAs used for revocation. profileCA maps each profile to a CA name.
+func (s *Service) WithCertificateAuthorities(cas map[string]ca.CA, profileCA map[string]string) *Service {
+	s.cas = cas
+	s.profileCA = profileCA
+	return s
+}
+
 // Handler returns the path and handler to mount for the Connect service.
 func (s *Service) Handler() (string, http.Handler) {
 	return adminv1connect.NewAdminServiceHandler(s, connect.WithInterceptors(s.authInterceptor()))
 }
-
-// ServicePrefix is the URL prefix of the Connect service.
-const ServicePrefix = "/sigil.admin.v1.AdminService/"
 
 type principalKey struct{}
 
 type principal struct {
 	userID string
 	roles  []string
+}
+
+func principalFrom(ctx context.Context) principal {
+	value, _ := ctx.Value(principalKey{}).(principal)
+	return value
 }
 
 func (s *Service) authInterceptor() connect.UnaryInterceptorFunc {
@@ -73,6 +86,14 @@ func (s *Service) authInterceptor() connect.UnaryInterceptorFunc {
 	}
 }
 
+// requireAdmin rejects callers without the admin role. Used for RPCs that helpdesk may not run.
+func requireAdmin(ctx context.Context) error {
+	if !slices.Contains(principalFrom(ctx).roles, "admin") {
+		return connect.NewError(connect.CodePermissionDenied, errors.New("this action requires the admin role"))
+	}
+	return nil
+}
+
 // bearerToken extracts the token from an Authorization header value.
 func bearerToken(header string) (string, bool) {
 	const prefix = "bearer "
@@ -92,65 +113,4 @@ func rolesFor(groups []string, mapping config.RoleGroups) []string {
 		roles = append(roles, "helpdesk")
 	}
 	return roles
-}
-
-// unimplemented is returned by RPCs that later slices implement.
-func unimplemented(name string) error {
-	return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("%s is not implemented yet", name))
-}
-
-func (s *Service) AssignToken(context.Context, *connect.Request[adminv1.AssignTokenRequest]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("AssignToken")
-}
-
-func (s *Service) UnassignToken(context.Context, *connect.Request[adminv1.TokenRef]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("UnassignToken")
-}
-
-func (s *Service) SetNickname(context.Context, *connect.Request[adminv1.SetNicknameRequest]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("SetNickname")
-}
-
-func (s *Service) ReportLost(context.Context, *connect.Request[adminv1.TokenRef]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("ReportLost")
-}
-
-func (s *Service) MarkFound(context.Context, *connect.Request[adminv1.TokenRef]) (*connect.Response[adminv1.MarkFoundResponse], error) {
-	return nil, unimplemented("MarkFound")
-}
-
-func (s *Service) DeleteKey(context.Context, *connect.Request[adminv1.DeleteKeyRequest]) (*connect.Response[adminv1.DeleteKeyResponse], error) {
-	return nil, unimplemented("DeleteKey")
-}
-
-func (s *Service) ListCertificates(context.Context, *connect.Request[adminv1.ListCertificatesRequest]) (*connect.Response[adminv1.ListCertificatesResponse], error) {
-	return nil, unimplemented("ListCertificates")
-}
-
-func (s *Service) RevokeCertificate(context.Context, *connect.Request[adminv1.RevokeCertificateRequest]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("RevokeCertificate")
-}
-
-func (s *Service) ListStations(context.Context, *connect.Request[adminv1.Empty]) (*connect.Response[adminv1.ListStationsResponse], error) {
-	return nil, unimplemented("ListStations")
-}
-
-func (s *Service) AddStation(context.Context, *connect.Request[adminv1.AddStationRequest]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("AddStation")
-}
-
-func (s *Service) SetStationStatus(context.Context, *connect.Request[adminv1.SetStationStatusRequest]) (*connect.Response[adminv1.Empty], error) {
-	return nil, unimplemented("SetStationStatus")
-}
-
-func (s *Service) ListUsers(context.Context, *connect.Request[adminv1.ListUsersRequest]) (*connect.Response[adminv1.ListUsersResponse], error) {
-	return nil, unimplemented("ListUsers")
-}
-
-func (s *Service) ListAudit(context.Context, *connect.Request[adminv1.ListAuditRequest]) (*connect.Response[adminv1.ListAuditResponse], error) {
-	return nil, unimplemented("ListAudit")
-}
-
-func (s *Service) VerifyAudit(context.Context, *connect.Request[adminv1.Empty]) (*connect.Response[adminv1.VerifyAuditResponse], error) {
-	return nil, unimplemented("VerifyAudit")
 }

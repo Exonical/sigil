@@ -114,7 +114,7 @@ func serve(args []string) error {
 	defer stop()
 	go startLostKeys(ctx, store, cfg, cas)
 	if cfg.ListenPortal != "" {
-		if err := startPortal(ctx, cfg, store, authenticator); err != nil {
+		if err := startPortal(ctx, cfg, store, authenticator, cas); err != nil {
 			return err
 		}
 	}
@@ -368,8 +368,12 @@ func startLostKeys(ctx context.Context, store *db.Store, cfg *config.Config, cas
 
 // startPortal serves the admin portal and its Connect API over HTTPS on listen_portal. It uses the backend's
 // server certificate and does not require a client certificate.
-func startPortal(ctx context.Context, cfg *config.Config, store *db.Store, authenticator *authn.Authenticator) error {
-	service := admin.NewService(store, authenticator, cfg.OIDC.RoleGroups)
+func startPortal(ctx context.Context, cfg *config.Config, store *db.Store, authenticator *authn.Authenticator, cas map[string]ca.CA) error {
+	profileCA := make(map[string]string, len(cfg.Profiles))
+	for _, profile := range cfg.Profiles {
+		profileCA[profile.Name] = profile.CA
+	}
+	service := admin.NewService(store, authenticator, cfg.OIDC.RoleGroups).WithCertificateAuthorities(cas, profileCA)
 	prefix, api := service.Handler()
 	handler, err := portal.NewHandler(portal.Options{
 		Issuer:     cfg.OIDC.Issuer,
