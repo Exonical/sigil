@@ -240,6 +240,11 @@ func (s *Server) IssueCertificate(
 		NotAfter:        leaf.NotAfter,
 		IssuedByStation: station.ID,
 		DER:             chain[0],
+		// The attestation is stored with the certificate, in the same transaction.
+		AttestationDER:             request.AttestationDer,
+		AttestationIntermediateDER: request.AttestationIntermediateDer,
+		AttestedFirmware:           attested.Firmware,
+		AttestationRoot:            attested.Root,
 	}); err != nil {
 		s.logger.Error("record certificate failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not record the issued certificate")

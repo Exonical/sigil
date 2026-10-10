@@ -61,6 +61,8 @@ type Attestation struct {
 	TouchPolicy byte
 	// SubjectPublicKeyInfo is the attested key, DER encoded, for comparison with a CSR.
 	SubjectPublicKeyInfo []byte
+	// Root is the subject common name of the Yubico root the chain verified to.
+	Root string
 }
 
 // EmbeddedTrust returns the Yubico roots and intermediates compiled into the backend.
@@ -78,6 +80,11 @@ func EmbeddedTrust() (Trust, error) {
 	intermediates, err := parsePEMCertificates(intermediatesPEM)
 	if err != nil {
 		return Trust{}, fmt.Errorf("parse embedded Yubico intermediates: %w", err)
+	}
+	for _, cert := range intermediates {
+		if err := requireCA(cert, "embedded Yubico intermediate "+cert.Subject.CommonName); err != nil {
+			return Trust{}, err
+		}
 	}
 	return Trust{Roots: roots, Intermediates: intermediates}, nil
 }
@@ -102,20 +109,45 @@ func VerifyWith(trust Trust, attestationDER, slotIntermediateDER []byte, now tim
 	if err != nil {
 		return Attestation{}, errors.New("slot F9 intermediate certificate is not valid DER")
 	}
+	if err := requireCA(slot, "slot F9 certificate"); err != nil {
+		return Attestation{}, err
+	}
 	intermediates := x509.NewCertPool()
 	for _, cert := range trust.Intermediates {
+		if err := requireCA(cert, "intermediate "+cert.Subject.CommonName); err != nil {
+			return Attestation{}, err
+		}
 		intermediates.AddCert(cert)
 	}
 	intermediates.AddCert(slot)
-	if _, err := leaf.Verify(x509.VerifyOptions{
+	chains, err := leaf.Verify(x509.VerifyOptions{
 		Roots:         trust.Roots,
 		Intermediates: intermediates,
 		CurrentTime:   now,
 		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	}); err != nil {
+	})
+	if err != nil {
 		return Attestation{}, fmt.Errorf("attestation chain does not verify to a Yubico root: %w", err)
 	}
-	return parseExtensions(leaf)
+	result, err := parseExtensions(leaf)
+	if err != nil {
+		return Attestation{}, err
+	}
+	chain := chains[0]
+	result.Root = chain[len(chain)-1].Subject.CommonName
+	return result, nil
+}
+
+// requireCA rejects a certificate that cannot issue others: basicConstraints must assert CA, and keyCertSign must be
+// present when KeyUsage is present. Go reports an absent KeyUsage as zero, so zero is treated as absent.
+func requireCA(cert *x509.Certificate, label string) error {
+	if !cert.BasicConstraintsValid || !cert.IsCA {
+		return fmt.Errorf("%s is not a CA certificate", label)
+	}
+	if cert.KeyUsage != 0 && cert.KeyUsage&x509.KeyUsageCertSign == 0 {
+		return fmt.Errorf("%s KeyUsage does not allow keyCertSign", label)
+	}
+	return nil
 }
 
 const slotSubjectPrefix = "YubiKey PIV Attestation "

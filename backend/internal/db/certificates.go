@@ -30,6 +30,11 @@ type CertificateRecord struct {
 	NotAfter        time.Time
 	IssuedByStation string
 	DER             []byte
+	// The verified attestation the certificate was issued against. Nil for certificates issued before migration 005.
+	AttestationDER             []byte
+	AttestationIntermediateDER []byte
+	AttestedFirmware           string
+	AttestationRoot            string
 }
 
 // UserByID returns the user row for a token's assigned user.
@@ -57,11 +62,13 @@ func (s *Store) InsertCertificate(ctx context.Context, tx pgx.Tx, record Certifi
 	var id string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO certificates(token_id, slot, profile, user_id, serial_number, subject,
-		                         not_before, not_after, status, issued_by_station, der)
-		VALUES($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10)
+		                         not_before, not_after, status, issued_by_station, der,
+		                         attestation_der, attestation_intermediate_der, attested_firmware, attestation_root)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''))
 		RETURNING id::text
 	`, record.TokenID, record.Slot, record.Profile, record.UserID, record.SerialNumber, record.Subject,
-		record.NotBefore, record.NotAfter, record.IssuedByStation, record.DER).Scan(&id); err != nil {
+		record.NotBefore, record.NotAfter, record.IssuedByStation, record.DER,
+		record.AttestationDER, record.AttestationIntermediateDER, record.AttestedFirmware, record.AttestationRoot).Scan(&id); err != nil {
 		return "", fmt.Errorf("insert certificate: %w", err)
 	}
 	return id, nil

@@ -18,6 +18,7 @@ use der::{Decode, DecodePem, Encode};
 use sha2_legacy::{Digest, Sha256, Sha384, Sha512};
 use sigil_core::{CredentialError, Result};
 use x509_cert::Certificate;
+use x509_cert::ext::pkix::{BasicConstraints, KeyUsage, KeyUsages};
 use x509_cert::spki::SubjectPublicKeyInfoOwned;
 
 const ROOT_PIV_CA_1: &str =
@@ -158,6 +159,7 @@ pub fn verify_path(
                 continue;
             }
             check_validity(candidate, now_unix, "issuer certificate")?;
+            check_ca(candidate, "issuer certificate")?;
             if is_root(candidate, trust) {
                 return Ok(common_name(candidate.tbs_certificate().subject()));
             }
@@ -172,6 +174,38 @@ pub fn verify_path(
     Err("attestation chain is longer than the allowed depth".into())
 }
 
+const OID_BASIC_CONSTRAINTS: &str = "2.5.29.19";
+const OID_KEY_USAGE: &str = "2.5.29.15";
+
+/// A certificate that issues others must assert basicConstraints CA=true. Where KeyUsage is present it must include
+/// keyCertSign. Applied to every issuer on the path: the roots, the pool intermediates, and the slot F9 certificate.
+fn check_ca(certificate: &Certificate, label: &str) -> std::result::Result<(), String> {
+    let extensions: &[x509_cert::ext::Extension] = certificate
+        .tbs_certificate()
+        .extensions()
+        .map(|extensions| &extensions[..])
+        .unwrap_or(&[]);
+    let find = |oid: &str| {
+        extensions
+            .iter()
+            .find(|extension| extension.extn_id.to_string() == oid)
+    };
+    let constraints = find(OID_BASIC_CONSTRAINTS)
+        .ok_or_else(|| format!("{label} has no basicConstraints extension"))?;
+    let basic = BasicConstraints::from_der(constraints.extn_value.as_bytes())
+        .map_err(|error| format!("{label} basicConstraints is malformed: {error}"))?;
+    if !basic.ca {
+        return Err(format!("{label} is not a CA certificate"));
+    }
+    if let Some(usage) = find(OID_KEY_USAGE) {
+        let key_usage = KeyUsage::from_der(usage.extn_value.as_bytes())
+            .map_err(|error| format!("{label} KeyUsage is malformed: {error}"))?;
+        if !key_usage.0.contains(KeyUsages::KeyCertSign) {
+            return Err(format!("{label} KeyUsage does not allow keyCertSign"));
+        }
+    }
+    Ok(())
+}
 fn is_root(certificate: &Certificate, trust: &AttestationTrust) -> bool {
     let Ok(der) = certificate.to_der() else {
         return false;

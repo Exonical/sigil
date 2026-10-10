@@ -1264,7 +1264,10 @@ mod tests {
             attestation_spki.as_bytes(),
             1,
             &attestation_signer,
-            Vec::new(),
+            vec![test_extension(
+                const_oid::ObjectIdentifier::new_unwrap("2.5.29.19"),
+                &[0x30, 0x03, 0x01, 0x01, 0xff],
+            )],
         );
         let serial_value = x509_cert::der::asn1::Uint::new(&39192733u32.to_be_bytes())
             .unwrap()
