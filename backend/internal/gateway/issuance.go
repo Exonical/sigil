@@ -229,6 +229,22 @@ func (s *Server) IssueCertificate(
 	serialHex := hex.EncodeToString(leaf.SerialNumber.Bytes())
 	subject := leaf.Subject.String()
 
+	if mismatch := issuedCertificateMismatch(leaf, chain, csr, signRequest, s.issuers.cas[profile.CA].Roots(), now); mismatch != "" {
+		s.revokeMismatched(ctx, profile.CA, serialHex, mismatch)
+		if err := appendAudit(ctx, tx, "user", principal.UserID, "IssueCertificate", "token", request.TokenSerial, "error", map[string]any{
+			"profile":            profile.Name,
+			"reason":             mismatch,
+			"certificate_serial": serialHex,
+		}); err != nil {
+			return nil, status.Error(codes.Internal, "could not record the issued certificate")
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, status.Error(codes.Internal, "could not record the issued certificate")
+		}
+		committed = true
+		return nil, status.Error(codes.FailedPrecondition, "certificate authority returned a certificate that does not match the request")
+	}
+
 	if _, err := s.store.InsertCertificate(ctx, tx, db.CertificateRecord{
 		TokenID:         token.ID,
 		Slot:            profile.Slot,
@@ -367,4 +383,14 @@ func subjectCommonName(template string, user db.User) (string, error) {
 		return "", errors.New("the assigned user has no name for the certificate subject")
 	}
 	return value, nil
+}
+
+// revokeMismatched asks the issuing CA to revoke a certificate that failed the request checks. The request is already
+// rejected and nothing was stored, so a failed revocation is logged rather than returned.
+func (s *Server) revokeMismatched(ctx context.Context, caName, serialHex, reason string) {
+	if err := s.issuers.cas[caName].Revoke(ctx, serialHex, 0, reason); err != nil {
+		s.logger.Error("revoke mismatched certificate failed", "serial", serialHex, "error", err)
+		return
+	}
+	s.logger.Info("revoked mismatched certificate", "serial", serialHex)
 }

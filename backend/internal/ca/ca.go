@@ -40,6 +40,8 @@ type CA interface {
 	Sign(ctx context.Context, csrDER []byte, request SignRequest) ([][]byte, error)
 	// Revoke passively revokes the certificate with the given hexadecimal serial number.
 	Revoke(ctx context.Context, serialHex string, reasonCode int, reason string) error
+	// Roots returns the root certificates that issued certificates must chain to.
+	Roots() *x509.CertPool
 }
 
 // StepConfig configures a Smallstep step-ca client.
@@ -54,6 +56,7 @@ type StepConfig struct {
 // Step signs through step-ca's /1.0/sign endpoint using a one-time JWK provisioner token.
 type Step struct {
 	cfg    StepConfig
+	roots  *x509.CertPool
 	client *http.Client
 	signer jose.Signer
 }
@@ -87,7 +90,8 @@ func NewStep(cfg StepConfig) (*Step, error) {
 		return nil, fmt.Errorf("create provisioner token signer: %w", err)
 	}
 	return &Step{
-		cfg: cfg,
+		cfg:   cfg,
+		roots: roots,
 		client: &http.Client{
 			Timeout:   30 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}},
@@ -278,3 +282,8 @@ func (s *Step) Revoke(ctx context.Context, serialHex string, reasonCode int, rea
 // ErrAlreadyRevoked reports that the CA already has the certificate revoked. step-ca answers a repeat revoke
 // with HTTP 400 and the message "certificate with serial number '<decimal>' is already revoked."
 var ErrAlreadyRevoked = errors.New("certificate is already revoked at the certificate authority")
+
+// Roots returns the root certificates that issued certificates must chain to.
+func (s *Step) Roots() *x509.CertPool {
+	return s.roots
+}

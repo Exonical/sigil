@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"errors"
 	"io"
 	"log/slog"
@@ -44,6 +45,10 @@ func (f *fakeCA) Revoke(_ context.Context, serial string, reasonCode int, _ stri
 	f.revoked[serial]++
 	f.reasons[serial] = reasonCode
 	return nil
+}
+
+func (f *fakeCA) Roots() *x509.CertPool {
+	return x509.NewCertPool()
 }
 
 func (f *fakeCA) count(serial string) int {

@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"strings"
 	"sync"
@@ -27,6 +28,10 @@ type fakeRevoker struct {
 
 func newFakeRevoker() *fakeRevoker {
 	return &fakeRevoker{revoked: map[string]int{}, reasons: map[string]int{}, refuse: map[string]bool{}, already: map[string]bool{}}
+}
+
+func (f *fakeRevoker) Roots() *x509.CertPool {
+	return x509.NewCertPool()
 }
 
 func (f *fakeRevoker) Sign(context.Context, []byte, ca.SignRequest) ([][]byte, error) {

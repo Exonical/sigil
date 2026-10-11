@@ -34,6 +34,9 @@ type fakeCA struct {
 	cert    *x509.Certificate
 	calls   int
 	request ca.SignRequest
+	revoked []string
+	// tamper, when set, edits the issued certificate and returns the public key to certify.
+	tamper func(template *x509.Certificate, publicKey any) any
 }
 
 func newFakeCA(t *testing.T) *fakeCA {
@@ -55,8 +58,15 @@ func newFakeCA(t *testing.T) *fakeCA {
 	return &fakeCA{key: key, cert: cert}
 }
 
-func (f *fakeCA) Revoke(_ context.Context, _ string, _ int, _ string) error {
+func (f *fakeCA) Revoke(_ context.Context, serialHex string, _ int, _ string) error {
+	f.revoked = append(f.revoked, serialHex)
 	return nil
+}
+
+func (f *fakeCA) Roots() *x509.CertPool {
+	pool := x509.NewCertPool()
+	pool.AddCert(f.cert)
+	return pool
 }
 
 func (f *fakeCA) Sign(_ context.Context, csrDER []byte, request ca.SignRequest) ([][]byte, error) {
@@ -75,7 +85,11 @@ func (f *fakeCA) Sign(_ context.Context, csrDER []byte, request ca.SignRequest) 
 		KeyUsage:       x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
-	leaf, err := x509.CreateCertificate(rand.Reader, template, f.cert, csr.PublicKey, f.key)
+	publicKey := csr.PublicKey
+	if f.tamper != nil {
+		publicKey = f.tamper(template, publicKey)
+	}
+	leaf, err := x509.CreateCertificate(rand.Reader, template, f.cert, publicKey, f.key)
 	if err != nil {
 		return nil, err
 	}

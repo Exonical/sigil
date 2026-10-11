@@ -3,9 +3,13 @@ module github.com/Exonical/sigil/backend
 go 1.27
 
 require (
+	connectrpc.com/connect v1.21.0
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pelletier/go-toml/v2 v2.4.3
+	github.com/smallstep/pkcs7 v0.2.1
+	github.com/smallstep/scep v0.0.0-20250318231241-a25cabb69492
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
@@ -27,7 +31,6 @@ require (
 	buf.build/go/standard v0.1.1-0.20260325175353-2b287e071df5 // indirect
 	cel.dev/cel-go v0.32.0 // indirect
 	cel.dev/expr v0.25.3 // indirect
-	connectrpc.com/connect v1.21.0 // indirect
 	connectrpc.com/otelconnect v0.9.0 // indirect
 	github.com/BurntSushi/toml v1.4.1-0.20240526193622-a339e1f7089c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -46,7 +49,6 @@ require (
 	github.com/docker/go-connections v0.8.1 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gofrs/flock v0.13.1 // indirect
