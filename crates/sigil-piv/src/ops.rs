@@ -389,7 +389,7 @@ pub fn ensure_chuid(transport: &mut dyn CardTransport, guid: [u8; 16], expiry: &
 /// The CHUID contents: FASC-N, GUID, expiry as YYYYMMDD, an empty issuer signature, and an empty error-detection code.
 /// The CHUID object wraps these in tag 53 when it is stored (SP 800-73-4 Part 1).
 pub fn chuid(guid: &[u8; 16], expiry: &str) -> Result<Vec<u8>> {
-    let mut contents = tlv::encode(0x30, &fascn(guid))?;
+    let mut contents = tlv::encode(0x30, &NON_FEDERAL_FASCN)?;
     contents.extend_from_slice(&tlv::encode(0x34, guid)?);
     contents.extend_from_slice(&tlv::encode(0x35, expiry.as_bytes())?);
     contents.extend_from_slice(&tlv::encode(0x3e, &[])?);
@@ -397,17 +397,14 @@ pub fn chuid(guid: &[u8; 16], expiry: &str) -> Result<Vec<u8>> {
     Ok(contents)
 }
 
-/// A non-federal FASC-N placeholder: agency 9999, system 9999, and a six-digit credential number from the GUID, as 50
-/// BCD digits padded with zeros on the right. This is not a FIPS 201 structured FASC-N.
-fn fascn(guid: &[u8; 16]) -> [u8; 25] {
-    let credential = u32::from_be_bytes([0, guid[0], guid[1], guid[2]]) % 1_000_000;
-    let digits = format!("{:0<50}", format!("{:04}{:04}{credential:06}", 9999, 9999));
-    let mut packed = [0u8; 25];
-    for (index, pair) in digits.as_bytes().chunks(2).enumerate() {
-        packed[index] = ((pair[0] - b'0') << 4) | (pair[1] - b'0');
-    }
-    packed
-}
+/// The non-federal FASC-N (agency 9999, system 9999, credential 999999) that ykman writes in its CHUIDs: `generate_chuid`
+/// in ykman/piv.py, yubikey-manager (https://github.com/Yubico/yubikey-manager), built from
+/// `FascN(9999, 9999, 999999, 0, 1, 0000000000, 3, 0000, 1)`. The 40-character FASC-N is 5-bit BCD with sentinels and an
+/// LRC (TIG SCEPACS). Every card carries this value, so the GUID alone identifies the credential.
+const NON_FEDERAL_FASCN: [u8; 25] = [
+    0xd4, 0xe7, 0x39, 0xda, 0x73, 0x9c, 0xed, 0x39, 0xce, 0x73, 0x9d, 0x83, 0x68, 0x58, 0x21, 0x08,
+    0x42, 0x10, 0x84, 0x21, 0xc8, 0x42, 0x10, 0xc3, 0xeb,
+];
 
 /// The CHUID expiry for a credential issued now: the same calendar date ten years later, as YYYYMMDD.
 pub fn chuid_expiry(unix_now: i64) -> String {
@@ -525,6 +522,13 @@ mod tests {
                 )),
             }
         }
+    }
+
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).unwrap())
+            .collect()
     }
 
     fn certificate_object(certificate: &[u8]) -> Vec<u8> {
@@ -708,11 +712,9 @@ mod tests {
         let fields = crate::tlv::parse(&contents).unwrap();
         let tags: Vec<u16> = fields.iter().map(|(tag, _)| *tag).collect();
         assert_eq!(tags, vec![0x30, 0x34, 0x35, 0x3e, 0xfe]);
-        assert_eq!(fields[0].1.len(), 25);
         assert_eq!(
-            &fields[0].1[..2],
-            &[0x99, 0x99],
-            "agency 9999 leads the FASC-N"
+            fields[0].1,
+            hex_bytes("d4e739da739ced39ce739d836858210842108421c84210c3eb")
         );
         assert_eq!(fields[1].1, guid);
         assert_eq!(fields[2].1, b"20300228");
