@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 sigil-core = { path = "../sigil-core" }
 sigil-piv = { path = "../sigil-piv" }
+sigil-thales = { path = "../sigil-thales" }
 sigil-yubikey = { path = "../sigil-yubikey" }
 sha2 = "0.11.0"
 tracing.workspace = true

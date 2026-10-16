@@ -3,9 +3,10 @@ use std::ffi::CString;
 use pcsc::{Card, Error as PcscError, Transaction};
 use sha2::{Digest, Sha256, Sha384};
 use sigil_core::{
-    Application, CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
-    ManagementKeyAlgorithm, PinPolicy, PivAlgorithm, PivAttestation, PivCertificate, PivInfo,
-    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
+    Application, CredentialError, DeviceId, DeviceInfo, ManagedPivInitializationOutcome,
+    ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivAlgorithm, PivAttestation, PivCertificate,
+    PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result,
+    Secret,
 };
 use sigil_piv::CardTransport;
 use sigil_yubikey::{management as yubikey_management, piv as yubikey_piv};
@@ -14,6 +15,49 @@ use super::{connect_shared, establish, list};
 
 pub(super) struct PcscTransport<'tx, 'card> {
     transaction: &'tx Transaction<'card>,
+}
+
+impl<'tx, 'card> PcscTransport<'tx, 'card> {
+    pub(super) fn new(transaction: &'tx Transaction<'card>) -> Self {
+        Self { transaction }
+    }
+}
+
+const THALES_UNSUPPORTED: &str = "not yet supported on Thales tokens";
+
+/// The PIV dialect of a discovered token. Yubico tokens use the YubiKey PIV and management extensions. Thales tokens
+/// are read with the vendor-neutral sigil-piv functions and are not written to yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PivFamily {
+    Yubico,
+    Thales,
+}
+
+impl PivFamily {
+    fn of(device: &DeviceInfo) -> Self {
+        if device.vendor == "Thales" {
+            Self::Thales
+        } else {
+            Self::Yubico
+        }
+    }
+}
+
+fn find_device(id: &DeviceId) -> Result<DeviceInfo> {
+    list()?
+        .into_iter()
+        .find(|device| device.id == *id)
+        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))
+}
+
+/// Refuses an operation that only the YubiKey path implements. Called before any APDU is sent.
+fn yubikey_only(device: &DeviceInfo) -> Result<()> {
+    match PivFamily::of(device) {
+        PivFamily::Yubico => Ok(()),
+        PivFamily::Thales => Err(CredentialError::UnsupportedOperation(
+            THALES_UNSUPPORTED.into(),
+        )),
+    }
 }
 
 impl CardTransport for PcscTransport<'_, '_> {
@@ -60,12 +104,10 @@ pub(super) fn parse_device_id(id: &DeviceId) -> Result<(String, Option<String>)>
 
 fn with_transport<T>(
     id: &DeviceId,
-    operation: impl FnOnce(&mut PcscTransport<'_, '_>) -> Result<T>,
+    operation: impl FnOnce(&mut PcscTransport<'_, '_>, PivFamily) -> Result<T>,
 ) -> Result<T> {
     let (reader_name, expected_serial) = parse_device_id(id)?;
-    if !list()?.iter().any(|device| device.id == *id) {
-        return Err(CredentialError::DeviceNotFound(id.0.clone()));
-    }
+    let family = PivFamily::of(&find_device(id)?);
     let context =
         establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
     let reader = CString::new(reader_name).map_err(|_| {
@@ -73,13 +115,14 @@ fn with_transport<T>(
     })?;
     let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
     let transaction = card.transaction().map_err(map_pcsc_error)?;
-    let mut transport = PcscTransport {
-        transaction: &transaction,
-    };
+    let mut transport = PcscTransport::new(&transaction);
     if let Some(serial) = expected_serial {
-        yubikey_piv::verify_serial(&mut transport, &serial)?;
+        match family {
+            PivFamily::Yubico => yubikey_piv::verify_serial(&mut transport, &serial)?,
+            PivFamily::Thales => sigil_thales::verify_serial(&mut transport, &serial)?,
+        }
     }
-    operation(&mut transport)
+    operation(&mut transport, family)
 }
 
 fn with_transport_expected<T>(
@@ -100,10 +143,11 @@ fn with_transport_and_serial<T>(
         || serial_in_id
             .as_deref()
             .is_some_and(|serial| serial != expected_serial)
-        || !list()?.iter().any(|device| device.id == *id)
     {
         return Err(CredentialError::DeviceMismatch);
     }
+    let device = find_device(id).map_err(|_| CredentialError::DeviceMismatch)?;
+    yubikey_only(&device)?;
     let context =
         establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
     let reader = CString::new(reader_name).map_err(|_| {
@@ -111,9 +155,7 @@ fn with_transport_and_serial<T>(
     })?;
     let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
     let transaction = card.transaction().map_err(map_pcsc_error)?;
-    let mut transport = PcscTransport {
-        transaction: &transaction,
-    };
+    let mut transport = PcscTransport::new(&transaction);
     let verified_serial = yubikey_piv::read_expected_serial(&mut transport, expected_serial)?;
     operation(&mut transport, &verified_serial)
 }
@@ -162,6 +204,7 @@ pub(crate) fn set_enabled_applications(
     nfc: Option<&[Application]>,
     lock_code: Option<&Secret>,
 ) -> Result<()> {
+    yubikey_only(&find_device(id)?)?;
     with_management_info(id, expected_serial, |transport, _| {
         // Do not query the card after a successful rebooting write; discovery events refresh it.
         yubikey_management::write_config(transport, usb, nfc, lock_code)
@@ -169,20 +212,35 @@ pub(crate) fn set_enabled_applications(
 }
 
 pub(crate) fn piv_serial(id: &DeviceId, expected_serial: &str) -> Result<String> {
+    if PivFamily::of(&find_device(id)?) == PivFamily::Thales {
+        // The serial was read from CPLC during discovery. This confirms it through the card, without other reads.
+        let (_, serial) = parse_device_id(id)?;
+        if expected_serial.is_empty() || serial.as_deref() != Some(expected_serial) {
+            return Err(CredentialError::DeviceMismatch);
+        }
+        return with_transport(id, |_, _| Ok(expected_serial.to_owned()));
+    }
     with_transport_and_serial(id, expected_serial, |_, serial| Ok(serial.to_owned()))
 }
 
 pub(crate) fn piv_info(id: &DeviceId) -> Result<PivInfo> {
-    with_transport(id, |transport| yubikey_piv::read_info(transport))
+    with_transport(id, |transport, family| match family {
+        PivFamily::Yubico => yubikey_piv::read_info(transport),
+        PivFamily::Thales => sigil_piv::generic::read_info(transport),
+    })
 }
 
 pub(crate) fn piv_slots(id: &DeviceId) -> Result<Vec<PivSlotInfo>> {
-    with_transport(id, |transport| yubikey_piv::read_slots(transport))
+    with_transport(id, |transport, family| match family {
+        PivFamily::Yubico => yubikey_piv::read_slots(transport),
+        PivFamily::Thales => sigil_piv::generic::read_slots(transport),
+    })
 }
 
 pub(crate) fn piv_certificate(id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>> {
-    with_transport(id, |transport| {
-        yubikey_piv::read_certificate(transport, slot)
+    with_transport(id, |transport, family| match family {
+        PivFamily::Yubico => yubikey_piv::read_certificate(transport, slot),
+        PivFamily::Thales => sigil_piv::generic::read_certificate(transport, slot),
     })
 }
 

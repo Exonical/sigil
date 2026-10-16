@@ -12,11 +12,17 @@ use sigil_core::{
 };
 use x509_cert::Certificate;
 
+pub mod generic;
 pub mod management;
 pub mod tlv;
 
 const MAX_RESPONSE_SIZE: usize = 16 * 1024;
 const PIV_AID_SELECT: &[u8] = &[0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08];
+/// The full PIV AID prefix (RID and PIX). Thales IDPrime PIV cards do not match the five-byte form above and select
+/// only with this one.
+const PIV_AID_SELECT_FULL: &[u8] = &[
+    0x00, 0xa4, 0x04, 0x00, 0x09, 0xa0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x00,
+];
 const GET_RESPONSE_PREFIX: &[u8] = &[0x00, 0xc0, 0x00, 0x00];
 const OID_RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 const OID_EC_PUBLIC_KEY: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.2.1");
@@ -68,7 +74,14 @@ pub fn select<T: CardTransport>(transport: &mut T) -> Result<()> {
     let (_, sw) = transceive(transport, PIV_AID_SELECT)?;
     match sw {
         0x9000 => Ok(()),
-        0x6a82 | 0x6a81 => Err(CredentialError::PivUnavailable),
+        0x6a82 | 0x6a81 => {
+            let (_, sw) = transceive(transport, PIV_AID_SELECT_FULL)?;
+            match sw {
+                0x9000 => Ok(()),
+                0x6a82 | 0x6a81 => Err(CredentialError::PivUnavailable),
+                other => Err(CredentialError::CardStatus(other)),
+            }
+        }
         other => Err(CredentialError::CardStatus(other)),
     }
 }
@@ -94,7 +107,8 @@ pub fn read_certificate<T: CardTransport>(
         0x00, 0xcb, 0x3f, 0xff, 0x05, 0x5c, 0x03, tag[0], tag[1], tag[2], 0x00,
     ];
     let (data, sw) = transceive(transport, &command)?;
-    if sw == 0x6a82 || sw == 0x6a88 {
+    // 6A80 is how Thales IDPrime PIV cards report a data object that has not been created.
+    if sw == 0x6a80 || sw == 0x6a82 || sw == 0x6a88 {
         return Ok(None);
     }
     if sw != 0x9000 {
@@ -298,11 +312,35 @@ mod tests {
             vec![0x90, 0x00],
         )]);
         select(&mut ok).expect("selected");
-        let mut missing = ScriptedTransport::new([(
-            vec![0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08],
-            vec![0x6a, 0x82],
-        )]);
+        let mut missing = ScriptedTransport::new([
+            (
+                vec![0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08],
+                vec![0x6a, 0x82],
+            ),
+            (
+                vec![
+                    0x00, 0xa4, 0x04, 0x00, 0x09, 0xa0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10,
+                    0x00, 0x00,
+                ],
+                vec![0x6a, 0x82],
+            ),
+        ]);
         assert_eq!(select(&mut missing), Err(CredentialError::PivUnavailable));
+        let mut thales_partial_aid_refused = ScriptedTransport::new([
+            (
+                vec![0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08],
+                vec![0x6a, 0x82],
+            ),
+            (
+                vec![
+                    0x00, 0xa4, 0x04, 0x00, 0x09, 0xa0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10,
+                    0x00, 0x00,
+                ],
+                vec![0x90, 0x00],
+            ),
+        ]);
+        select(&mut thales_partial_aid_refused)
+            .expect("full AID selects when the partial AID is refused");
         let mut reference_not_found = ScriptedTransport::new([(
             vec![0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08],
             vec![0x6a, 0x88],
@@ -331,7 +369,7 @@ mod tests {
             read_certificate(&mut transport, PivSlot::AUTHENTICATION).unwrap(),
             Some(P256_CERT.to_vec())
         );
-        for status in [0x6a82u16, 0x6a88] {
+        for status in [0x6a80u16, 0x6a82, 0x6a88] {
             let mut missing = ScriptedTransport::new([(command.clone(), response(&[], status))]);
             assert_eq!(
                 read_certificate(&mut missing, PivSlot::AUTHENTICATION).unwrap(),

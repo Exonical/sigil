@@ -15,8 +15,9 @@ use ctap_hid_fido2::fidokey::get_info::InfoOption;
 use ctap_hid_fido2::{Cfg, FidoKeyHid, FidoKeyHidFactory, HidParam};
 use pcsc::{Context, Error as PcscError, Protocols, ReaderState, Scope, ShareMode, State};
 use sigil_core::{
-    CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus,
-    Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result, Transport,
+    Application, CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
+    FidoStatus, Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result,
+    Transport,
 };
 use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
 use sigil_yubikey::product::{key_type_for_pid, product_name};
@@ -151,11 +152,15 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
                         continue;
                     }
                 };
-                let Some(details) = read_management_info(&mut card) else {
-                    tracing::debug!(reader = %name, "non-YubiKey smart-card ignored");
+                if let Some(details) = read_management_info(&mut card) {
+                    devices.push(device_for_reader(&name, Some(details), Transport::Nfc));
                     continue;
-                };
-                devices.push(device_for_reader(&name, Some(details), Transport::Nfc));
+                }
+                // TODO: other SP 800-73 PIV cards need a generic vendor identity before they can be listed.
+                match thales_device(&name, &mut card) {
+                    Some(device) => devices.push(device),
+                    None => tracing::debug!(reader = %name, "non-YubiKey smart-card ignored"),
+                }
             }
         }
     }
@@ -842,6 +847,79 @@ fn is_fido_only_pid(pid: u16) -> bool {
 fn is_fido_ccid_pid(pid: u16) -> bool {
     // These products expose both interfaces; use HID only while PC/SC is down.
     matches!(pid, 0x0115 | 0x0116 | 0x0406 | 0x0407)
+}
+
+/// Lists a Thales PIV token on a non-YubiKey reader. The ATR selects the family, and the CPLC IC serial identifies the
+/// card. The read happens in one transaction and writes nothing.
+fn thales_device(reader: &str, card: &mut pcsc::Card) -> Option<DeviceInfo> {
+    let status = card.status2_owned().ok()?;
+    if !sigil_thales::is_thales_atr(status.atr()) {
+        return None;
+    }
+    let transaction = match card.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            tracing::warn!(reader, error = %error, "could not start Thales transaction");
+            return None;
+        }
+    };
+    let mut transport = piv::PcscTransport::new(&transaction);
+    let cplc = match sigil_thales::read_cplc(&mut transport) {
+        Ok(cplc) => cplc,
+        Err(error) => {
+            tracing::warn!(reader, error = %error, "could not read Thales CPLC data");
+            return None;
+        }
+    };
+    let connection = if is_contactless_reader(reader) {
+        Transport::Nfc
+    } else {
+        Transport::UsbSmartCard
+    };
+    Some(thales_device_info(
+        reader,
+        &sigil_thales::serial(&cplc),
+        connection,
+    ))
+}
+
+fn is_contactless_reader(reader: &str) -> bool {
+    let reader = reader.to_ascii_lowercase();
+    reader.contains("contactless") || reader.contains("nfc")
+}
+
+fn thales_device_info(reader: &str, serial: &str, connection: Transport) -> DeviceInfo {
+    // The model is named only for the SKU the user identified. Card data alone does not separate Fusion NFC PIV from
+    // other eToken Fusion SKUs.
+    let model = if reader.contains("eToken Fusion") {
+        "SafeNet eToken Fusion NFC PIV"
+    } else {
+        "Thales PIV token"
+    };
+    let piv = vec![Application::Piv];
+    let is_nfc = connection == Transport::Nfc;
+    DeviceInfo {
+        id: DeviceId(format!("windows-pcsc:{reader}:{serial}")),
+        vendor: "Thales".into(),
+        model: model.into(),
+        serial: Some(serial.to_owned()),
+        firmware: None,
+        form_factor: None,
+        fips: None,
+        usb_enabled: if is_nfc { Vec::new() } else { piv.clone() },
+        usb_supported: if is_nfc { Vec::new() } else { piv.clone() },
+        nfc_enabled: if is_nfc { piv.clone() } else { Vec::new() },
+        nfc_supported: if is_nfc { piv.clone() } else { Vec::new() },
+        config_locked: None,
+        fips_approved: None,
+        pin_complexity: None,
+        connection: Some(connection.clone()),
+        transports: vec![connection],
+        applications: piv.clone(),
+        supported_applications: piv,
+        simulated: false,
+        metadata_access: MetadataAccess::Unknown,
+    }
 }
 
 fn device_for_reader(

@@ -5557,6 +5557,7 @@ dependencies = [
  "sha2 0.11.0",
  "sigil-core",
  "sigil-piv",
+ "sigil-thales",
  "sigil-yubikey",
  "tracing",
  "windows-sys 0.61.2",
@@ -5574,6 +5575,14 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "sigil-thales"
+version = "0.2.0"
+dependencies = [
+ "sigil-core",
+ "sigil-piv",
 ]
 
 [[package]]

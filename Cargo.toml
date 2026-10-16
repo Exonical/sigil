@@ -5,6 +5,7 @@ members = [
     "crates/sigil-app",
     "crates/sigil-mock",
     "crates/sigil-platform",
+    "crates/sigil-thales",
     "crates/sigil-yubikey",
     "crates/sigil-piv",
     "crates/sigil-proto",
