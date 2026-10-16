@@ -557,7 +557,7 @@ fn handle_with_prompter<P: SecretPrompter>(
                     );
                 }
                 let key = management_key(service, &id, current_default, prompter)?;
-                service.import_certificate(&id, &serial, &key, slot, &certificate)?;
+                service.import_certificate(&id, &serial, &key, slot, &certificate, None)?;
                 mutation_output(
                     json,
                     serde_json::json!({ "operation": "import_certificate", "slot": slot }),
@@ -801,7 +801,7 @@ fn handle_with_prompter<P: SecretPrompter>(
             let id = DeviceId(device);
             let serial = device_serial(service, &id)?;
             let pin = current_pin(service, &id, "PIV PIN: ", prompter)?;
-            let csr = service.sign_csr(&id, &serial, &pin, slot, &subject)?;
+            let csr = service.sign_csr(&id, &serial, &pin, slot, &subject, None)?;
             write_new(&output, &csr)?;
             mutation_output(
                 json,

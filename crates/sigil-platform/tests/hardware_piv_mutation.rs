@@ -214,6 +214,7 @@ fn authorized_piv_mutation_restores_factory_defaults() {
             &pin3,
             PivSlot::AUTHENTICATION,
             "CN=Sigil hardware mutation test",
+            None,
         )
         .expect("sign CSR with card");
     sigil_piv::management::verify_csr(&csr).expect("verify card-signed CSR");
@@ -228,6 +229,7 @@ fn authorized_piv_mutation_restores_factory_defaults() {
             &key1,
             PivSlot::AUTHENTICATION,
             &certificate,
+            None,
         )
         .expect("import certificate matching slot key");
     assert_eq!(
@@ -252,6 +254,7 @@ fn authorized_piv_mutation_restores_factory_defaults() {
             &key1,
             PivSlot::AUTHENTICATION,
             &wrong_certificate,
+            None,
         ),
         Err(CredentialError::DeviceMismatch)
     );

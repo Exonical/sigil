@@ -266,6 +266,7 @@ impl AgentClient {
         pin: &PivPin,
         slot: PivSlot,
         subject_dn: &str,
+        expected_public_key: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         self.runtime
             .block_on(self.rpc.clone().sign_piv_csr(v1::SignPivCsrRequest {
@@ -274,6 +275,7 @@ impl AgentClient {
                 pin: pin.as_bytes().to_vec(),
                 slot_byte: u32::from(slot.byte()),
                 subject_dn: subject_dn.to_owned(),
+                expected_public_key: expected_public_key.map(<[u8]>::to_vec).unwrap_or_default(),
             }))
             .map(|response| response.into_inner().csr_der)
             .map_err(Self::map_status)
@@ -286,6 +288,7 @@ impl AgentClient {
         management_key: &ManagementKey,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
     ) -> Result<()> {
         self.runtime
             .block_on(
@@ -300,6 +303,9 @@ impl AgentClient {
                         ),
                         slot_byte: u32::from(slot.byte()),
                         certificate_der: certificate_der.to_vec(),
+                        expected_public_key: expected_public_key
+                            .map(<[u8]>::to_vec)
+                            .unwrap_or_default(),
                         managed: None,
                     }),
             )
@@ -519,6 +525,7 @@ impl AgentClient {
                         expected_serial: expected_serial.to_owned(),
                         management_key: Vec::new(),
                         management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
+                        expected_public_key: Vec::new(),
                         slot_byte: u32::from(slot.byte()),
                         certificate_der: certificate_der.to_vec(),
                         managed: Some(managed_authorization(access_token)),
@@ -976,8 +983,16 @@ impl PivManagement for AgentClient {
         pin: &PivPin,
         slot: PivSlot,
         subject_dn: &str,
+        expected_public_key: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
-        self.rpc_sign_piv_csr(id, expected_serial, pin, slot, subject_dn)
+        self.rpc_sign_piv_csr(
+            id,
+            expected_serial,
+            pin,
+            slot,
+            subject_dn,
+            expected_public_key,
+        )
     }
 
     fn import_certificate(
@@ -987,8 +1002,16 @@ impl PivManagement for AgentClient {
         management_key: &ManagementKey,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
     ) -> Result<()> {
-        self.rpc_import_piv_certificate(id, expected_serial, management_key, slot, certificate_der)
+        self.rpc_import_piv_certificate(
+            id,
+            expected_serial,
+            management_key,
+            slot,
+            certificate_der,
+            expected_public_key,
+        )
     }
 
     fn delete_certificate(

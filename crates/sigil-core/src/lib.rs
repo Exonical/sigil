@@ -333,6 +333,7 @@ pub trait PivManagement: Send + Sync {
         pin: &PivPin,
         slot: PivSlot,
         subject_dn: &str,
+        expected_public_key: Option<&[u8]>,
     ) -> Result<Vec<u8>>;
 
     fn import_certificate(
@@ -342,6 +343,7 @@ pub trait PivManagement: Send + Sync {
         management_key: &ManagementKey,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
     ) -> Result<()>;
 
     fn delete_certificate(

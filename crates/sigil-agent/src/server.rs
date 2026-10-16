@@ -879,6 +879,7 @@ impl AgentService {
                     expected_serial: serial.clone(),
                     pin: pin.to_vec(),
                     slot_byte,
+                    expected_public_key: spki.clone(),
                     subject_dn: format!(
                         "CN={}",
                         enrollment::escape_rdn_value(&profile.expected_subject)
@@ -922,6 +923,7 @@ impl AgentService {
                 v1::ImportPivCertificateRequest {
                     id: device_id.to_owned(),
                     expected_serial: serial,
+                    expected_public_key: spki.clone(),
                     management_key: Vec::new(),
                     management_key_algorithm: 0,
                     slot_byte,
@@ -2254,13 +2256,25 @@ impl v1::agent_server::Agent for AgentService {
             }
         };
         let subject_dn = input.subject_dn;
+        let expected_public_key = (!input.expected_public_key.is_empty())
+            .then(|| std::mem::take(&mut input.expected_public_key));
         let id = DeviceId(device_id.clone());
         let mut audit_serial = serial_hint.clone();
         let result = match self.ensure_expected_serial(&id, &serial_hint).await {
             Ok(serial) => {
                 audit_serial = serial.clone();
                 let credentials = self.credentials.clone();
-                blocking(move || credentials.sign_csr(&id, &serial, &pin, slot, &subject_dn)).await
+                blocking(move || {
+                    credentials.sign_csr(
+                        &id,
+                        &serial,
+                        &pin,
+                        slot,
+                        &subject_dn,
+                        expected_public_key.as_deref(),
+                    )
+                })
+                .await
             }
             Err(status) => Err(status),
         };
@@ -2292,6 +2306,8 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
+        let expected_public_key = (!input.expected_public_key.is_empty())
+            .then(|| std::mem::take(&mut input.expected_public_key));
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
@@ -2371,6 +2387,7 @@ impl v1::agent_server::Agent for AgentService {
                                 &management_key,
                                 slot,
                                 &certificate_der,
+                                expected_public_key.as_deref(),
                             )
                             .map(|()| ManagedCardOutcome::Applied(Response::new(v1::Empty {})))
                     },
@@ -2429,6 +2446,7 @@ impl v1::agent_server::Agent for AgentService {
                 &management_key,
                 slot,
                 &certificate_der,
+                expected_public_key.as_deref(),
             )
         })
         .await;

@@ -450,6 +450,7 @@ async fn managed_generate_and_key_operations_use_the_released_management_key() {
             management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
             slot_byte: u32::from(PivSlot::AUTHENTICATION.byte()),
             certificate_der: certificate.der,
+            expected_public_key: Vec::new(),
             managed: managed_token(),
         })),
     )

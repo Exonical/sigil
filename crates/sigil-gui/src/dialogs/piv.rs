@@ -1311,7 +1311,7 @@ fn execute_operation(
             let encoded = std::fs::read(&path).map_err(|error| error.to_string())?;
             let der = sigil_piv::decode_certificate(&encoded).map_err(|error| error.to_string())?;
             service
-                .import_certificate(id, serial, &management_key, slot, &der)
+                .import_certificate(id, serial, &management_key, slot, &der, None)
                 .map(|()| format!("Certificate imported into slot {slot}."))
                 .map_err(|error| error.to_string())
         }
@@ -1323,7 +1323,7 @@ fn execute_operation(
                 Ok(format!("Certificate exported to {}.", path.display()))
             }),
         PivOperation::CreateCsr(pin, slot, subject, path) => service
-            .sign_csr(id, serial, &pin, slot, &subject)
+            .sign_csr(id, serial, &pin, slot, &subject, None)
             .map_err(|error| error.to_string())
             .and_then(|csr| {
                 std::fs::write(&path, csr).map_err(|error| error.to_string())?;

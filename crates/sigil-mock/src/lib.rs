@@ -661,6 +661,7 @@ impl PivManagement for MockDiscovery {
         pin: &PivPin,
         slot: PivSlot,
         subject_dn: &str,
+        expected_public_key: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         use sha2::Digest;
 
@@ -671,6 +672,9 @@ impl PivManagement for MockDiscovery {
                 .slots
                 .get(&slot)
                 .ok_or(CredentialError::DeviceMismatch)?;
+            if expected_public_key.is_some_and(|expected| expected != slot.public_key_spki) {
+                return Err(CredentialError::DeviceMismatch);
+            }
             let signing_key = slot.signing_key.as_ref().ok_or_else(|| {
                 CredentialError::UnsupportedOperation("mock slot has no signing key".into())
             })?;
@@ -694,6 +698,7 @@ impl PivManagement for MockDiscovery {
         management_key: &ManagementKey,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
     ) -> Result<()> {
         self.verify_expected_serial(id, expected_serial)?;
         self.with_piv_state(id, |state| {
@@ -707,6 +712,9 @@ impl PivManagement for MockDiscovery {
                 .slots
                 .get_mut(&slot)
                 .ok_or(CredentialError::DeviceMismatch)?;
+            if expected_public_key.is_some_and(|expected| expected != slot_state.public_key_spki) {
+                return Err(CredentialError::DeviceMismatch);
+            }
             let certificate_spki = sigil_piv::management::certificate_spki(certificate_der)?;
             if certificate_spki != slot_state.public_key_spki {
                 return Err(CredentialError::DeviceMismatch);
@@ -1009,7 +1017,14 @@ mod tests {
             )
             .unwrap();
         let csr = mock
-            .sign_csr(&id, serial, &pin2, PivSlot::SIGNATURE, "CN=Mock signer")
+            .sign_csr(
+                &id,
+                serial,
+                &pin2,
+                PivSlot::SIGNATURE,
+                "CN=Mock signer",
+                None,
+            )
             .unwrap();
         sigil_piv::management::verify_csr(&csr).unwrap();
         assert!(!spki.is_empty());
@@ -1027,6 +1042,7 @@ mod tests {
             &management_key,
             PivSlot::AUTHENTICATION,
             P256_CERT,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -1036,6 +1052,7 @@ mod tests {
                 &management_key,
                 PivSlot::AUTHENTICATION,
                 RSA_CERT,
+                None,
             ),
             Err(CredentialError::DeviceMismatch)
         );

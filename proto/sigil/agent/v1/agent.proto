@@ -396,6 +396,8 @@ message SignPivCsrRequest {
   bytes pin = 3;
   uint32 slot_byte = 4;
   string subject_dn = 5;
+  // Public key the CSR is bound to, as SubjectPublicKeyInfo DER. Empty means not supplied.
+  bytes expected_public_key = 6;
 }
 
 message SignPivCsrResponse {
@@ -410,6 +412,8 @@ message ImportPivCertificateRequest {
   uint32 slot_byte = 5;
   bytes certificate_der = 6;
   ManagedAuthorization managed = 7;
+  // Public key the certificate is bound to, as SubjectPublicKeyInfo DER. Empty means not supplied.
+  bytes expected_public_key = 8;
 }
 
 message DeletePivCertificateRequest {

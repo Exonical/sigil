@@ -268,9 +268,18 @@ pub(crate) fn sign_csr(
     pin: &PivPin,
     slot: PivSlot,
     subject_dn: &str,
+    expected_public_key: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     session(id, Some(expected_serial), |transport, vendor, device, _| {
-        ops::sign_csr(transport, vendor, device, pin, slot, subject_dn)
+        ops::sign_csr(
+            transport,
+            vendor,
+            device,
+            pin,
+            slot,
+            subject_dn,
+            expected_public_key,
+        )
     })
 }
 
@@ -280,6 +289,7 @@ pub(crate) fn import_certificate(
     management_key: &ManagementKey,
     slot: PivSlot,
     certificate_der: &[u8],
+    expected_public_key: Option<&[u8]>,
 ) -> Result<()> {
     session(id, Some(expected_serial), |transport, vendor, device, _| {
         ops::import_certificate(
@@ -289,6 +299,7 @@ pub(crate) fn import_certificate(
             management_key,
             slot,
             certificate_der,
+            expected_public_key,
         )
     })
 }

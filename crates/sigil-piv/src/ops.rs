@@ -1,6 +1,8 @@
 //! SP 800-73 PIV operations, written once. Vendor behaviour comes from a `PivVendor`. A capability-gated operation
 //! checks the capability before it sends any APDU, so an unsupported token is refused without touching the card.
 
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use der::{Decode, Encode};
 use sha2::{Digest, Sha256, Sha384};
 use sigil_core::{
@@ -12,7 +14,7 @@ use x509_cert::Certificate;
 
 use crate::{
     CardTransport, management, read_certificate as read_certificate_object, select,
-    summarize_certificate,
+    summarize_certificate, tlv,
     vendor::{PivVendor, unsupported},
 };
 
@@ -252,6 +254,7 @@ pub fn sign_csr(
     pin: &PivPin,
     slot: PivSlot,
     subject_dn: &str,
+    expected_public_key: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     require(vendor, vendor.capabilities().piv_writes, "CSR signing")?;
     if slot == PivSlot::ATTESTATION {
@@ -262,9 +265,11 @@ pub fn sign_csr(
     vendor.validate_new_code(device, pin.as_bytes())?;
     select(transport)?;
     management::verify_pin_selected(transport, pin)?;
-    let spki = vendor
-        .slot_public_key(transport, slot)?
-        .ok_or_else(unsupported_public_key)?;
+    let vendor_key = vendor.slot_public_key(transport, slot)?;
+    let spki = match bound_public_key(vendor_key, expected_public_key)? {
+        Some(key) => key,
+        None => slot_certificate_spki(transport, slot)?.ok_or_else(unsupported_public_key)?,
+    };
     let (info_der, algorithm) = management::build_csr_info(subject_dn, &spki)?;
     let digest = match algorithm {
         PivKeyAlgorithm::EccP256 => Sha256::digest(&info_der).to_vec(),
@@ -283,6 +288,7 @@ pub fn import_certificate(
     management_key: &ManagementKey,
     slot: PivSlot,
     certificate_der: &[u8],
+    expected_public_key: Option<&[u8]>,
 ) -> Result<()> {
     require(
         vendor,
@@ -292,10 +298,13 @@ pub fn import_certificate(
     reject_attestation_slot(slot)?;
     select(transport)?;
     management::authenticate_management_key_selected(transport, management_key)?;
-    let slot_spki = vendor
-        .slot_public_key(transport, slot)?
-        .ok_or_else(unsupported_public_key)?;
+    let vendor_key = vendor.slot_public_key(transport, slot)?;
+    let slot_spki =
+        bound_public_key(vendor_key, expected_public_key)?.ok_or_else(unsupported_import_key)?;
     verify_certificate_matches_key(certificate_der, &slot_spki)?;
+    if vendor.ensure_chuid_on_import() {
+        ensure_chuid(transport, random_guid()?, &chuid_expiry(unix_now()))?;
+    }
     management::put_certificate_selected(transport, slot, certificate_der)
         .map_err(|error| vendor.map_error(device, error))
 }
@@ -335,6 +344,113 @@ pub fn delete_key(
 pub fn reset(transport: &mut dyn CardTransport, vendor: &dyn PivVendor) -> Result<()> {
     require(vendor, vendor.capabilities().reset, "reset")?;
     vendor.reset(transport)
+}
+
+/// The key a CSR or import is bound to. A key the token reports must agree with a caller-supplied key.
+fn bound_public_key(
+    vendor_key: Option<Vec<u8>>,
+    caller_key: Option<&[u8]>,
+) -> Result<Option<Vec<u8>>> {
+    match (vendor_key, caller_key) {
+        (Some(vendor), Some(caller)) if vendor != caller => Err(CredentialError::DeviceMismatch),
+        (Some(vendor), _) => Ok(Some(vendor)),
+        (None, Some(caller)) => Ok(Some(caller.to_vec())),
+        (None, None) => Ok(None),
+    }
+}
+
+fn unsupported_import_key() -> CredentialError {
+    CredentialError::UnsupportedOperation(
+        "this token cannot report the slot's public key; supply the key from generation".into(),
+    )
+}
+
+/// The SubjectPublicKeyInfo of the certificate currently in the slot, when there is one.
+fn slot_certificate_spki(
+    transport: &mut dyn CardTransport,
+    slot: PivSlot,
+) -> Result<Option<Vec<u8>>> {
+    let Some(der) = read_certificate_object(transport, slot)? else {
+        return Ok(None);
+    };
+    management::certificate_spki(&der).map(Some)
+}
+
+const CHUID_TAG: [u8; 3] = [0x5f, 0xc1, 0x02];
+
+/// Writes a CHUID when the token has none. A present CHUID is left unchanged.
+pub fn ensure_chuid(transport: &mut dyn CardTransport, guid: [u8; 16], expiry: &str) -> Result<()> {
+    if management::read_data_object_selected(transport, &CHUID_TAG)?.is_some() {
+        return Ok(());
+    }
+    management::put_data_object_selected(transport, &CHUID_TAG, &chuid(&guid, expiry)?)
+}
+
+/// The CHUID contents: FASC-N, GUID, expiry as YYYYMMDD, an empty issuer signature, and an empty error-detection code.
+/// The CHUID object wraps these in tag 53 when it is stored (SP 800-73-4 Part 1).
+pub fn chuid(guid: &[u8; 16], expiry: &str) -> Result<Vec<u8>> {
+    let mut contents = tlv::encode(0x30, &fascn(guid))?;
+    contents.extend_from_slice(&tlv::encode(0x34, guid)?);
+    contents.extend_from_slice(&tlv::encode(0x35, expiry.as_bytes())?);
+    contents.extend_from_slice(&tlv::encode(0x3e, &[])?);
+    contents.extend_from_slice(&tlv::encode(0xfe, &[])?);
+    Ok(contents)
+}
+
+/// A non-federal FASC-N placeholder: agency 9999, system 9999, and a six-digit credential number from the GUID, as 50
+/// BCD digits padded with zeros on the right. This is not a FIPS 201 structured FASC-N.
+fn fascn(guid: &[u8; 16]) -> [u8; 25] {
+    let credential = u32::from_be_bytes([0, guid[0], guid[1], guid[2]]) % 1_000_000;
+    let digits = format!("{:0<50}", format!("{:04}{:04}{credential:06}", 9999, 9999));
+    let mut packed = [0u8; 25];
+    for (index, pair) in digits.as_bytes().chunks(2).enumerate() {
+        packed[index] = ((pair[0] - b'0') << 4) | (pair[1] - b'0');
+    }
+    packed
+}
+
+/// The CHUID expiry for a credential issued now: the same calendar date ten years later, as YYYYMMDD.
+pub fn chuid_expiry(unix_now: i64) -> String {
+    let (year, month, day) = civil_from_days(unix_now.div_euclid(86_400));
+    let year = year + 10;
+    let day = if month == 2 && day == 29 && !is_leap(year) {
+        28
+    } else {
+        day
+    };
+    format!("{year:04}{month:02}{day:02}")
+}
+
+fn is_leap(year: i64) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+/// Converts days since 1970-01-01 to a proleptic Gregorian (year, month, day).
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+fn random_guid() -> Result<[u8; 16]> {
+    let mut guid = [0u8; 16];
+    getrandom::fill(&mut guid)
+        .map_err(|_| CredentialError::BackendUnavailable("OS random source unavailable".into()))?;
+    Ok(guid)
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or_default()
 }
 
 /// Checks that a certificate carries the given SubjectPublicKeyInfo.
@@ -403,6 +519,7 @@ mod tests {
                         None => Ok(vec![0x6a, 0x80]),
                     }
                 }
+                0xdb => Ok(ok(&[])),
                 _ => Err(CredentialError::SmartCardOperation(
                     "unexpected APDU".into(),
                 )),
@@ -509,6 +626,7 @@ mod tests {
                 &pin,
                 PivSlot::AUTHENTICATION,
                 "CN=test",
+                None,
             )
             .map(|_| ()),
             import_certificate(
@@ -518,6 +636,7 @@ mod tests {
                 &key,
                 PivSlot::AUTHENTICATION,
                 P256_CERT,
+                None,
             ),
             delete_certificate(&mut card, &vendor, &device, &key, PivSlot::AUTHENTICATION),
             delete_key(&mut card, &vendor, &key, PivSlot::AUTHENTICATION),
@@ -569,18 +688,78 @@ mod tests {
             &pin,
             PivSlot::AUTHENTICATION,
             "CN=test",
+            None,
         );
         assert!(matches!(
             result,
             Err(CredentialError::UnsupportedOperation(message)) if message.contains("public key")
         ));
         assert!(
-            card.sent
-                .iter()
-                .all(|command| command[1] == 0xa4 || command[1] == 0x20),
-            "only SELECT and VERIFY may be sent: {:?}",
+            card.sent.iter().all(|command| command[1] != 0x87),
+            "no GENERAL AUTHENTICATE may be sent: {:?}",
             card.sent
         );
+    }
+
+    #[test]
+    fn chuid_carries_fascn_guid_expiry_and_empty_signature_and_lrc() {
+        let guid = [0x11u8; 16];
+        let contents = chuid(&guid, "20300228").unwrap();
+        let fields = crate::tlv::parse(&contents).unwrap();
+        let tags: Vec<u16> = fields.iter().map(|(tag, _)| *tag).collect();
+        assert_eq!(tags, vec![0x30, 0x34, 0x35, 0x3e, 0xfe]);
+        assert_eq!(fields[0].1.len(), 25);
+        assert_eq!(
+            &fields[0].1[..2],
+            &[0x99, 0x99],
+            "agency 9999 leads the FASC-N"
+        );
+        assert_eq!(fields[1].1, guid);
+        assert_eq!(fields[2].1, b"20300228");
+        assert!(fields[3].1.is_empty() && fields[4].1.is_empty());
+    }
+
+    #[test]
+    fn ensure_chuid_writes_only_when_the_token_has_none() {
+        let mut absent = FakeCard::empty();
+        ensure_chuid(&mut absent, [0x22; 16], "20300228").unwrap();
+        let write = absent.sent.last().unwrap();
+        assert_eq!(&write[..4], &[0x00, 0xdb, 0x3f, 0xff]);
+        assert_eq!(&write[5..10], &[0x5c, 0x03, 0x5f, 0xc1, 0x02]);
+        assert_eq!(write[10], 0x53);
+
+        let mut present = FakeCard::empty();
+        present
+            .objects
+            .push((CHUID_TAG, vec![0x53, 0x02, 0x30, 0x00]));
+        ensure_chuid(&mut present, [0x22; 16], "20300228").unwrap();
+        assert!(!present.sent.iter().any(|command| command[1] == 0xdb));
+    }
+
+    #[test]
+    fn chuid_expiry_is_ten_years_later_with_leap_day_handled() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(18_321), (2020, 2, 29));
+        assert_eq!(chuid_expiry(1_582_934_400), "20300228");
+        assert_eq!(chuid_expiry(0), "19800101");
+    }
+
+    #[test]
+    fn bound_key_must_agree_with_the_token_when_both_are_known() {
+        assert_eq!(
+            bound_public_key(Some(vec![1]), Some(&[1])).unwrap(),
+            Some(vec![1])
+        );
+        assert_eq!(
+            bound_public_key(Some(vec![1]), Some(&[2])),
+            Err(CredentialError::DeviceMismatch)
+        );
+        assert_eq!(bound_public_key(None, Some(&[3])).unwrap(), Some(vec![3]));
+        assert_eq!(
+            bound_public_key(Some(vec![4]), None).unwrap(),
+            Some(vec![4])
+        );
+        assert_eq!(bound_public_key(None, None).unwrap(), None);
     }
 
     #[test]

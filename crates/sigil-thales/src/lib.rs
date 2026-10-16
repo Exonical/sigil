@@ -5,7 +5,10 @@
 //! expose. USB iSerialNumber is not available over NFC, so the IC serial from CPLC is the device serial.
 
 use sigil_core::{CredentialError, Result};
-use sigil_piv::{CardTransport, vendor::PivVendor};
+use sigil_piv::{
+    CardTransport,
+    vendor::{PivCapabilities, PivVendor},
+};
 
 /// Historical bytes that identify the IDPrime family in the ATR (80 31 80 65 B0). A substring match is enough for this
 /// family; the ATR of a non-Thales card does not contain this five-byte sequence.
@@ -114,6 +117,17 @@ pub struct ThalesPiv;
 impl PivVendor for ThalesPiv {
     fn name(&self) -> &'static str {
         "Thales"
+    }
+
+    fn capabilities(&self) -> PivCapabilities {
+        PivCapabilities {
+            piv_writes: true,
+            ..PivCapabilities::default()
+        }
+    }
+
+    fn ensure_chuid_on_import(&self) -> bool {
+        true
     }
 
     fn verify_serial(&self, transport: &mut dyn CardTransport, expected: &str) -> Result<String> {
@@ -243,8 +257,12 @@ mod tests {
         assert_eq!(ThalesPiv.name(), "Thales");
         assert_eq!(
             ThalesPiv.capabilities(),
-            sigil_piv::vendor::PivCapabilities::default()
+            sigil_piv::vendor::PivCapabilities {
+                piv_writes: true,
+                ..sigil_piv::vendor::PivCapabilities::default()
+            }
         );
+        assert!(ThalesPiv.ensure_chuid_on_import());
         let entries = sigil_piv::ops::read_slots(&mut Answers, &ThalesPiv).unwrap();
         assert_eq!(entries.len(), 4);
         assert!(

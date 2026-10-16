@@ -341,12 +341,27 @@ impl PivManagement for NativeDiscovery {
         pin: &PivPin,
         slot: PivSlot,
         subject_dn: &str,
+        expected_public_key: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         #[cfg(target_os = "windows")]
-        return windows::piv::sign_csr(id, expected_serial, pin, slot, subject_dn);
+        return windows::piv::sign_csr(
+            id,
+            expected_serial,
+            pin,
+            slot,
+            subject_dn,
+            expected_public_key,
+        );
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (id, expected_serial, pin, slot, subject_dn);
+            let _ = (
+                id,
+                expected_serial,
+                pin,
+                slot,
+                subject_dn,
+                expected_public_key,
+            );
             Err(CredentialError::UnsupportedOperation(
                 "native PIV CSR signing is not implemented on this platform".into(),
             ))
@@ -360,6 +375,7 @@ impl PivManagement for NativeDiscovery {
         management_key: &ManagementKey,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
     ) -> Result<()> {
         #[cfg(target_os = "windows")]
         return windows::piv::import_certificate(
@@ -368,10 +384,18 @@ impl PivManagement for NativeDiscovery {
             management_key,
             slot,
             certificate_der,
+            expected_public_key,
         );
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (id, expected_serial, management_key, slot, certificate_der);
+            let _ = (
+                id,
+                expected_serial,
+                management_key,
+                slot,
+                certificate_der,
+                expected_public_key,
+            );
             Err(CredentialError::UnsupportedOperation(
                 "native PIV mutations are not implemented on this platform".into(),
             ))

@@ -275,6 +275,7 @@ impl CredentialService {
         pin: &PivPin,
         slot: PivSlot,
         subject_dn: &str,
+        expected_public_key: Option<&[u8]>,
     ) -> Result<Vec<u8>> {
         self.piv_management
             .as_ref()
@@ -283,7 +284,14 @@ impl CredentialService {
                     "PIV mutation is unavailable through this credential service".into(),
                 )
             })?
-            .sign_csr(id, expected_serial, pin, slot, subject_dn)
+            .sign_csr(
+                id,
+                expected_serial,
+                pin,
+                slot,
+                subject_dn,
+                expected_public_key,
+            )
     }
 
     pub fn import_certificate(
@@ -293,6 +301,7 @@ impl CredentialService {
         management_key: &ManagementKey,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
     ) -> Result<()> {
         self.piv_management
             .as_ref()
@@ -301,7 +310,14 @@ impl CredentialService {
                     "PIV mutation is unavailable through this credential service".into(),
                 )
             })?
-            .import_certificate(id, expected_serial, management_key, slot, certificate_der)
+            .import_certificate(
+                id,
+                expected_serial,
+                management_key,
+                slot,
+                certificate_der,
+                expected_public_key,
+            )
     }
 
     pub fn delete_certificate(

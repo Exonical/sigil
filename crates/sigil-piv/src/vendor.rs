@@ -112,6 +112,12 @@ pub trait PivVendor: Send + Sync {
         Ok(())
     }
 
+    /// Whether an import writes a CHUID when the token has none. SP 800-73-4 expects one before certificates are
+    /// stored; tokens that only read CHUIDs leave this off.
+    fn ensure_chuid_on_import(&self) -> bool {
+        false
+    }
+
     /// Maps a vendor-specific status from a write to a domain error.
     fn map_error(&self, _device: &DeviceInfo, error: CredentialError) -> CredentialError {
         error

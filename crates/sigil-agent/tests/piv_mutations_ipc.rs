@@ -181,6 +181,7 @@ fn caller_supplied_piv_secrets_work_without_a_grant_provider() -> Result<()> {
                 &unblocked_pin,
                 PivSlot::SIGNATURE,
                 "CN=Mock signer",
+                None,
             )?
             .is_empty()
     );
@@ -197,6 +198,7 @@ fn caller_supplied_piv_secrets_work_without_a_grant_provider() -> Result<()> {
         &new_management_key,
         PivSlot::AUTHENTICATION,
         P256_CERT,
+        None,
     )?;
     client.delete_certificate(&id, serial, &new_management_key, PivSlot::AUTHENTICATION)?;
     client.delete_key(&id, serial, &new_management_key, PivSlot::SIGNATURE)?;

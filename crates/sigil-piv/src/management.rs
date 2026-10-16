@@ -713,6 +713,16 @@ pub fn put_certificate_selected<T: CardTransport + ?Sized>(
     transmit(transport, &command)
 }
 
+pub fn put_data_object_selected<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    tag: &[u8],
+    contents: &[u8],
+) -> Result<()> {
+    let mut data = tlv::encode(0x5c, tag)?;
+    data.extend_from_slice(&tlv::encode(0x53, contents)?);
+    transmit(transport, &command_apdu(0xdb, 0x3f, 0xff, &data)?)
+}
+
 pub fn delete_certificate_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
@@ -746,7 +756,7 @@ pub fn read_data_object_selected<T: CardTransport + ?Sized>(
                 })?;
             Ok(Some(value))
         }
-        0x6a82 | 0x6a88 => Ok(None),
+        0x6a80 | 0x6a82 | 0x6a88 => Ok(None),
         other => Err(CredentialError::CardStatus(other)),
     }
 }
