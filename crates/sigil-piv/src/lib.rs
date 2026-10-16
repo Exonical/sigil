@@ -12,9 +12,10 @@ use sigil_core::{
 };
 use x509_cert::Certificate;
 
-pub mod generic;
 pub mod management;
+pub mod ops;
 pub mod tlv;
+pub mod vendor;
 
 const MAX_RESPONSE_SIZE: usize = 16 * 1024;
 const PIV_AID_SELECT: &[u8] = &[0x00, 0xa4, 0x04, 0x00, 0x05, 0xa0, 0x00, 0x00, 0x03, 0x08];
@@ -37,7 +38,10 @@ pub trait CardTransport {
     fn transmit(&mut self, command: &[u8]) -> Result<Vec<u8>>;
 }
 
-pub fn transceive<T: CardTransport>(transport: &mut T, command: &[u8]) -> Result<(Vec<u8>, u16)> {
+pub fn transceive<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    command: &[u8],
+) -> Result<(Vec<u8>, u16)> {
     let mut response = transport.transmit(command)?;
     let mut collected = Vec::new();
     let mut exchanges = 0;
@@ -70,7 +74,7 @@ pub fn transceive<T: CardTransport>(transport: &mut T, command: &[u8]) -> Result
     }
 }
 
-pub fn select<T: CardTransport>(transport: &mut T) -> Result<()> {
+pub fn select<T: CardTransport + ?Sized>(transport: &mut T) -> Result<()> {
     let (_, sw) = transceive(transport, PIV_AID_SELECT)?;
     match sw {
         0x9000 => Ok(()),
@@ -98,7 +102,7 @@ pub fn data_object_tag(slot: PivSlot) -> [u8; 3] {
     }
 }
 
-pub fn read_certificate<T: CardTransport>(
+pub fn read_certificate<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
 ) -> Result<Option<Vec<u8>>> {
@@ -150,7 +154,7 @@ pub fn read_certificate<T: CardTransport>(
     Ok((!certificate.is_empty()).then_some(certificate))
 }
 
-pub fn pin_retries<T: CardTransport>(transport: &mut T) -> Result<Option<u8>> {
+pub fn pin_retries<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Option<u8>> {
     let (_, sw) = transceive(transport, &[0x00, 0x20, 0x00, 0x80])?;
     match sw {
         0x9000 => Ok(None),

@@ -63,7 +63,7 @@ fn command_apdu(ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>> {
     Ok(command)
 }
 
-fn transmit<T: CardTransport>(transport: &mut T, command: &[u8]) -> Result<()> {
+fn transmit<T: CardTransport + ?Sized>(transport: &mut T, command: &[u8]) -> Result<()> {
     let (_, status) = transceive(transport, command)?;
     if status == 0x9000 {
         Ok(())
@@ -72,7 +72,7 @@ fn transmit<T: CardTransport>(transport: &mut T, command: &[u8]) -> Result<()> {
     }
 }
 
-fn transmit_pin_command<T: CardTransport>(
+fn transmit_pin_command<T: CardTransport + ?Sized>(
     transport: &mut T,
     command: &[u8],
     puk: bool,
@@ -94,7 +94,7 @@ fn transmit_pin_command<T: CardTransport>(
 
 /// PIN complexity (firmware 5.7+) rejects a new PIN or PUK with SW 6985. Only change and
 /// unblock commands can produce it; verification keeps the generic card status.
-fn transmit_pin_change<T: CardTransport>(
+fn transmit_pin_change<T: CardTransport + ?Sized>(
     transport: &mut T,
     command: &[u8],
     puk: bool,
@@ -190,17 +190,20 @@ fn build_get_data_command(tag: &[u8]) -> Result<Vec<u8>> {
     Ok(command)
 }
 
-pub fn verify_pin<T: CardTransport>(transport: &mut T, pin: &PivPin) -> Result<()> {
+pub fn verify_pin<T: CardTransport + ?Sized>(transport: &mut T, pin: &PivPin) -> Result<()> {
     select(transport)?;
     verify_pin_selected(transport, pin)
 }
 
-pub fn verify_pin_selected<T: CardTransport>(transport: &mut T, pin: &PivPin) -> Result<()> {
+pub fn verify_pin_selected<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    pin: &PivPin,
+) -> Result<()> {
     let command = zeroize::Zeroizing::new(pin_verify_command(pin));
     transmit_pin_command(transport, command.as_slice(), false)
 }
 
-pub fn change_pin<T: CardTransport>(
+pub fn change_pin<T: CardTransport + ?Sized>(
     transport: &mut T,
     old_pin: &PivPin,
     new_pin: &PivPin,
@@ -209,7 +212,7 @@ pub fn change_pin<T: CardTransport>(
     change_pin_selected(transport, old_pin, new_pin)
 }
 
-pub fn change_pin_selected<T: CardTransport>(
+pub fn change_pin_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     old_pin: &PivPin,
     new_pin: &PivPin,
@@ -225,7 +228,7 @@ pub fn change_pin_selected<T: CardTransport>(
     )
 }
 
-pub fn change_puk<T: CardTransport>(
+pub fn change_puk<T: CardTransport + ?Sized>(
     transport: &mut T,
     old_puk: &PivPuk,
     new_puk: &PivPuk,
@@ -234,7 +237,7 @@ pub fn change_puk<T: CardTransport>(
     change_puk_selected(transport, old_puk, new_puk)
 }
 
-pub fn change_puk_selected<T: CardTransport>(
+pub fn change_puk_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     old_puk: &PivPuk,
     new_puk: &PivPuk,
@@ -250,7 +253,7 @@ pub fn change_puk_selected<T: CardTransport>(
     )
 }
 
-pub fn unblock_pin<T: CardTransport>(
+pub fn unblock_pin<T: CardTransport + ?Sized>(
     transport: &mut T,
     puk: &PivPuk,
     new_pin: &PivPin,
@@ -259,7 +262,7 @@ pub fn unblock_pin<T: CardTransport>(
     unblock_pin_selected(transport, puk, new_pin)
 }
 
-pub fn unblock_pin_selected<T: CardTransport>(
+pub fn unblock_pin_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     puk: &PivPuk,
     new_pin: &PivPin,
@@ -275,7 +278,7 @@ pub fn unblock_pin_selected<T: CardTransport>(
     )
 }
 
-pub fn authenticate_management_key<T: CardTransport>(
+pub fn authenticate_management_key<T: CardTransport + ?Sized>(
     transport: &mut T,
     management_key: &ManagementKey,
 ) -> Result<()> {
@@ -283,14 +286,14 @@ pub fn authenticate_management_key<T: CardTransport>(
     authenticate_management_key_selected(transport, management_key)
 }
 
-pub fn authenticate_management_key_selected<T: CardTransport>(
+pub fn authenticate_management_key_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     management_key: &ManagementKey,
 ) -> Result<()> {
     authenticate_management_key_with_challenge(transport, management_key, None)
 }
 
-fn authenticate_management_key_with_challenge<T: CardTransport>(
+fn authenticate_management_key_with_challenge<T: CardTransport + ?Sized>(
     transport: &mut T,
     management_key: &ManagementKey,
     fixed_challenge: Option<[u8; 16]>,
@@ -454,13 +457,30 @@ fn response_field(response: &[u8], wanted: u16) -> Result<Vec<u8>> {
         })
 }
 
-pub fn generate_key_pair<T: CardTransport>(
+pub fn generate_key_pair<T: CardTransport + ?Sized>(
     transport: &mut T,
     management_key: &ManagementKey,
     slot: PivSlot,
     algorithm: PivKeyAlgorithm,
     pin_policy: PinPolicy,
     touch_policy: TouchPolicy,
+) -> Result<Vec<u8>> {
+    generate_key_pair_with_policies(
+        transport,
+        management_key,
+        slot,
+        algorithm,
+        Some((pin_policy, touch_policy)),
+    )
+}
+
+/// None omits the PIN and touch policy objects, so the token applies its defaults.
+pub fn generate_key_pair_with_policies<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    management_key: &ManagementKey,
+    slot: PivSlot,
+    algorithm: PivKeyAlgorithm,
+    policies: Option<(PinPolicy, TouchPolicy)>,
 ) -> Result<Vec<u8>> {
     if slot == PivSlot::ATTESTATION {
         return Err(CredentialError::UnsupportedOperation(
@@ -469,7 +489,7 @@ pub fn generate_key_pair<T: CardTransport>(
     }
     select(transport)?;
     authenticate_management_key_selected(transport, management_key)?;
-    let command = generate_key_command(slot, algorithm, pin_policy, touch_policy)?;
+    let command = generate_key_command(slot, algorithm, policies)?;
     let (response, status) = transceive(transport, &command)?;
     if status != 0x9000 {
         return Err(CredentialError::CardStatus(status));
@@ -480,15 +500,16 @@ pub fn generate_key_pair<T: CardTransport>(
 fn generate_key_command(
     slot: PivSlot,
     algorithm: PivKeyAlgorithm,
-    pin_policy: PinPolicy,
-    touch_policy: TouchPolicy,
+    policies: Option<(PinPolicy, TouchPolicy)>,
 ) -> Result<Vec<u8>> {
     let mut data = tlv::encode(0x80, &[algorithm.yubikey_id()])?;
-    if let Some(policy) = pin_policy_value(pin_policy)? {
-        data.extend_from_slice(&tlv::encode(0xaa, &[policy])?);
-    }
-    if let Some(policy) = touch_policy_value(touch_policy) {
-        data.extend_from_slice(&tlv::encode(0xab, &[policy])?);
+    if let Some((pin_policy, touch_policy)) = policies {
+        if let Some(policy) = pin_policy_value(pin_policy)? {
+            data.extend_from_slice(&tlv::encode(0xaa, &[policy])?);
+        }
+        if let Some(policy) = touch_policy_value(touch_policy) {
+            data.extend_from_slice(&tlv::encode(0xab, &[policy])?);
+        }
     }
     command_apdu(0x47, 0x00, slot.byte(), &tlv::encode(0xac, &data)?)
 }
@@ -633,7 +654,7 @@ fn unsigned_integer_tlv(bytes: &[u8]) -> Result<Vec<u8>> {
     tlv::encode(0x02, &contents)
 }
 
-pub fn sign_digest<T: CardTransport>(
+pub fn sign_digest<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
     algorithm: PivKeyAlgorithm,
@@ -648,7 +669,7 @@ pub fn sign_digest<T: CardTransport>(
     sign_digest_selected(transport, slot, algorithm, digest)
 }
 
-pub fn sign_digest_selected<T: CardTransport>(
+pub fn sign_digest_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
     algorithm: PivKeyAlgorithm,
@@ -667,7 +688,7 @@ pub fn sign_digest_selected<T: CardTransport>(
     response_field(&response, 0x82)
 }
 
-pub fn put_certificate_selected<T: CardTransport>(
+pub fn put_certificate_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
     certificate_der: &[u8],
@@ -681,7 +702,7 @@ pub fn put_certificate_selected<T: CardTransport>(
     transmit(transport, &command)
 }
 
-pub fn delete_certificate_selected<T: CardTransport>(
+pub fn delete_certificate_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
 ) -> Result<()> {
@@ -694,7 +715,7 @@ pub fn delete_certificate_selected<T: CardTransport>(
     transmit(transport, &command)
 }
 
-pub fn read_data_object_selected<T: CardTransport>(
+pub fn read_data_object_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     tag: &[u8],
 ) -> Result<Option<Vec<u8>>> {
@@ -1135,10 +1156,21 @@ mod tests {
         let command = generate_key_command(
             slot,
             PivKeyAlgorithm::EccP256,
-            PinPolicy::Once,
-            TouchPolicy::Never,
+            Some((PinPolicy::Once, TouchPolicy::Never)),
         )
         .unwrap();
+        let omitted = generate_key_command(slot, PivKeyAlgorithm::EccP256, None).unwrap();
+        let defaults = generate_key_command(
+            slot,
+            PivKeyAlgorithm::EccP256,
+            Some((PinPolicy::Default, TouchPolicy::Default)),
+        )
+        .unwrap();
+        assert_eq!(omitted, defaults);
+        assert_eq!(
+            omitted,
+            vec![0x00, 0x47, 0x00, 0x9a, 0x05, 0xac, 0x03, 0x80, 0x01, 0x11]
+        );
         assert_eq!(
             command,
             vec![

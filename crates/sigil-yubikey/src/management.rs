@@ -221,7 +221,7 @@ fn pre_release_version(tags: &Tags) -> Option<FirmwareVersion> {
     })
 }
 
-pub fn read_info<T: CardTransport>(transport: &mut T) -> Result<ManagementInfo> {
+pub fn read_info<T: CardTransport + ?Sized>(transport: &mut T) -> Result<ManagementInfo> {
     let mut select = vec![0x00, 0xa4, 0x04, 0x00, MANAGEMENT_AID.len() as u8];
     select.extend_from_slice(&MANAGEMENT_AID);
     let (select_data, status) = transceive(transport, &select)?;
@@ -302,7 +302,7 @@ fn application_mask(applications: &[Application]) -> u16 {
 /// Write enabled USB/NFC capabilities and reboot using Yubico's management
 /// applet configuration encoding (`DeviceConfig.get_bytes` in yubikit).
 /// See https://github.com/Yubico/yubikey-manager/blob/main/yubikit/management.py.
-pub fn write_config<T: CardTransport>(
+pub fn write_config<T: CardTransport + ?Sized>(
     transport: &mut T,
     usb: &[Application],
     nfc: Option<&[Application]>,

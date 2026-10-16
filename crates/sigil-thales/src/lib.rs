@@ -5,7 +5,7 @@
 //! expose. USB iSerialNumber is not available over NFC, so the IC serial from CPLC is the device serial.
 
 use sigil_core::{CredentialError, Result};
-use sigil_piv::CardTransport;
+use sigil_piv::{CardTransport, vendor::PivVendor};
 
 /// Historical bytes that identify the IDPrime family in the ATR (80 31 80 65 B0). A substring match is enough for this
 /// family; the ATR of a non-Thales card does not contain this five-byte sequence.
@@ -46,7 +46,7 @@ pub fn serial(cplc: &Cplc) -> String {
 }
 
 /// Reads the CPLC object, then re-selects the PIV application so the caller's applet selection is unchanged.
-pub fn read_cplc<T: CardTransport>(transport: &mut T) -> Result<Cplc> {
+pub fn read_cplc<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Cplc> {
     let cplc = read_cplc_object(transport);
     let reselect = sigil_piv::select(transport);
     let cplc = cplc?;
@@ -54,7 +54,7 @@ pub fn read_cplc<T: CardTransport>(transport: &mut T) -> Result<Cplc> {
     Ok(cplc)
 }
 
-fn read_cplc_object<T: CardTransport>(transport: &mut T) -> Result<Cplc> {
+fn read_cplc_object<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Cplc> {
     let (_, sw) = sigil_piv::transceive(transport, &GP_CARD_MANAGER_SELECT)?;
     if sw != 0x9000 {
         return Err(CredentialError::CardStatus(sw));
@@ -92,19 +92,40 @@ pub fn parse_cplc(data: &[u8]) -> Result<Cplc> {
     })
 }
 
-/// Checks that the token's CPLC serial matches the expected serial. Runs inside the caller's transaction.
-pub fn verify_serial<T: CardTransport>(transport: &mut T, expected: &str) -> Result<()> {
+/// Checks that the token's CPLC serial matches the expected serial and returns it. Runs inside the caller's
+/// transaction.
+pub fn verify_serial<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    expected: &str,
+) -> Result<String> {
     let cplc = read_cplc(transport)?;
-    if serial(&cplc).eq_ignore_ascii_case(expected) {
-        Ok(())
+    let actual = serial(&cplc);
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(actual)
     } else {
         Err(CredentialError::DeviceMismatch)
+    }
+}
+
+/// The Thales IDPrime PIV applet. Its serial is vendor-specific; every other operation takes the SP 800-73 defaults,
+/// which are read-only or unsupported.
+pub struct ThalesPiv;
+
+impl PivVendor for ThalesPiv {
+    fn name(&self) -> &'static str {
+        "Thales"
+    }
+
+    fn verify_serial(&self, transport: &mut dyn CardTransport, expected: &str) -> Result<String> {
+        verify_serial(transport, expected)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+
+    use sigil_core::KeyStatus;
 
     use super::*;
 
@@ -194,11 +215,42 @@ mod tests {
             ])
         };
         let mut matching = ScriptedTransport(steps());
-        verify_serial(&mut matching, "540f9b50").unwrap();
+        assert_eq!(
+            verify_serial(&mut matching, "540f9b50").unwrap(),
+            "540F9B50"
+        );
         let mut other = ScriptedTransport(steps());
         assert_eq!(
             verify_serial(&mut other, "12345678"),
             Err(CredentialError::DeviceMismatch)
+        );
+    }
+
+    #[test]
+    fn thales_piv_reads_standard_slots_and_takes_the_default_capabilities() {
+        struct Answers;
+        impl CardTransport for Answers {
+            fn transmit(&mut self, command: &[u8]) -> Result<Vec<u8>> {
+                match command[1] {
+                    0xa4 => Ok(vec![0x90, 0x00]),
+                    0xcb => Ok(vec![0x6a, 0x80]),
+                    _ => Err(CredentialError::SmartCardOperation(
+                        "unexpected APDU".into(),
+                    )),
+                }
+            }
+        }
+        assert_eq!(ThalesPiv.name(), "Thales");
+        assert_eq!(
+            ThalesPiv.capabilities(),
+            sigil_piv::vendor::PivCapabilities::default()
+        );
+        let entries = sigil_piv::ops::read_slots(&mut Answers, &ThalesPiv).unwrap();
+        assert_eq!(entries.len(), 4);
+        assert!(
+            entries
+                .iter()
+                .all(|entry| entry.certificate.is_none() && entry.key == KeyStatus::Unknown)
         );
     }
 }

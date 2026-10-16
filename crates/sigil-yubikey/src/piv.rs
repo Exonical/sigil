@@ -16,12 +16,9 @@ use sigil_core::AttestationInspection;
 use sigil_core::{
     CredentialError, FirmwareVersion, KeyOrigin, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
     ManagementKeyStatus, PinPolicy, PivAlgorithm, PivAttestation, PivInfo, PivKeyMetadata, PivPin,
-    PivPuk, PivSlot, PivSlotInfo, Result, RetryStatus, TouchPolicy,
+    PivPuk, PivSlot, Result, RetryStatus, TouchPolicy,
 };
-use sigil_piv::{
-    CardTransport, management, pin_retries, read_certificate as read_certificate_data, select,
-    summarize_certificate, transceive,
-};
+use sigil_piv::{CardTransport, management, pin_retries, select, transceive};
 use x509_cert::{
     Certificate,
     der::{Decode, Encode},
@@ -126,7 +123,7 @@ fn decode_touch_policy(value: u8) -> Option<TouchPolicy> {
     }
 }
 
-pub fn metadata<T: CardTransport>(
+pub fn metadata<T: CardTransport + ?Sized>(
     transport: &mut T,
     key_ref: u8,
 ) -> Result<Option<YubiKeyMetadata>> {
@@ -139,7 +136,7 @@ pub fn metadata<T: CardTransport>(
     }
 }
 
-pub fn version<T: CardTransport>(transport: &mut T) -> Result<Option<FirmwareVersion>> {
+pub fn version<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Option<FirmwareVersion>> {
     let (data, sw) = transceive(transport, &[0x00, 0xfd, 0x00, 0x00])?;
     match sw {
         0x6d00 | 0x6e00 => Ok(None),
@@ -155,12 +152,12 @@ pub fn version<T: CardTransport>(transport: &mut T) -> Result<Option<FirmwareVer
     }
 }
 
-pub fn serial<T: CardTransport>(transport: &mut T) -> Result<Option<u32>> {
+pub fn serial<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Option<u32>> {
     select(transport)?;
     serial_selected(transport)
 }
 
-fn serial_selected<T: CardTransport>(transport: &mut T) -> Result<Option<u32>> {
+fn serial_selected<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Option<u32>> {
     let (data, sw) = transceive(transport, &[0x00, 0xf8, 0x00, 0x00])?;
     match sw {
         0x6d00 | 0x6e00 => Ok(None),
@@ -172,7 +169,10 @@ fn serial_selected<T: CardTransport>(transport: &mut T) -> Result<Option<u32>> {
     }
 }
 
-pub fn slot_key_status<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Result<KeyStatus> {
+pub fn slot_key_status<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    slot: PivSlot,
+) -> Result<KeyStatus> {
     let (data, sw) = transceive(transport, &[0x00, 0xf7, 0x00, slot.byte()])?;
     match sw {
         0x6a82 | 0x6a88 => Ok(KeyStatus::Absent),
@@ -190,7 +190,7 @@ pub fn slot_key_status<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Re
     }
 }
 
-pub fn retry_status<T: CardTransport>(
+pub fn retry_status<T: CardTransport + ?Sized>(
     transport: &mut T,
     key_ref: u8,
 ) -> Result<Option<RetryStatus>> {
@@ -204,7 +204,7 @@ pub fn retry_status<T: CardTransport>(
     }))
 }
 
-pub fn management_key_status<T: CardTransport>(
+pub fn management_key_status<T: CardTransport + ?Sized>(
     transport: &mut T,
 ) -> Result<Option<ManagementKeyStatus>> {
     let Some(value) = metadata(transport, 0x9b)? else {
@@ -217,7 +217,7 @@ pub fn management_key_status<T: CardTransport>(
     }))
 }
 
-pub fn read_info<T: CardTransport>(transport: &mut T) -> Result<PivInfo> {
+pub fn read_info<T: CardTransport + ?Sized>(transport: &mut T) -> Result<PivInfo> {
     select(transport)?;
     let version = version(transport)?;
     let pin = match retry_status(transport, 0x80)? {
@@ -238,67 +238,18 @@ pub fn read_info<T: CardTransport>(transport: &mut T) -> Result<PivInfo> {
     })
 }
 
-pub fn read_slots<T: CardTransport>(transport: &mut T) -> Result<Vec<PivSlotInfo>> {
-    select(transport)?;
-    let mut slots = PivSlot::STANDARD.to_vec();
-    slots.extend(PivSlot::retired_slots());
-    slots.push(PivSlot::ATTESTATION);
-    let mut entries = Vec::new();
-    for slot in slots {
-        let (certificate_present, certificate) = match read_certificate_data(transport, slot) {
-            Ok(Some(bytes)) => match summarize_certificate(&bytes) {
-                Ok(summary) => (true, Some(summary)),
-                Err(error @ CredentialError::CertificateParse(_)) => {
-                    tracing::warn!(slot = %slot, %error, "could not parse PIV slot certificate");
-                    (true, None)
-                }
-                Err(error) => return Err(error),
-            },
-            Ok(None) => (false, None),
-            Err(error @ CredentialError::CertificateParse(_)) => {
-                tracing::warn!(slot = %slot, %error, "could not parse PIV slot certificate");
-                (true, None)
-            }
-            Err(error) => return Err(error),
-        };
-        let key = slot_key_status(transport, slot)?;
-        let is_standard = PivSlot::STANDARD.contains(&slot);
-        if !is_standard && !certificate_present && !matches!(key, KeyStatus::Present(_)) {
-            continue;
-        }
-        entries.push(PivSlotInfo {
-            slot,
-            certificate,
-            key,
-        });
-    }
-    Ok(entries)
-}
-
-pub fn read_certificate<T: CardTransport>(
-    transport: &mut T,
-    slot: PivSlot,
-) -> Result<Option<sigil_core::PivCertificate>> {
-    select(transport)?;
-    let Some(der) = read_certificate_data(transport, slot)? else {
-        return Ok(None);
-    };
-    let summary = summarize_certificate(&der)?;
-    Ok(Some(sigil_core::PivCertificate { slot, summary, der }))
-}
-
-pub fn verify_serial<T: CardTransport>(transport: &mut T, expected: &str) -> Result<()> {
+pub fn verify_serial<T: CardTransport + ?Sized>(transport: &mut T, expected: &str) -> Result<()> {
     verify_expected_serial(transport, expected)
 }
 
-pub fn verify_expected_serial<T: CardTransport>(
+pub fn verify_expected_serial<T: CardTransport + ?Sized>(
     transport: &mut T,
     expected_serial: &str,
 ) -> Result<()> {
     read_expected_serial(transport, expected_serial).map(|_| ())
 }
 
-pub fn read_expected_serial<T: CardTransport>(
+pub fn read_expected_serial<T: CardTransport + ?Sized>(
     transport: &mut T,
     expected_serial: &str,
 ) -> Result<String> {
@@ -312,7 +263,7 @@ pub fn read_expected_serial<T: CardTransport>(
     Ok(actual)
 }
 
-pub fn set_management_key_selected<T: CardTransport>(
+pub fn set_management_key_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     new_key: &ManagementKey,
 ) -> Result<()> {
@@ -341,18 +292,7 @@ pub fn set_management_key_selected<T: CardTransport>(
     }
 }
 
-pub fn change_management_key<T: CardTransport>(
-    transport: &mut T,
-    current: &ManagementKey,
-    new_key: &ManagementKey,
-) -> Result<()> {
-    select(transport)?;
-    management::authenticate_management_key_selected(transport, current)?;
-    set_management_key_selected(transport, new_key)?;
-    management::authenticate_management_key_selected(transport, new_key)
-}
-
-pub fn attest_selected<T: CardTransport>(
+pub fn attest_selected<T: CardTransport + ?Sized>(
     transport: &mut T,
     slot: PivSlot,
 ) -> Result<PivAttestation> {
@@ -397,12 +337,18 @@ fn attestation_inspection(
     }
 }
 
-pub fn attest<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Result<PivAttestation> {
+pub fn attest<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    slot: PivSlot,
+) -> Result<PivAttestation> {
     select(transport)?;
     attest_selected(transport, slot)
 }
 
-pub fn delete_key_selected<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Result<()> {
+pub fn delete_key_selected<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    slot: PivSlot,
+) -> Result<()> {
     if slot == PivSlot::ATTESTATION {
         return Err(CredentialError::UnsupportedOperation(
             "slot F9 is reserved for the YubiKey attestation key".into(),
@@ -422,12 +368,12 @@ pub fn delete_key_selected<T: CardTransport>(transport: &mut T, slot: PivSlot) -
     }
 }
 
-pub fn reset_piv<T: CardTransport>(transport: &mut T) -> Result<()> {
+pub fn reset_piv<T: CardTransport + ?Sized>(transport: &mut T) -> Result<()> {
     select(transport)?;
     reset_piv_selected(transport)
 }
 
-pub fn reset_piv_selected<T: CardTransport>(transport: &mut T) -> Result<()> {
+pub fn reset_piv_selected<T: CardTransport + ?Sized>(transport: &mut T) -> Result<()> {
     block_pin(transport)?;
     block_puk(transport)?;
     let (_, status) = transceive(transport, &[0x00, 0xfb, 0x00, 0x00])?;
@@ -438,7 +384,7 @@ pub fn reset_piv_selected<T: CardTransport>(transport: &mut T) -> Result<()> {
     }
 }
 
-fn block_pin<T: CardTransport>(transport: &mut T) -> Result<()> {
+fn block_pin<T: CardTransport + ?Sized>(transport: &mut T) -> Result<()> {
     let mut remaining = retry_status(transport, 0x80)?
         .ok_or_else(|| CredentialError::SmartCardOperation("PIN retries are unavailable".into()))?
         .remaining;
@@ -486,7 +432,7 @@ fn block_pin<T: CardTransport>(transport: &mut T) -> Result<()> {
     ))
 }
 
-fn block_puk<T: CardTransport>(transport: &mut T) -> Result<()> {
+fn block_puk<T: CardTransport + ?Sized>(transport: &mut T) -> Result<()> {
     let mut remaining = retry_status(transport, 0x81)?
         .ok_or_else(|| CredentialError::SmartCardOperation("PUK retries are unavailable".into()))?
         .remaining;
@@ -555,7 +501,10 @@ fn random_code() -> Result<Vec<u8>> {
     Ok(result)
 }
 
-pub fn slot_public_key_spki<T: CardTransport>(transport: &mut T, slot: PivSlot) -> Result<Vec<u8>> {
+pub fn slot_public_key_spki<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    slot: PivSlot,
+) -> Result<Vec<u8>> {
     let (data, status) = transceive(transport, &[0x00, 0xf7, 0x00, slot.byte()])?;
     if status == 0x6a82 || status == 0x6a88 {
         return Err(CredentialError::DeviceMismatch);
@@ -580,20 +529,6 @@ pub fn slot_public_key_spki<T: CardTransport>(transport: &mut T, slot: PivSlot) 
         .map(|(_, value)| value.as_slice())
         .ok_or(CredentialError::DeviceMismatch)?;
     management::public_key_spki_from_metadata(algorithm, public)
-}
-
-pub fn verify_certificate_matches_key(certificate_der: &[u8], expected_spki: &[u8]) -> Result<()> {
-    let certificate = Certificate::from_der(certificate_der)
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    let spki = certificate
-        .tbs_certificate()
-        .subject_public_key_info()
-        .to_der()
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    if spki != expected_spki {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    Ok(())
 }
 
 /// Verifies an attestation against the Yubico roots embedded in this build.
@@ -987,7 +922,8 @@ mod tests {
             steps.push((vec![0x00, 0xf7, 0x00, slot.byte()], vec![0x6d, 0x00]));
         }
         let mut transport = ScriptedTransport::new(steps);
-        let entries = read_slots(&mut transport).unwrap();
+        let entries =
+            sigil_piv::ops::read_slots(&mut transport, &crate::vendor::YubiKeyPiv).unwrap();
         assert_eq!(entries.len(), 5);
         assert!(
             entries
@@ -1198,9 +1134,9 @@ mod tests {
         )]);
         let actual = slot_public_key_spki(&mut transport, PivSlot::AUTHENTICATION).unwrap();
         assert_eq!(actual, expected);
-        verify_certificate_matches_key(P256_CERT, &actual).unwrap();
+        sigil_piv::ops::verify_certificate_matches_key(P256_CERT, &actual).unwrap();
         assert_eq!(
-            verify_certificate_matches_key(RSA_CERT, &actual),
+            sigil_piv::ops::verify_certificate_matches_key(RSA_CERT, &actual),
             Err(CredentialError::DeviceMismatch)
         );
     }

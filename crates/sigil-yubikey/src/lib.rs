@@ -6,6 +6,7 @@ pub mod attestation;
 pub mod management;
 pub mod piv;
 pub mod product;
+pub mod vendor;
 
 pub struct YubiKeyDevice {
     info: DeviceInfo,

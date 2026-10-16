@@ -47,6 +47,7 @@ Validate it without installing it using `dotnet wix msi validate target\installe
 ## Conventions
 
 - Keep `sigil-core` vendor-neutral and expose typed domain APIs through `sigil-app`.
+- PIV logic is written once against SP 800-73 in `sigil-piv` (`ops`); vendor crates implement `PivVendor` only for what the standard doesn't define (identity/serial, key metadata, management-key change, attestation, key delete, reset, factory defaults, vendor policy rules). Platform code supplies the transport and selects the vendor; it contains no PIV logic.
 - Do not expose raw APDU transport beyond provider crates. Never add an arbitrary APDU endpoint to the app, CLI, GUI, or a remote protocol.
 - Never pass PINs or PUKs as CLI arguments. Prompt securely when authorization is introduced, and never persist or log secrets.
 - Keep PIV inspection read-only. Tests that change a physical token require `SIGIL_HARDWARE_TESTS=1` and `SIGIL_HARDWARE_MUTATION_SERIAL=<serial>`, must restore factory defaults with a PIV reset, and must never use touch-required policies.

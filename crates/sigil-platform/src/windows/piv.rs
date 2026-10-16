@@ -1,15 +1,17 @@
+//! Platform glue for PIV: finds the token, opens one shared transaction, selects the vendor, verifies the serial, and
+//! hands the card to a `sigil_piv::ops` operation. PIV logic lives in `sigil-piv`; vendors live in their crates.
+
 use std::ffi::CString;
 
 use pcsc::{Card, Error as PcscError, Transaction};
-use sha2::{Digest, Sha256, Sha384};
 use sigil_core::{
     Application, CredentialError, DeviceId, DeviceInfo, ManagedPivInitializationOutcome,
-    ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivAlgorithm, PivAttestation, PivCertificate,
-    PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo, Result,
-    Secret,
+    ManagementKey, PivAttestation, PivCertificate, PivInfo, PivKeyConfiguration, PivPin, PivPuk,
+    PivSlot, PivSlotInfo, Result, Secret,
 };
-use sigil_piv::CardTransport;
-use sigil_yubikey::{management as yubikey_management, piv as yubikey_piv};
+use sigil_piv::{CardTransport, ops, vendor::PivVendor};
+use sigil_thales::ThalesPiv;
+use sigil_yubikey::{management as yubikey_management, vendor::YubiKeyPiv};
 
 use super::{connect_shared, establish, list};
 
@@ -20,43 +22,6 @@ pub(super) struct PcscTransport<'tx, 'card> {
 impl<'tx, 'card> PcscTransport<'tx, 'card> {
     pub(super) fn new(transaction: &'tx Transaction<'card>) -> Self {
         Self { transaction }
-    }
-}
-
-const THALES_UNSUPPORTED: &str = "not yet supported on Thales tokens";
-
-/// The PIV dialect of a discovered token. Yubico tokens use the YubiKey PIV and management extensions. Thales tokens
-/// are read with the vendor-neutral sigil-piv functions and are not written to yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PivFamily {
-    Yubico,
-    Thales,
-}
-
-impl PivFamily {
-    fn of(device: &DeviceInfo) -> Self {
-        if device.vendor == "Thales" {
-            Self::Thales
-        } else {
-            Self::Yubico
-        }
-    }
-}
-
-fn find_device(id: &DeviceId) -> Result<DeviceInfo> {
-    list()?
-        .into_iter()
-        .find(|device| device.id == *id)
-        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))
-}
-
-/// Refuses an operation that only the YubiKey path implements. Called before any APDU is sent.
-fn yubikey_only(device: &DeviceInfo) -> Result<()> {
-    match PivFamily::of(device) {
-        PivFamily::Yubico => Ok(()),
-        PivFamily::Thales => Err(CredentialError::UnsupportedOperation(
-            THALES_UNSUPPORTED.into(),
-        )),
     }
 }
 
@@ -102,12 +67,46 @@ pub(super) fn parse_device_id(id: &DeviceId) -> Result<(String, Option<String>)>
     ))
 }
 
-fn with_transport<T>(
+fn find_device(id: &DeviceId) -> Result<DeviceInfo> {
+    list()?
+        .into_iter()
+        .find(|device| device.id == *id)
+        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))
+}
+
+/// The vendor implementation for a discovered token. Tokens from other vendors are refused before any APDU.
+fn vendor_for(device: &DeviceInfo) -> Result<&'static dyn PivVendor> {
+    match device.vendor.as_str() {
+        "Yubico" => Ok(&YubiKeyPiv),
+        "Thales" => Ok(&ThalesPiv),
+        other => Err(CredentialError::UnsupportedOperation(format!(
+            "PIV is not supported on {other} tokens"
+        ))),
+    }
+}
+
+/// Runs `operation` in one shared card transaction. The serial the caller requires is verified first; when none is
+/// given, the serial embedded in the device identifier is checked. The verified serial is passed to `operation`, or
+/// is empty when nothing was checked.
+fn session<T>(
     id: &DeviceId,
-    operation: impl FnOnce(&mut PcscTransport<'_, '_>, PivFamily) -> Result<T>,
+    expected_serial: Option<&str>,
+    operation: impl FnOnce(&mut dyn CardTransport, &dyn PivVendor, &DeviceInfo, &str) -> Result<T>,
 ) -> Result<T> {
-    let (reader_name, expected_serial) = parse_device_id(id)?;
-    let family = PivFamily::of(&find_device(id)?);
+    let (reader_name, serial_in_id) = parse_device_id(id)?;
+    if let Some(expected) = expected_serial
+        && (expected.is_empty()
+            || serial_in_id
+                .as_deref()
+                .is_some_and(|serial| serial != expected))
+    {
+        return Err(CredentialError::DeviceMismatch);
+    }
+    let device = find_device(id).map_err(|error| match expected_serial {
+        Some(_) => CredentialError::DeviceMismatch,
+        None => error,
+    })?;
+    let vendor = vendor_for(&device)?;
     let context =
         establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
     let reader = CString::new(reader_name).map_err(|_| {
@@ -116,87 +115,15 @@ fn with_transport<T>(
     let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
     let transaction = card.transaction().map_err(map_pcsc_error)?;
     let mut transport = PcscTransport::new(&transaction);
-    if let Some(serial) = expected_serial {
-        match family {
-            PivFamily::Yubico => yubikey_piv::verify_serial(&mut transport, &serial)?,
-            PivFamily::Thales => sigil_thales::verify_serial(&mut transport, &serial)?,
-        }
-    }
-    operation(&mut transport, family)
-}
-
-fn with_transport_expected<T>(
-    id: &DeviceId,
-    expected_serial: &str,
-    operation: impl FnOnce(&mut PcscTransport<'_, '_>) -> Result<T>,
-) -> Result<T> {
-    with_transport_and_serial(id, expected_serial, |transport, _| operation(transport))
-}
-
-fn with_transport_and_serial<T>(
-    id: &DeviceId,
-    expected_serial: &str,
-    operation: impl FnOnce(&mut PcscTransport<'_, '_>, &str) -> Result<T>,
-) -> Result<T> {
-    let (reader_name, serial_in_id) = parse_device_id(id)?;
-    if expected_serial.is_empty()
-        || serial_in_id
-            .as_deref()
-            .is_some_and(|serial| serial != expected_serial)
-    {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    let device = find_device(id).map_err(|_| CredentialError::DeviceMismatch)?;
-    yubikey_only(&device)?;
-    let context =
-        establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
-    let reader = CString::new(reader_name).map_err(|_| {
-        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
-    })?;
-    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
-    let transaction = card.transaction().map_err(map_pcsc_error)?;
-    let mut transport = PcscTransport::new(&transaction);
-    let verified_serial = yubikey_piv::read_expected_serial(&mut transport, expected_serial)?;
-    operation(&mut transport, &verified_serial)
-}
-
-fn with_management_info<T>(
-    id: &DeviceId,
-    expected_serial: &str,
-    operation: impl FnOnce(
-        &mut PcscTransport<'_, '_>,
-        &sigil_yubikey::management::ManagementInfo,
-    ) -> Result<T>,
-) -> Result<T> {
-    let (reader_name, serial_in_id) = parse_device_id(id)?;
-    if expected_serial.is_empty()
-        || serial_in_id
-            .as_deref()
-            .is_some_and(|serial| serial != expected_serial)
-    {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    let context =
-        establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
-    let reader = CString::new(reader_name).map_err(|_| {
-        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
-    })?;
-    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
-    let transaction = card.transaction().map_err(map_pcsc_error)?;
-    let mut transport = PcscTransport {
-        transaction: &transaction,
+    let verify_against = expected_serial.map(str::to_owned).or(serial_in_id);
+    let verified = match verify_against {
+        Some(serial) => vendor.verify_serial(&mut transport, &serial)?,
+        None => String::new(),
     };
-    let info = yubikey_management::read_info(&mut transport)?;
-    let serial = info
-        .serial
-        .as_deref()
-        .ok_or(CredentialError::DeviceMismatch)?;
-    if serial != expected_serial {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    operation(&mut transport, &info)
+    operation(&mut transport, vendor, &device, &verified)
 }
 
+/// Application settings live in the YubiKey management applet, not in PIV, so only YubiKeys support them.
 pub(crate) fn set_enabled_applications(
     id: &DeviceId,
     expected_serial: &str,
@@ -204,75 +131,59 @@ pub(crate) fn set_enabled_applications(
     nfc: Option<&[Application]>,
     lock_code: Option<&Secret>,
 ) -> Result<()> {
-    yubikey_only(&find_device(id)?)?;
-    with_management_info(id, expected_serial, |transport, _| {
-        // Do not query the card after a successful rebooting write; discovery events refresh it.
-        yubikey_management::write_config(transport, usb, nfc, lock_code)
-    })
+    let device = find_device(id)?;
+    if device.vendor != "Yubico" {
+        return Err(CredentialError::UnsupportedOperation(format!(
+            "application settings are not supported on {} tokens",
+            device.vendor
+        )));
+    }
+    let (reader_name, serial_in_id) = parse_device_id(id)?;
+    if expected_serial.is_empty()
+        || serial_in_id
+            .as_deref()
+            .is_some_and(|serial| serial != expected_serial)
+    {
+        return Err(CredentialError::DeviceMismatch);
+    }
+    let context =
+        establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
+    let reader = CString::new(reader_name).map_err(|_| {
+        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
+    })?;
+    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
+    let transaction = card.transaction().map_err(map_pcsc_error)?;
+    let mut transport = PcscTransport::new(&transaction);
+    let info = yubikey_management::read_info(&mut transport)?;
+    if info.serial.as_deref() != Some(expected_serial) {
+        return Err(CredentialError::DeviceMismatch);
+    }
+    // Do not query the card after a successful rebooting write; discovery events refresh it.
+    yubikey_management::write_config(&mut transport, usb, nfc, lock_code)
 }
 
 pub(crate) fn piv_serial(id: &DeviceId, expected_serial: &str) -> Result<String> {
-    if PivFamily::of(&find_device(id)?) == PivFamily::Thales {
-        // The serial was read from CPLC during discovery. This confirms it through the card, without other reads.
-        let (_, serial) = parse_device_id(id)?;
-        if expected_serial.is_empty() || serial.as_deref() != Some(expected_serial) {
-            return Err(CredentialError::DeviceMismatch);
-        }
-        return with_transport(id, |_, _| Ok(expected_serial.to_owned()));
-    }
-    with_transport_and_serial(id, expected_serial, |_, serial| Ok(serial.to_owned()))
+    session(id, Some(expected_serial), |_, _, _, verified| {
+        Ok(verified.to_owned())
+    })
 }
 
 pub(crate) fn piv_info(id: &DeviceId) -> Result<PivInfo> {
-    with_transport(id, |transport, family| match family {
-        PivFamily::Yubico => yubikey_piv::read_info(transport),
-        PivFamily::Thales => sigil_piv::generic::read_info(transport),
+    session(id, None, |transport, vendor, _, _| {
+        ops::read_info(transport, vendor)
     })
 }
 
 pub(crate) fn piv_slots(id: &DeviceId) -> Result<Vec<PivSlotInfo>> {
-    with_transport(id, |transport, family| match family {
-        PivFamily::Yubico => yubikey_piv::read_slots(transport),
-        PivFamily::Thales => sigil_piv::generic::read_slots(transport),
+    session(id, None, |transport, vendor, _, _| {
+        ops::read_slots(transport, vendor)
     })
 }
 
 pub(crate) fn piv_certificate(id: &DeviceId, slot: PivSlot) -> Result<Option<PivCertificate>> {
-    with_transport(id, |transport, family| match family {
-        PivFamily::Yubico => yubikey_piv::read_certificate(transport, slot),
-        PivFamily::Thales => sigil_piv::generic::read_certificate(transport, slot),
+    session(id, None, |transport, _, _, _| {
+        ops::read_certificate(transport, slot)
     })
-}
-
-fn device_is_fips(id: &DeviceId) -> Result<bool> {
-    list()?
-        .into_iter()
-        .find(|device| device.id == *id)
-        .map(|device| device.fips.unwrap_or(false))
-        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))
-}
-
-fn validate_fips_code(fips: bool, bytes: &[u8]) -> Result<()> {
-    if fips && bytes.len() < 8 {
-        return Err(CredentialError::PivFipsNotApproved);
-    }
-    Ok(())
-}
-
-fn validate_fips_pin_policy(fips: bool, pin_policy: PinPolicy) -> Result<()> {
-    if fips && pin_policy == PinPolicy::Never {
-        return Err(CredentialError::PivFipsNotApproved);
-    }
-    Ok(())
-}
-
-fn map_fips_status<T>(fips: bool, result: Result<T>) -> Result<T> {
-    match result {
-        Err(CredentialError::CardStatus(0x6985)) if fips => {
-            Err(CredentialError::PivFipsNotApproved)
-        }
-        other => other,
-    }
 }
 
 pub(crate) fn change_pin(
@@ -281,9 +192,8 @@ pub(crate) fn change_pin(
     old_pin: &PivPin,
     new_pin: &PivPin,
 ) -> Result<()> {
-    validate_fips_code(device_is_fips(id)?, new_pin.as_bytes())?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::management::change_pin(transport, old_pin, new_pin)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::change_pin(transport, vendor, device, old_pin, new_pin)
     })
 }
 
@@ -293,9 +203,8 @@ pub(crate) fn change_puk(
     old_puk: &PivPuk,
     new_puk: &PivPuk,
 ) -> Result<()> {
-    validate_fips_code(device_is_fips(id)?, new_puk.as_bytes())?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::management::change_puk(transport, old_puk, new_puk)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::change_puk(transport, vendor, device, old_puk, new_puk)
     })
 }
 
@@ -305,11 +214,8 @@ pub(crate) fn unblock_pin(
     puk: &PivPuk,
     new_pin: &PivPin,
 ) -> Result<()> {
-    let fips = device_is_fips(id)?;
-    validate_fips_code(fips, puk.as_bytes())?;
-    validate_fips_code(fips, new_pin.as_bytes())?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::management::unblock_pin(transport, puk, new_pin)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::unblock_pin(transport, vendor, device, puk, new_pin)
     })
 }
 
@@ -319,8 +225,8 @@ pub(crate) fn change_management_key(
     current: &ManagementKey,
     new_key: &ManagementKey,
 ) -> Result<()> {
-    with_transport_expected(id, expected_serial, |transport| {
-        yubikey_piv::change_management_key(transport, current, new_key)
+    session(id, Some(expected_serial), |transport, vendor, _, _| {
+        ops::change_management_key(transport, vendor, current, new_key)
     })
 }
 
@@ -330,74 +236,9 @@ pub(crate) fn managed_initialize(
     new_management_key: &ManagementKey,
     new_puk: &PivPuk,
 ) -> Result<ManagedPivInitializationOutcome> {
-    if new_management_key.algorithm() != ManagementKeyAlgorithm::Aes256 {
-        return Err(CredentialError::UnsupportedOperation(
-            "managed initialization requires a new AES-256 management key".into(),
-        ));
-    }
-    validate_fips_code(device_is_fips(id)?, new_puk.as_bytes())?;
-    with_transport_and_serial(id, expected_serial, |transport, _| {
-        let info =
-            yubikey_piv::read_info(transport).map_err(|_| CredentialError::PivNotFactoryDefault)?;
-        if !info
-            .puk
-            .as_ref()
-            .is_some_and(|status| status.default_value == Some(true))
-            || !info
-                .management_key
-                .as_ref()
-                .is_some_and(|status| status.default_value == Some(true))
-        {
-            return Err(CredentialError::PivNotFactoryDefault);
-        }
-        let management_status = info
-            .management_key
-            .as_ref()
-            .ok_or(CredentialError::PivNotFactoryDefault)?;
-        let factory_management_key = factory_default_management_key(management_status.algorithm)?;
-        let factory_puk = PivPuk::new(b"12345678".to_vec())?;
-
-        yubikey_piv::change_management_key(transport, &factory_management_key, new_management_key)?;
-        if let Err(puk_error) = sigil_piv::management::change_puk(transport, &factory_puk, new_puk)
-        {
-            if !matches!(
-                puk_error,
-                CredentialError::PukIncorrect { .. }
-                    | CredentialError::CardStatus(_)
-                    | CredentialError::PivFipsNotApproved
-                    | CredentialError::PukComplexity
-            ) {
-                return Err(puk_error);
-            }
-            return if yubikey_piv::change_management_key(
-                transport,
-                new_management_key,
-                &factory_management_key,
-            )
-            .is_ok()
-            {
-                Ok(ManagedPivInitializationOutcome::NotApplied)
-            } else {
-                Ok(ManagedPivInitializationOutcome::Partial)
-            };
-        }
-        Ok(ManagedPivInitializationOutcome::Applied)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::managed_initialize(transport, vendor, device, new_management_key, new_puk)
     })
-}
-
-fn factory_default_management_key(algorithm: PivAlgorithm) -> Result<ManagementKey> {
-    let (algorithm, copies) = match algorithm {
-        PivAlgorithm::Aes128 => (ManagementKeyAlgorithm::Aes128, 2),
-        PivAlgorithm::Aes192 => (ManagementKeyAlgorithm::Aes192, 3),
-        PivAlgorithm::Aes256 => (ManagementKeyAlgorithm::Aes256, 4),
-        _ => return Err(CredentialError::PivNotFactoryDefault),
-    };
-    let key = [1, 2, 3, 4, 5, 6, 7, 8]
-        .into_iter()
-        .cycle()
-        .take(copies * 8)
-        .collect();
-    ManagementKey::new(algorithm, key)
 }
 
 pub(crate) fn generate_key(
@@ -406,18 +247,8 @@ pub(crate) fn generate_key(
     management_key: &ManagementKey,
     configuration: PivKeyConfiguration,
 ) -> Result<Vec<u8>> {
-    let fips = device_is_fips(id)?;
-    validate_fips_pin_policy(fips, configuration.pin_policy)?;
-    with_transport_expected(id, expected_serial, |transport| {
-        let result = sigil_piv::management::generate_key_pair(
-            transport,
-            management_key,
-            configuration.slot,
-            configuration.algorithm,
-            configuration.pin_policy,
-            configuration.touch_policy,
-        );
-        map_fips_status(fips, result)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::generate_key(transport, vendor, device, management_key, configuration)
     })
 }
 
@@ -426,8 +257,8 @@ pub(crate) fn attest(
     expected_serial: &str,
     slot: PivSlot,
 ) -> Result<PivAttestation> {
-    with_transport_expected(id, expected_serial, |transport| {
-        yubikey_piv::attest(transport, slot)
+    session(id, Some(expected_serial), |transport, vendor, _, _| {
+        ops::attest(transport, vendor, slot)
     })
 }
 
@@ -438,26 +269,8 @@ pub(crate) fn sign_csr(
     slot: PivSlot,
     subject_dn: &str,
 ) -> Result<Vec<u8>> {
-    if slot == PivSlot::ATTESTATION {
-        return Err(CredentialError::UnsupportedOperation(
-            "slot F9 cannot sign arbitrary CSR data".into(),
-        ));
-    }
-    validate_fips_code(device_is_fips(id)?, pin.as_bytes())?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::select(transport)?;
-        sigil_piv::management::verify_pin_selected(transport, pin)?;
-        let spki = yubikey_piv::slot_public_key_spki(transport, slot)?;
-        let (info_der, algorithm) = sigil_piv::management::build_csr_info(subject_dn, &spki)?;
-        let digest = match algorithm {
-            PivKeyAlgorithm::EccP256 => Sha256::digest(&info_der).to_vec(),
-            PivKeyAlgorithm::EccP384 => Sha384::digest(&info_der).to_vec(),
-        };
-        let signature =
-            sigil_piv::management::sign_digest_selected(transport, slot, algorithm, &digest)?;
-        let csr = sigil_piv::management::assemble_csr(&info_der, &signature, algorithm)?;
-        sigil_piv::management::verify_csr(&csr)?;
-        Ok(csr)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::sign_csr(transport, vendor, device, pin, slot, subject_dn)
     })
 }
 
@@ -468,16 +281,15 @@ pub(crate) fn import_certificate(
     slot: PivSlot,
     certificate_der: &[u8],
 ) -> Result<()> {
-    reject_attestation_slot(slot)?;
-    let fips = device_is_fips(id)?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::select(transport)?;
-        sigil_piv::management::authenticate_management_key_selected(transport, management_key)?;
-        let slot_spki = yubikey_piv::slot_public_key_spki(transport, slot)?;
-        yubikey_piv::verify_certificate_matches_key(certificate_der, &slot_spki)?;
-        let result =
-            sigil_piv::management::put_certificate_selected(transport, slot, certificate_der);
-        map_fips_status(fips, result)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::import_certificate(
+            transport,
+            vendor,
+            device,
+            management_key,
+            slot,
+            certificate_der,
+        )
     })
 }
 
@@ -487,13 +299,8 @@ pub(crate) fn delete_certificate(
     management_key: &ManagementKey,
     slot: PivSlot,
 ) -> Result<()> {
-    reject_attestation_slot(slot)?;
-    let fips = device_is_fips(id)?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::select(transport)?;
-        sigil_piv::management::authenticate_management_key_selected(transport, management_key)?;
-        let result = sigil_piv::management::delete_certificate_selected(transport, slot);
-        map_fips_status(fips, result)
+    session(id, Some(expected_serial), |transport, vendor, device, _| {
+        ops::delete_certificate(transport, vendor, device, management_key, slot)
     })
 }
 
@@ -503,62 +310,15 @@ pub(crate) fn delete_key(
     management_key: &ManagementKey,
     slot: PivSlot,
 ) -> Result<()> {
-    reject_attestation_slot(slot)?;
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::select(transport)?;
-        sigil_piv::management::authenticate_management_key_selected(transport, management_key)?;
-        yubikey_piv::delete_key_selected(transport, slot)
+    session(id, Some(expected_serial), |transport, vendor, _, _| {
+        ops::delete_key(transport, vendor, management_key, slot)
     })
 }
 
 pub(crate) fn reset(id: &DeviceId, expected_serial: &str) -> Result<()> {
-    with_transport_expected(id, expected_serial, |transport| {
-        sigil_piv::select(transport)?;
-        yubikey_piv::reset_piv_selected(transport)
+    session(id, Some(expected_serial), |transport, vendor, _, _| {
+        ops::reset(transport, vendor)
     })
-}
-
-fn reject_attestation_slot(slot: PivSlot) -> Result<()> {
-    if slot == PivSlot::ATTESTATION {
-        Err(CredentialError::UnsupportedOperation(
-            "slot F9 is reserved for the YubiKey attestation key".into(),
-        ))
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod fips_tests {
-    use super::*;
-
-    #[test]
-    fn fips_requires_eight_character_codes_and_a_pin_policy() {
-        assert_eq!(
-            validate_fips_code(true, b"1234567"),
-            Err(CredentialError::PivFipsNotApproved)
-        );
-        assert_eq!(validate_fips_code(true, b"12345678"), Ok(()));
-        assert_eq!(validate_fips_code(false, b"123456"), Ok(()));
-        assert_eq!(
-            validate_fips_pin_policy(true, PinPolicy::Never),
-            Err(CredentialError::PivFipsNotApproved)
-        );
-        assert_eq!(validate_fips_pin_policy(true, PinPolicy::Once), Ok(()));
-        assert_eq!(validate_fips_pin_policy(false, PinPolicy::Never), Ok(()));
-    }
-
-    #[test]
-    fn fips_maps_conditions_of_use_to_initialization_error_only_for_fips_devices() {
-        assert_eq!(
-            map_fips_status::<()>(true, Err(CredentialError::CardStatus(0x6985))),
-            Err(CredentialError::PivFipsNotApproved)
-        );
-        assert_eq!(
-            map_fips_status::<()>(false, Err(CredentialError::CardStatus(0x6985))),
-            Err(CredentialError::CardStatus(0x6985))
-        );
-    }
 }
 
 #[cfg(test)]
@@ -579,5 +339,44 @@ mod tests {
             parse_device_id(&DeviceId("windows-hid:device".into())),
             Err(CredentialError::UnsupportedOperation(_))
         ));
+    }
+
+    #[test]
+    fn only_known_vendors_resolve_to_a_piv_implementation() {
+        let device = |vendor: &str| DeviceInfo {
+            vendor: vendor.into(),
+            ..test_device()
+        };
+        assert_eq!(vendor_for(&device("Yubico")).unwrap().name(), "Yubico");
+        assert_eq!(vendor_for(&device("Thales")).unwrap().name(), "Thales");
+        assert!(matches!(
+            vendor_for(&device("Acme")),
+            Err(CredentialError::UnsupportedOperation(_))
+        ));
+    }
+
+    fn test_device() -> DeviceInfo {
+        DeviceInfo {
+            id: DeviceId("windows-pcsc:Reader:1".into()),
+            vendor: "Yubico".into(),
+            model: "Test".into(),
+            serial: Some("1".into()),
+            firmware: None,
+            form_factor: None,
+            fips: None,
+            usb_enabled: Vec::new(),
+            usb_supported: Vec::new(),
+            nfc_enabled: Vec::new(),
+            nfc_supported: Vec::new(),
+            config_locked: None,
+            fips_approved: None,
+            pin_complexity: None,
+            connection: None,
+            transports: Vec::new(),
+            applications: Vec::new(),
+            supported_applications: Vec::new(),
+            simulated: false,
+            metadata_access: sigil_core::MetadataAccess::Unknown,
+        }
     }
 }
