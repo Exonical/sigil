@@ -913,8 +913,10 @@ type CertificateProfile struct {
 	TouchPolicy string                 `protobuf:"bytes,6,opt,name=touch_policy,json=touchPolicy,proto3" json:"touch_policy,omitempty"`
 	// Set when a token was named: the subject the CA will issue for that token. CSRs must carry this CN.
 	ExpectedSubject string `protobuf:"bytes,7,opt,name=expected_subject,json=expectedSubject,proto3" json:"expected_subject,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Set when a token was named and the profile carries the user email as a SAN: the email addresses the CSR must carry.
+	ExpectedEmailAddresses []string `protobuf:"bytes,8,rep,name=expected_email_addresses,json=expectedEmailAddresses,proto3" json:"expected_email_addresses,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *CertificateProfile) Reset() {
@@ -996,6 +998,13 @@ func (x *CertificateProfile) GetExpectedSubject() string {
 	return ""
 }
 
+func (x *CertificateProfile) GetExpectedEmailAddresses() []string {
+	if x != nil {
+		return x.ExpectedEmailAddresses
+	}
+	return nil
+}
+
 type ListProfilesResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Profiles      []*CertificateProfile  `protobuf:"bytes,1,rep,name=profiles,proto3" json:"profiles,omitempty"`
@@ -1050,8 +1059,10 @@ type IssueCertificateRequest struct {
 	CsrDer                     []byte                 `protobuf:"bytes,6,opt,name=csr_der,json=csrDer,proto3" json:"csr_der,omitempty"`
 	AttestationDer             []byte                 `protobuf:"bytes,7,opt,name=attestation_der,json=attestationDer,proto3" json:"attestation_der,omitempty"`
 	AttestationIntermediateDer []byte                 `protobuf:"bytes,8,opt,name=attestation_intermediate_der,json=attestationIntermediateDer,proto3" json:"attestation_intermediate_der,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// Required for SCEP profiles, empty for step profiles. Returned by PrepareEnrollment.
+	EnrollmentId  string `protobuf:"bytes,9,opt,name=enrollment_id,json=enrollmentId,proto3" json:"enrollment_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IssueCertificateRequest) Reset() {
@@ -1140,6 +1151,150 @@ func (x *IssueCertificateRequest) GetAttestationIntermediateDer() []byte {
 	return nil
 }
 
+func (x *IssueCertificateRequest) GetEnrollmentId() string {
+	if x != nil {
+		return x.EnrollmentId
+	}
+	return ""
+}
+
+type PrepareEnrollmentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccessToken   string                 `protobuf:"bytes,1,opt,name=access_token,json=accessToken,proto3" json:"access_token,omitempty"`
+	TokenVendor   string                 `protobuf:"bytes,2,opt,name=token_vendor,json=tokenVendor,proto3" json:"token_vendor,omitempty"`
+	TokenSerial   string                 `protobuf:"bytes,3,opt,name=token_serial,json=tokenSerial,proto3" json:"token_serial,omitempty"`
+	CallerOsUser  string                 `protobuf:"bytes,4,opt,name=caller_os_user,json=callerOsUser,proto3" json:"caller_os_user,omitempty"`
+	Profile       string                 `protobuf:"bytes,5,opt,name=profile,proto3" json:"profile,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PrepareEnrollmentRequest) Reset() {
+	*x = PrepareEnrollmentRequest{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrepareEnrollmentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrepareEnrollmentRequest) ProtoMessage() {}
+
+func (x *PrepareEnrollmentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrepareEnrollmentRequest.ProtoReflect.Descriptor instead.
+func (*PrepareEnrollmentRequest) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *PrepareEnrollmentRequest) GetAccessToken() string {
+	if x != nil {
+		return x.AccessToken
+	}
+	return ""
+}
+
+func (x *PrepareEnrollmentRequest) GetTokenVendor() string {
+	if x != nil {
+		return x.TokenVendor
+	}
+	return ""
+}
+
+func (x *PrepareEnrollmentRequest) GetTokenSerial() string {
+	if x != nil {
+		return x.TokenSerial
+	}
+	return ""
+}
+
+func (x *PrepareEnrollmentRequest) GetCallerOsUser() string {
+	if x != nil {
+		return x.CallerOsUser
+	}
+	return ""
+}
+
+func (x *PrepareEnrollmentRequest) GetProfile() string {
+	if x != nil {
+		return x.Profile
+	}
+	return ""
+}
+
+type PrepareEnrollmentResponse struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	EnrollmentId string                 `protobuf:"bytes,1,opt,name=enrollment_id,json=enrollmentId,proto3" json:"enrollment_id,omitempty"`
+	// One-time challenge for the CSR challengePassword attribute. Empty for step profiles. Never logged.
+	ChallengePassword string `protobuf:"bytes,2,opt,name=challenge_password,json=challengePassword,proto3" json:"challenge_password,omitempty"`
+	ExpiresUnix       int64  `protobuf:"varint,3,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *PrepareEnrollmentResponse) Reset() {
+	*x = PrepareEnrollmentResponse{}
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PrepareEnrollmentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PrepareEnrollmentResponse) ProtoMessage() {}
+
+func (x *PrepareEnrollmentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PrepareEnrollmentResponse.ProtoReflect.Descriptor instead.
+func (*PrepareEnrollmentResponse) Descriptor() ([]byte, []int) {
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *PrepareEnrollmentResponse) GetEnrollmentId() string {
+	if x != nil {
+		return x.EnrollmentId
+	}
+	return ""
+}
+
+func (x *PrepareEnrollmentResponse) GetChallengePassword() string {
+	if x != nil {
+		return x.ChallengePassword
+	}
+	return ""
+}
+
+func (x *PrepareEnrollmentResponse) GetExpiresUnix() int64 {
+	if x != nil {
+		return x.ExpiresUnix
+	}
+	return 0
+}
+
 type IssueCertificateResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ChainDer      [][]byte               `protobuf:"bytes,1,rep,name=chain_der,json=chainDer,proto3" json:"chain_der,omitempty"`
@@ -1152,7 +1307,7 @@ type IssueCertificateResponse struct {
 
 func (x *IssueCertificateResponse) Reset() {
 	*x = IssueCertificateResponse{}
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[17]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1164,7 +1319,7 @@ func (x *IssueCertificateResponse) String() string {
 func (*IssueCertificateResponse) ProtoMessage() {}
 
 func (x *IssueCertificateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[17]
+	mi := &file_sigil_backend_v1_gateway_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1177,7 +1332,7 @@ func (x *IssueCertificateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueCertificateResponse.ProtoReflect.Descriptor instead.
 func (*IssueCertificateResponse) Descriptor() ([]byte, []int) {
-	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{17}
+	return file_sigil_backend_v1_gateway_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *IssueCertificateResponse) GetChainDer() [][]byte {
@@ -1281,7 +1436,7 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\x13ListProfilesRequest\x12!\n" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12!\n" +
 	"\ftoken_vendor\x18\x02 \x01(\tR\vtokenVendor\x12!\n" +
-	"\ftoken_serial\x18\x03 \x01(\tR\vtokenSerial\"\xf1\x01\n" +
+	"\ftoken_serial\x18\x03 \x01(\tR\vtokenSerial\"\xab\x02\n" +
 	"\x12CertificateProfile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\x12\x19\n" +
@@ -1290,9 +1445,10 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\n" +
 	"pin_policy\x18\x05 \x01(\tR\tpinPolicy\x12!\n" +
 	"\ftouch_policy\x18\x06 \x01(\tR\vtouchPolicy\x12)\n" +
-	"\x10expected_subject\x18\a \x01(\tR\x0fexpectedSubject\"X\n" +
+	"\x10expected_subject\x18\a \x01(\tR\x0fexpectedSubject\x128\n" +
+	"\x18expected_email_addresses\x18\b \x03(\tR\x16expectedEmailAddresses\"X\n" +
 	"\x14ListProfilesResponse\x12@\n" +
-	"\bprofiles\x18\x01 \x03(\v2$.sigil.backend.v1.CertificateProfileR\bprofiles\"\xc6\x02\n" +
+	"\bprofiles\x18\x01 \x03(\v2$.sigil.backend.v1.CertificateProfileR\bprofiles\"\xeb\x02\n" +
 	"\x17IssueCertificateRequest\x12!\n" +
 	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12!\n" +
 	"\ftoken_vendor\x18\x02 \x01(\tR\vtokenVendor\x12!\n" +
@@ -1301,12 +1457,23 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\aprofile\x18\x05 \x01(\tR\aprofile\x12\x17\n" +
 	"\acsr_der\x18\x06 \x01(\fR\x06csrDer\x12'\n" +
 	"\x0fattestation_der\x18\a \x01(\fR\x0eattestationDer\x12@\n" +
-	"\x1cattestation_intermediate_der\x18\b \x01(\fR\x1aattestationIntermediateDer\"\x9c\x01\n" +
+	"\x1cattestation_intermediate_der\x18\b \x01(\fR\x1aattestationIntermediateDer\x12#\n" +
+	"\renrollment_id\x18\t \x01(\tR\fenrollmentId\"\xc3\x01\n" +
+	"\x18PrepareEnrollmentRequest\x12!\n" +
+	"\faccess_token\x18\x01 \x01(\tR\vaccessToken\x12!\n" +
+	"\ftoken_vendor\x18\x02 \x01(\tR\vtokenVendor\x12!\n" +
+	"\ftoken_serial\x18\x03 \x01(\tR\vtokenSerial\x12$\n" +
+	"\x0ecaller_os_user\x18\x04 \x01(\tR\fcallerOsUser\x12\x18\n" +
+	"\aprofile\x18\x05 \x01(\tR\aprofile\"\x92\x01\n" +
+	"\x19PrepareEnrollmentResponse\x12#\n" +
+	"\renrollment_id\x18\x01 \x01(\tR\fenrollmentId\x12-\n" +
+	"\x12challenge_password\x18\x02 \x01(\tR\x11challengePassword\x12!\n" +
+	"\fexpires_unix\x18\x03 \x01(\x03R\vexpiresUnix\"\x9c\x01\n" +
 	"\x18IssueCertificateResponse\x12\x1b\n" +
 	"\tchain_der\x18\x01 \x03(\fR\bchainDer\x12#\n" +
 	"\rserial_number\x18\x02 \x01(\tR\fserialNumber\x12\x18\n" +
 	"\asubject\x18\x03 \x01(\tR\asubject\x12$\n" +
-	"\x0enot_after_unix\x18\x04 \x01(\x03R\fnotAfterUnix2\xe4\x05\n" +
+	"\x0enot_after_unix\x18\x04 \x01(\x03R\fnotAfterUnix2\xd2\x06\n" +
 	"\fAgentGateway\x12]\n" +
 	"\fRequestGrant\x12%.sigil.backend.v1.RequestGrantRequest\x1a&.sigil.backend.v1.RequestGrantResponse\x12\x84\x01\n" +
 	"\x19AuthorizeManagedOperation\x122.sigil.backend.v1.AuthorizeManagedOperationRequest\x1a3.sigil.backend.v1.AuthorizeManagedOperationResponse\x12i\n" +
@@ -1314,7 +1481,8 @@ const file_sigil_backend_v1_gateway_proto_rawDesc = "" +
 	"\vReportAudit\x12$.sigil.backend.v1.ReportAuditRequest\x1a%.sigil.backend.v1.ReportAuditResponse\x12]\n" +
 	"\fReportTokens\x12%.sigil.backend.v1.ReportTokensRequest\x1a&.sigil.backend.v1.ReportTokensResponse\x12]\n" +
 	"\fListProfiles\x12%.sigil.backend.v1.ListProfilesRequest\x1a&.sigil.backend.v1.ListProfilesResponse\x12i\n" +
-	"\x10IssueCertificate\x12).sigil.backend.v1.IssueCertificateRequest\x1a*.sigil.backend.v1.IssueCertificateResponseBBZ@github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1b\x06proto3"
+	"\x10IssueCertificate\x12).sigil.backend.v1.IssueCertificateRequest\x1a*.sigil.backend.v1.IssueCertificateResponse\x12l\n" +
+	"\x11PrepareEnrollment\x12*.sigil.backend.v1.PrepareEnrollmentRequest\x1a+.sigil.backend.v1.PrepareEnrollmentResponseBBZ@github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1b\x06proto3"
 
 var (
 	file_sigil_backend_v1_gateway_proto_rawDescOnce sync.Once
@@ -1328,7 +1496,7 @@ func file_sigil_backend_v1_gateway_proto_rawDescGZIP() []byte {
 	return file_sigil_backend_v1_gateway_proto_rawDescData
 }
 
-var file_sigil_backend_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_sigil_backend_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_sigil_backend_v1_gateway_proto_goTypes = []any{
 	(*RequestGrantRequest)(nil),               // 0: sigil.backend.v1.RequestGrantRequest
 	(*RequestGrantResponse)(nil),              // 1: sigil.backend.v1.RequestGrantResponse
@@ -1347,15 +1515,17 @@ var file_sigil_backend_v1_gateway_proto_goTypes = []any{
 	(*CertificateProfile)(nil),                // 14: sigil.backend.v1.CertificateProfile
 	(*ListProfilesResponse)(nil),              // 15: sigil.backend.v1.ListProfilesResponse
 	(*IssueCertificateRequest)(nil),           // 16: sigil.backend.v1.IssueCertificateRequest
-	(*IssueCertificateResponse)(nil),          // 17: sigil.backend.v1.IssueCertificateResponse
-	(v1.Operation)(0),                         // 18: sigil.agent.v1.Operation
-	(*v1.SignedGrant)(nil),                    // 19: sigil.agent.v1.SignedGrant
+	(*PrepareEnrollmentRequest)(nil),          // 17: sigil.backend.v1.PrepareEnrollmentRequest
+	(*PrepareEnrollmentResponse)(nil),         // 18: sigil.backend.v1.PrepareEnrollmentResponse
+	(*IssueCertificateResponse)(nil),          // 19: sigil.backend.v1.IssueCertificateResponse
+	(v1.Operation)(0),                         // 20: sigil.agent.v1.Operation
+	(*v1.SignedGrant)(nil),                    // 21: sigil.agent.v1.SignedGrant
 }
 var file_sigil_backend_v1_gateway_proto_depIdxs = []int32{
-	18, // 0: sigil.backend.v1.RequestGrantRequest.operation:type_name -> sigil.agent.v1.Operation
-	19, // 1: sigil.backend.v1.RequestGrantResponse.grant:type_name -> sigil.agent.v1.SignedGrant
-	18, // 2: sigil.backend.v1.AuthorizeManagedOperationRequest.operation:type_name -> sigil.agent.v1.Operation
-	19, // 3: sigil.backend.v1.AuthorizeManagedOperationResponse.grant:type_name -> sigil.agent.v1.SignedGrant
+	20, // 0: sigil.backend.v1.RequestGrantRequest.operation:type_name -> sigil.agent.v1.Operation
+	21, // 1: sigil.backend.v1.RequestGrantResponse.grant:type_name -> sigil.agent.v1.SignedGrant
+	20, // 2: sigil.backend.v1.AuthorizeManagedOperationRequest.operation:type_name -> sigil.agent.v1.Operation
+	21, // 3: sigil.backend.v1.AuthorizeManagedOperationResponse.grant:type_name -> sigil.agent.v1.SignedGrant
 	3,  // 4: sigil.backend.v1.AuthorizeManagedOperationResponse.current_management_key:type_name -> sigil.backend.v1.EscrowedSecret
 	3,  // 5: sigil.backend.v1.AuthorizeManagedOperationResponse.current_puk:type_name -> sigil.backend.v1.EscrowedSecret
 	3,  // 6: sigil.backend.v1.AuthorizeManagedOperationResponse.new_management_key:type_name -> sigil.backend.v1.EscrowedSecret
@@ -1370,15 +1540,17 @@ var file_sigil_backend_v1_gateway_proto_depIdxs = []int32{
 	11, // 15: sigil.backend.v1.AgentGateway.ReportTokens:input_type -> sigil.backend.v1.ReportTokensRequest
 	13, // 16: sigil.backend.v1.AgentGateway.ListProfiles:input_type -> sigil.backend.v1.ListProfilesRequest
 	16, // 17: sigil.backend.v1.AgentGateway.IssueCertificate:input_type -> sigil.backend.v1.IssueCertificateRequest
-	1,  // 18: sigil.backend.v1.AgentGateway.RequestGrant:output_type -> sigil.backend.v1.RequestGrantResponse
-	4,  // 19: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:output_type -> sigil.backend.v1.AuthorizeManagedOperationResponse
-	6,  // 20: sigil.backend.v1.AgentGateway.CompleteRotation:output_type -> sigil.backend.v1.CompleteRotationResponse
-	9,  // 21: sigil.backend.v1.AgentGateway.ReportAudit:output_type -> sigil.backend.v1.ReportAuditResponse
-	12, // 22: sigil.backend.v1.AgentGateway.ReportTokens:output_type -> sigil.backend.v1.ReportTokensResponse
-	15, // 23: sigil.backend.v1.AgentGateway.ListProfiles:output_type -> sigil.backend.v1.ListProfilesResponse
-	17, // 24: sigil.backend.v1.AgentGateway.IssueCertificate:output_type -> sigil.backend.v1.IssueCertificateResponse
-	18, // [18:25] is the sub-list for method output_type
-	11, // [11:18] is the sub-list for method input_type
+	17, // 18: sigil.backend.v1.AgentGateway.PrepareEnrollment:input_type -> sigil.backend.v1.PrepareEnrollmentRequest
+	1,  // 19: sigil.backend.v1.AgentGateway.RequestGrant:output_type -> sigil.backend.v1.RequestGrantResponse
+	4,  // 20: sigil.backend.v1.AgentGateway.AuthorizeManagedOperation:output_type -> sigil.backend.v1.AuthorizeManagedOperationResponse
+	6,  // 21: sigil.backend.v1.AgentGateway.CompleteRotation:output_type -> sigil.backend.v1.CompleteRotationResponse
+	9,  // 22: sigil.backend.v1.AgentGateway.ReportAudit:output_type -> sigil.backend.v1.ReportAuditResponse
+	12, // 23: sigil.backend.v1.AgentGateway.ReportTokens:output_type -> sigil.backend.v1.ReportTokensResponse
+	15, // 24: sigil.backend.v1.AgentGateway.ListProfiles:output_type -> sigil.backend.v1.ListProfilesResponse
+	19, // 25: sigil.backend.v1.AgentGateway.IssueCertificate:output_type -> sigil.backend.v1.IssueCertificateResponse
+	18, // 26: sigil.backend.v1.AgentGateway.PrepareEnrollment:output_type -> sigil.backend.v1.PrepareEnrollmentResponse
+	19, // [19:27] is the sub-list for method output_type
+	11, // [11:19] is the sub-list for method input_type
 	11, // [11:11] is the sub-list for extension type_name
 	11, // [11:11] is the sub-list for extension extendee
 	0,  // [0:11] is the sub-list for field type_name
@@ -1395,7 +1567,7 @@ func file_sigil_backend_v1_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_sigil_backend_v1_gateway_proto_rawDesc), len(file_sigil_backend_v1_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

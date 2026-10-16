@@ -26,6 +26,7 @@ const (
 	AgentGateway_ReportTokens_FullMethodName              = "/sigil.backend.v1.AgentGateway/ReportTokens"
 	AgentGateway_ListProfiles_FullMethodName              = "/sigil.backend.v1.AgentGateway/ListProfiles"
 	AgentGateway_IssueCertificate_FullMethodName          = "/sigil.backend.v1.AgentGateway/IssueCertificate"
+	AgentGateway_PrepareEnrollment_FullMethodName         = "/sigil.backend.v1.AgentGateway/PrepareEnrollment"
 )
 
 // AgentGatewayClient is the client API for AgentGateway service.
@@ -39,6 +40,7 @@ type AgentGatewayClient interface {
 	ReportTokens(ctx context.Context, in *ReportTokensRequest, opts ...grpc.CallOption) (*ReportTokensResponse, error)
 	ListProfiles(ctx context.Context, in *ListProfilesRequest, opts ...grpc.CallOption) (*ListProfilesResponse, error)
 	IssueCertificate(ctx context.Context, in *IssueCertificateRequest, opts ...grpc.CallOption) (*IssueCertificateResponse, error)
+	PrepareEnrollment(ctx context.Context, in *PrepareEnrollmentRequest, opts ...grpc.CallOption) (*PrepareEnrollmentResponse, error)
 }
 
 type agentGatewayClient struct {
@@ -119,6 +121,16 @@ func (c *agentGatewayClient) IssueCertificate(ctx context.Context, in *IssueCert
 	return out, nil
 }
 
+func (c *agentGatewayClient) PrepareEnrollment(ctx context.Context, in *PrepareEnrollmentRequest, opts ...grpc.CallOption) (*PrepareEnrollmentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PrepareEnrollmentResponse)
+	err := c.cc.Invoke(ctx, AgentGateway_PrepareEnrollment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentGatewayServer is the server API for AgentGateway service.
 // All implementations must embed UnimplementedAgentGatewayServer
 // for forward compatibility.
@@ -130,6 +142,7 @@ type AgentGatewayServer interface {
 	ReportTokens(context.Context, *ReportTokensRequest) (*ReportTokensResponse, error)
 	ListProfiles(context.Context, *ListProfilesRequest) (*ListProfilesResponse, error)
 	IssueCertificate(context.Context, *IssueCertificateRequest) (*IssueCertificateResponse, error)
+	PrepareEnrollment(context.Context, *PrepareEnrollmentRequest) (*PrepareEnrollmentResponse, error)
 	mustEmbedUnimplementedAgentGatewayServer()
 }
 
@@ -160,6 +173,9 @@ func (UnimplementedAgentGatewayServer) ListProfiles(context.Context, *ListProfil
 }
 func (UnimplementedAgentGatewayServer) IssueCertificate(context.Context, *IssueCertificateRequest) (*IssueCertificateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IssueCertificate not implemented")
+}
+func (UnimplementedAgentGatewayServer) PrepareEnrollment(context.Context, *PrepareEnrollmentRequest) (*PrepareEnrollmentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PrepareEnrollment not implemented")
 }
 func (UnimplementedAgentGatewayServer) mustEmbedUnimplementedAgentGatewayServer() {}
 func (UnimplementedAgentGatewayServer) testEmbeddedByValue()                      {}
@@ -308,6 +324,24 @@ func _AgentGateway_IssueCertificate_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentGateway_PrepareEnrollment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PrepareEnrollmentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentGatewayServer).PrepareEnrollment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: AgentGateway_PrepareEnrollment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentGatewayServer).PrepareEnrollment(ctx, req.(*PrepareEnrollmentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // AgentGateway_ServiceDesc is the grpc.ServiceDesc for AgentGateway service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -342,6 +376,10 @@ var AgentGateway_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IssueCertificate",
 			Handler:    _AgentGateway_IssueCertificate_Handler,
+		},
+		{
+			MethodName: "PrepareEnrollment",
+			Handler:    _AgentGateway_PrepareEnrollment_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

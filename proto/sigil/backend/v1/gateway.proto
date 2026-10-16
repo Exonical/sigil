@@ -14,6 +14,7 @@ service AgentGateway {
   rpc ReportTokens(ReportTokensRequest) returns (ReportTokensResponse);
   rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
   rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+  rpc PrepareEnrollment(PrepareEnrollmentRequest) returns (PrepareEnrollmentResponse);
 }
 
 message RequestGrantRequest {
@@ -113,6 +114,8 @@ message CertificateProfile {
   string touch_policy = 6;
   // Set when a token was named: the subject the CA will issue for that token. CSRs must carry this CN.
   string expected_subject = 7;
+  // Set when a token was named and the profile carries the user email as a SAN: the email addresses the CSR must carry.
+  repeated string expected_email_addresses = 8;
 }
 
 message ListProfilesResponse {
@@ -128,6 +131,23 @@ message IssueCertificateRequest {
   bytes csr_der = 6;
   bytes attestation_der = 7;
   bytes attestation_intermediate_der = 8;
+  // Required for SCEP profiles, empty for step profiles. Returned by PrepareEnrollment.
+  string enrollment_id = 9;
+}
+
+message PrepareEnrollmentRequest {
+  string access_token = 1;
+  string token_vendor = 2;
+  string token_serial = 3;
+  string caller_os_user = 4;
+  string profile = 5;
+}
+
+message PrepareEnrollmentResponse {
+  string enrollment_id = 1;
+  // One-time challenge for the CSR challengePassword attribute. Empty for step profiles. Never logged.
+  string challenge_password = 2;
+  int64 expires_unix = 3;
 }
 
 message IssueCertificateResponse {

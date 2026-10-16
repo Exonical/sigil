@@ -34,7 +34,6 @@ var (
 	oidSCEPSenderNonce    = asn1.ObjectIdentifier{2, 16, 840, 1, 113733, 1, 9, 5}
 	oidSCEPRecipientNonce = asn1.ObjectIdentifier{2, 16, 840, 1, 113733, 1, 9, 6}
 	oidSCEPTransactionID  = asn1.ObjectIdentifier{2, 16, 840, 1, 113733, 1, 9, 7}
-	oidChallengePassword  = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 7}
 	oidExtensionRequest   = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 14}
 	oidSubjectAltName     = asn1.ObjectIdentifier{2, 5, 29, 17}
 	oidECDSAWithSHA256    = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 2}

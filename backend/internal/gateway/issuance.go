@@ -85,11 +85,12 @@ func (s *Server) ListProfiles(
 		}
 		entry := protoProfile(profile)
 		if token != nil && token.AssignedUserID != nil {
-			expected, err := s.expectedSubject(ctx, *token.AssignedUserID, profile)
+			expected, emails, err := s.expectedIdentity(ctx, *token.AssignedUserID, profile)
 			if err != nil {
 				return nil, status.Error(codes.Internal, "could not read the token's assigned user")
 			}
 			entry.ExpectedSubject = expected
+			entry.ExpectedEmailAddresses = emails
 		}
 		profiles = append(profiles, entry)
 	}
@@ -101,8 +102,8 @@ func (s *Server) ListProfiles(
 }
 
 // IssueCertificate verifies an enrollment request and signs it. Checks run in this order: station, principal,
-// profile, token and authorization, CSR, attestation, subject, CA signing, then persistence.
-// Every rejection is audited with its reason and returns without issuing.
+// profile, token and authorization, CSR and email addresses, attestation, subject, enrollment challenge (SCEP), CA
+// signing, then persistence. Every rejection is audited with its reason and returns without issuing.
 func (s *Server) IssueCertificate(
 	ctx context.Context,
 	request *backendv1.IssueCertificateRequest,
@@ -121,7 +122,6 @@ func (s *Server) IssueCertificate(
 		}
 		return nil, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
 	}
-	profile, ok := s.profileByName(request.Profile)
 
 	tx, err := s.store.Pool.Begin(ctx)
 	if err != nil {
@@ -150,37 +150,14 @@ func (s *Server) IssueCertificate(
 		return status.Error(code, reason)
 	}
 
-	if !ok {
-		return nil, reject(codes.PermissionDenied, "profile is not defined", nil)
-	}
-	if _, ok := s.issuers.cas[profile.CA]; !ok {
-		return nil, reject(codes.FailedPrecondition, "certificate authority is not configured", nil)
-	}
-
-	token, err := db.LockToken(ctx, tx, request.TokenVendor, request.TokenSerial)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, reject(codes.PermissionDenied, "token is not in inventory", nil)
-	}
+	gate, rejection, err := s.checkEnrollment(ctx, tx, station, principal.UserID, principal.Groups, request.TokenVendor, request.TokenSerial, request.Profile)
 	if err != nil {
-		s.logger.Error("lock certificate token failed", "error", err)
-		return nil, status.Error(codes.Internal, "could not look up token inventory")
+		return nil, err
 	}
-	roles := rolesFor(principal.Groups, s.config.OIDC.RoleGroups)
-	decision := policy.AuthorizeIssuance(policy.IssuanceRequest{
-		Roles:        roles,
-		Station:      station,
-		Token:        &token,
-		UserID:       principal.UserID,
-		ProfileRoles: profile.Roles,
-	})
-	if !decision.Allowed {
-		return nil, reject(codes.PermissionDenied, decision.Reason, map[string]any{"station": station.ID})
+	if rejection != nil {
+		return nil, reject(rejection.code, rejection.reason, rejection.detail)
 	}
-	assigned, err := s.store.UserByID(ctx, tx, *token.AssignedUserID)
-	if err != nil {
-		s.logger.Error("read assigned user failed", "error", err)
-		return nil, status.Error(codes.Internal, "could not read the token's assigned user")
-	}
+	profile, token, assigned := gate.profile, gate.token, gate.assigned
 
 	csr, err := x509.ParseCertificateRequest(request.CsrDer)
 	if err != nil {
@@ -191,6 +168,10 @@ func (s *Server) IssueCertificate(
 	}
 	if reason := keyAlgorithmMismatch(csr, profile.Algorithm); reason != "" {
 		return nil, reject(codes.FailedPrecondition, reason, nil)
+	}
+	expectedEmails := expectedEmailAddresses(profile, assigned)
+	if !sameStrings(csr.EmailAddresses, expectedEmails) {
+		return nil, reject(codes.FailedPrecondition, "certificate request email addresses do not match the assigned user", nil)
 	}
 
 	now := s.now()
@@ -210,13 +191,40 @@ func (s *Server) IssueCertificate(
 		return nil, reject(codes.FailedPrecondition, "certificate request subject does not match the assigned user", map[string]any{"expected_subject": commonName})
 	}
 	signRequest := ca.SignRequest{
-		Subject:   commonName,
-		NotBefore: now.Add(-time.Minute),
-		NotAfter:  now.Add(time.Duration(profile.ValidityHours) * time.Hour),
+		Subject:        commonName,
+		EmailAddresses: expectedEmails,
+		NotBefore:      now.Add(-time.Minute),
+		NotAfter:       now.Add(time.Duration(profile.ValidityHours) * time.Hour),
 	}
-	if profile.EmailSAN && assigned.Email != "" {
-		signRequest.EmailAddresses = []string{assigned.Email}
+
+	if s.caType(profile.CA) == "scep" {
+		if request.EnrollmentId == "" {
+			return nil, reject(codes.FailedPrecondition, "enrollment id is required for this certificate authority", nil)
+		}
+		challenge, err := ca.ChallengePassword(request.CsrDer)
+		if err != nil || challenge == "" {
+			return nil, reject(codes.FailedPrecondition, "certificate request carries no enrollment challenge", nil)
+		}
+		record, err := s.store.EnrollmentByID(ctx, tx, request.EnrollmentId)
+		if err != nil && !errors.Is(err, db.ErrEnrollmentNotFound) {
+			s.logger.Error("read enrollment challenge failed", "error", err)
+			return nil, status.Error(codes.Internal, "could not read the enrollment challenge")
+		}
+		if err != nil || !enrollmentMatches(record, challenge, token.ID, profile.Name, station.ID, principal.UserID) {
+			return nil, reject(codes.FailedPrecondition, "enrollment challenge is not valid for this request", nil)
+		}
+		submitted, err := s.submitEnrollment(ctx, request.EnrollmentId, csr.RawSubjectPublicKeyInfo)
+		if err != nil {
+			s.logger.Error("submit enrollment challenge failed", "error", err)
+			return nil, status.Error(codes.Internal, "could not submit the enrollment challenge")
+		}
+		if !submitted {
+			return nil, reject(codes.FailedPrecondition, "enrollment challenge is not valid for this request", nil)
+		}
+	} else if request.EnrollmentId != "" {
+		return nil, reject(codes.FailedPrecondition, "enrollment id does not apply to this certificate authority", nil)
 	}
+
 	chain, err := s.issuers.cas[profile.CA].Sign(ctx, request.CsrDer, signRequest)
 	if err != nil {
 		s.logger.Error("certificate authority failed", "profile", profile.Name, "error", err)
@@ -288,18 +296,22 @@ func (s *Server) IssueCertificate(
 	}, nil
 }
 
-// expectedSubject returns the subject CN the CA will issue for the assigned user under this profile.
-func (s *Server) expectedSubject(ctx context.Context, userID string, profile config.Profile) (string, error) {
+// expectedIdentity returns the subject CN and the email SANs the CA will issue for the assigned user under this profile.
+func (s *Server) expectedIdentity(ctx context.Context, userID string, profile config.Profile) (string, []string, error) {
 	tx, err := s.store.Pool.Begin(ctx)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	user, err := s.store.UserByID(ctx, tx, userID)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return subjectCommonName(profile.Subject, user)
+	subject, err := subjectCommonName(profile.Subject, user)
+	if err != nil {
+		return "", nil, err
+	}
+	return subject, expectedEmailAddresses(profile, user), nil
 }
 
 func (s *Server) profileByName(name string) (config.Profile, bool) {

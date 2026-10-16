@@ -27,6 +27,15 @@ type Config struct {
 	Lifecycle    Lifecycle     `toml:"lifecycle"`
 	ListenPortal string        `toml:"listen_portal"`
 	Portal       Portal        `toml:"portal"`
+	CAWebhook    CAWebhook     `toml:"ca_webhook"`
+}
+
+// CAWebhook configures the HTTPS listener that step-ca's SCEPCHALLENGE webhook calls. It is required when a SCEP CA is
+// configured.
+type CAWebhook struct {
+	Listen   string `toml:"listen"`
+	CertFile string `toml:"cert_file"`
+	KeyFile  string `toml:"key_file"`
 }
 
 type TLS struct {
@@ -101,6 +110,8 @@ func Load(path string) (*Config, error) {
 	cfg.Grants.SigningKeyFile = resolvePath(base, cfg.Grants.SigningKeyFile)
 	cfg.Escrow.KEKFile = resolvePath(base, cfg.Escrow.KEKFile)
 	resolveCAPaths(base, cfg.CA)
+	cfg.CAWebhook.CertFile = resolvePath(base, cfg.CAWebhook.CertFile)
+	cfg.CAWebhook.KeyFile = resolvePath(base, cfg.CAWebhook.KeyFile)
 	for id, path := range cfg.Escrow.PreviousKEKs {
 		cfg.Escrow.PreviousKEKs[id] = resolvePath(base, path)
 	}
@@ -206,8 +217,33 @@ func (c *Config) Validate() error {
 	if err := validateCAs(c.CA); err != nil {
 		return err
 	}
+	if len(SCEPCAs(c.CA)) > 0 {
+		if err := c.validateCAWebhook(); err != nil {
+			return err
+		}
+	}
 	if err := validateProfiles(c.Profiles, c.CA); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateCAWebhook checks the listener that SCEP CAs depend on.
+func (c *Config) validateCAWebhook() error {
+	if strings.TrimSpace(c.CAWebhook.Listen) == "" {
+		return fmt.Errorf("ca_webhook listen is required when a SCEP CA is configured")
+	}
+	if _, _, err := net.SplitHostPort(c.CAWebhook.Listen); err != nil {
+		return fmt.Errorf("ca_webhook listen must be a host:port address")
+	}
+	if c.CAWebhook.CertFile == "" || c.CAWebhook.KeyFile == "" {
+		return fmt.Errorf("ca_webhook cert_file and key_file are required")
+	}
+	if _, err := os.Stat(c.CAWebhook.CertFile); err != nil {
+		return fmt.Errorf("ca_webhook certificate file: %w", err)
+	}
+	if err := CheckPrivateFile(c.CAWebhook.KeyFile); err != nil {
+		return fmt.Errorf("unsafe ca_webhook key: %w", err)
 	}
 	return nil
 }

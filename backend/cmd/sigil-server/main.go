@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -112,6 +113,15 @@ func serve(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	if len(config.SCEPCAs(cfg.CA)) > 0 {
+		webhookCAs, err := scepWebhookCAs(cfg)
+		if err != nil {
+			return err
+		}
+		if err := startCAWebhook(ctx, cfg, store, webhookCAs); err != nil {
+			return err
+		}
+	}
 	go startLostKeys(ctx, store, cfg, cas)
 	if cfg.ListenPortal != "" {
 		if err := startPortal(ctx, cfg, store, authenticator, cas); err != nil {
@@ -331,6 +341,9 @@ func normalizeDNSName(value string) (string, error) {
 func buildCertificateAuthorities(configs map[string]config.CA) (map[string]ca.CA, error) {
 	cas := make(map[string]ca.CA, len(configs))
 	for name, settings := range configs {
+		if settings.Type != "step" {
+			continue
+		}
 		root, err := os.ReadFile(settings.RootFile)
 		if err != nil {
 			return nil, fmt.Errorf("read CA %q root file: %w", name, err)
@@ -353,7 +366,98 @@ func buildCertificateAuthorities(configs map[string]config.CA) (map[string]ca.CA
 		}
 		cas[name] = client
 	}
+	for name, settings := range configs {
+		if settings.Type != "scep" {
+			continue
+		}
+		client, err := buildSCEPCA(name, settings, cas)
+		if err != nil {
+			return nil, err
+		}
+		cas[name] = client
+	}
 	return cas, nil
+}
+
+// buildSCEPCA configures a SCEP CA. Its revoker is a step CA that has already been built.
+func buildSCEPCA(name string, settings config.CA, cas map[string]ca.CA) (ca.CA, error) {
+	root, err := os.ReadFile(settings.RootFile)
+	if err != nil {
+		return nil, fmt.Errorf("read CA %q root file: %w", name, err)
+	}
+	raCert, raKey, err := ca.LoadSCEPRegistrationAuthority(settings.RACertFile, settings.RAKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load CA %q registration authority: %w", name, err)
+	}
+	revoker, ok := cas[settings.Revoker]
+	if !ok {
+		return nil, fmt.Errorf("CA %q revoker %q is not built", name, settings.Revoker)
+	}
+	client, err := ca.NewSCEP(ca.SCEPConfig{URL: settings.URL, RootPEM: root, RACert: raCert, RAKey: raKey, Revoker: revoker})
+	if err != nil {
+		return nil, fmt.Errorf("configure CA %q: %w", name, err)
+	}
+	return client, nil
+}
+
+// scepWebhookCAs reads each SCEP CA's webhook secret and lists the profiles that enroll through it.
+func scepWebhookCAs(cfg *config.Config) ([]gateway.SCEPWebhookCA, error) {
+	var out []gateway.SCEPWebhookCA
+	for _, name := range config.SCEPCAs(cfg.CA) {
+		secret, err := config.LoadWebhookSecret(cfg.CA[name].WebhookSecretFile)
+		if err != nil {
+			return nil, fmt.Errorf("CA %q webhook secret: %w", name, err)
+		}
+		var profiles []string
+		for _, profile := range cfg.Profiles {
+			if profile.CA == name {
+				profiles = append(profiles, profile.Name)
+			}
+		}
+		out = append(out, gateway.SCEPWebhookCA{Name: name, Secret: secret, Profiles: profiles})
+	}
+	return out, nil
+}
+
+// startCAWebhook serves step-ca's SCEPCHALLENGE webhook over HTTPS. A client certificate, when step-ca presents one,
+// must chain to a SCEP CA root.
+func startCAWebhook(ctx context.Context, cfg *config.Config, store *db.Store, webhookCAs []gateway.SCEPWebhookCA) error {
+	cert, err := tls.LoadX509KeyPair(cfg.CAWebhook.CertFile, cfg.CAWebhook.KeyFile)
+	if err != nil {
+		return fmt.Errorf("load ca_webhook certificate: %w", err)
+	}
+	roots := x509.NewCertPool()
+	for _, name := range config.SCEPCAs(cfg.CA) {
+		root, err := os.ReadFile(cfg.CA[name].RootFile)
+		if err != nil {
+			return fmt.Errorf("read CA %q root file: %w", name, err)
+		}
+		if !roots.AppendCertsFromPEM(root) {
+			return fmt.Errorf("CA %q root file contains no certificates", name)
+		}
+	}
+	server := &http.Server{
+		Addr:              cfg.CAWebhook.Listen,
+		Handler:           gateway.NewSCEPChallengeWebhook(store, slog.Default(), webhookCAs),
+		ReadHeaderTimeout: 10 * time.Second,
+		TLSConfig: &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS12,
+			ClientAuth:   tls.VerifyClientCertIfGiven,
+			ClientCAs:    roots,
+		},
+	}
+	go func() {
+		<-ctx.Done()
+		_ = server.Shutdown(context.Background())
+	}()
+	go func() {
+		slog.Info("starting SCEP challenge webhook", "listen", cfg.CAWebhook.Listen)
+		if err := server.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("SCEP challenge webhook stopped", "error", err.Error())
+		}
+	}()
+	return nil
 }
 
 // startLostKeys revokes certificates of lost tokens after the grace period, once a minute.

@@ -54,6 +54,9 @@ const (
 	// AgentGatewayIssueCertificateProcedure is the fully-qualified name of the AgentGateway's
 	// IssueCertificate RPC.
 	AgentGatewayIssueCertificateProcedure = "/sigil.backend.v1.AgentGateway/IssueCertificate"
+	// AgentGatewayPrepareEnrollmentProcedure is the fully-qualified name of the AgentGateway's
+	// PrepareEnrollment RPC.
+	AgentGatewayPrepareEnrollmentProcedure = "/sigil.backend.v1.AgentGateway/PrepareEnrollment"
 )
 
 // AgentGatewayClient is a client for the sigil.backend.v1.AgentGateway service.
@@ -65,6 +68,7 @@ type AgentGatewayClient interface {
 	ReportTokens(context.Context, *connect.Request[v1.ReportTokensRequest]) (*connect.Response[v1.ReportTokensResponse], error)
 	ListProfiles(context.Context, *connect.Request[v1.ListProfilesRequest]) (*connect.Response[v1.ListProfilesResponse], error)
 	IssueCertificate(context.Context, *connect.Request[v1.IssueCertificateRequest]) (*connect.Response[v1.IssueCertificateResponse], error)
+	PrepareEnrollment(context.Context, *connect.Request[v1.PrepareEnrollmentRequest]) (*connect.Response[v1.PrepareEnrollmentResponse], error)
 }
 
 // NewAgentGatewayClient constructs a client for the sigil.backend.v1.AgentGateway service. By
@@ -120,6 +124,12 @@ func NewAgentGatewayClient(httpClient connect.HTTPClient, baseURL string, opts .
 			connect.WithSchema(agentGatewayMethods.ByName("IssueCertificate")),
 			connect.WithClientOptions(opts...),
 		),
+		prepareEnrollment: connect.NewClient[v1.PrepareEnrollmentRequest, v1.PrepareEnrollmentResponse](
+			httpClient,
+			baseURL+AgentGatewayPrepareEnrollmentProcedure,
+			connect.WithSchema(agentGatewayMethods.ByName("PrepareEnrollment")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -132,6 +142,7 @@ type agentGatewayClient struct {
 	reportTokens              *connect.Client[v1.ReportTokensRequest, v1.ReportTokensResponse]
 	listProfiles              *connect.Client[v1.ListProfilesRequest, v1.ListProfilesResponse]
 	issueCertificate          *connect.Client[v1.IssueCertificateRequest, v1.IssueCertificateResponse]
+	prepareEnrollment         *connect.Client[v1.PrepareEnrollmentRequest, v1.PrepareEnrollmentResponse]
 }
 
 // RequestGrant calls sigil.backend.v1.AgentGateway.RequestGrant.
@@ -169,6 +180,11 @@ func (c *agentGatewayClient) IssueCertificate(ctx context.Context, req *connect.
 	return c.issueCertificate.CallUnary(ctx, req)
 }
 
+// PrepareEnrollment calls sigil.backend.v1.AgentGateway.PrepareEnrollment.
+func (c *agentGatewayClient) PrepareEnrollment(ctx context.Context, req *connect.Request[v1.PrepareEnrollmentRequest]) (*connect.Response[v1.PrepareEnrollmentResponse], error) {
+	return c.prepareEnrollment.CallUnary(ctx, req)
+}
+
 // AgentGatewayHandler is an implementation of the sigil.backend.v1.AgentGateway service.
 type AgentGatewayHandler interface {
 	RequestGrant(context.Context, *connect.Request[v1.RequestGrantRequest]) (*connect.Response[v1.RequestGrantResponse], error)
@@ -178,6 +194,7 @@ type AgentGatewayHandler interface {
 	ReportTokens(context.Context, *connect.Request[v1.ReportTokensRequest]) (*connect.Response[v1.ReportTokensResponse], error)
 	ListProfiles(context.Context, *connect.Request[v1.ListProfilesRequest]) (*connect.Response[v1.ListProfilesResponse], error)
 	IssueCertificate(context.Context, *connect.Request[v1.IssueCertificateRequest]) (*connect.Response[v1.IssueCertificateResponse], error)
+	PrepareEnrollment(context.Context, *connect.Request[v1.PrepareEnrollmentRequest]) (*connect.Response[v1.PrepareEnrollmentResponse], error)
 }
 
 // NewAgentGatewayHandler builds an HTTP handler from the service implementation. It returns the
@@ -229,6 +246,12 @@ func NewAgentGatewayHandler(svc AgentGatewayHandler, opts ...connect.HandlerOpti
 		connect.WithSchema(agentGatewayMethods.ByName("IssueCertificate")),
 		connect.WithHandlerOptions(opts...),
 	)
+	agentGatewayPrepareEnrollmentHandler := connect.NewUnaryHandler(
+		AgentGatewayPrepareEnrollmentProcedure,
+		svc.PrepareEnrollment,
+		connect.WithSchema(agentGatewayMethods.ByName("PrepareEnrollment")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/sigil.backend.v1.AgentGateway/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AgentGatewayRequestGrantProcedure:
@@ -245,6 +268,8 @@ func NewAgentGatewayHandler(svc AgentGatewayHandler, opts ...connect.HandlerOpti
 			agentGatewayListProfilesHandler.ServeHTTP(w, r)
 		case AgentGatewayIssueCertificateProcedure:
 			agentGatewayIssueCertificateHandler.ServeHTTP(w, r)
+		case AgentGatewayPrepareEnrollmentProcedure:
+			agentGatewayPrepareEnrollmentHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -280,4 +305,8 @@ func (UnimplementedAgentGatewayHandler) ListProfiles(context.Context, *connect.R
 
 func (UnimplementedAgentGatewayHandler) IssueCertificate(context.Context, *connect.Request[v1.IssueCertificateRequest]) (*connect.Response[v1.IssueCertificateResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("sigil.backend.v1.AgentGateway.IssueCertificate is not implemented"))
+}
+
+func (UnimplementedAgentGatewayHandler) PrepareEnrollment(context.Context, *connect.Request[v1.PrepareEnrollmentRequest]) (*connect.Response[v1.PrepareEnrollmentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("sigil.backend.v1.AgentGateway.PrepareEnrollment is not implemented"))
 }
