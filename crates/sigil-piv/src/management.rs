@@ -293,6 +293,10 @@ pub fn authenticate_management_key_selected<T: CardTransport + ?Sized>(
     authenticate_management_key_with_challenge(transport, management_key, None)
 }
 
+/// Mutual authentication (SP 800-73-4 Part 2, section 3.2.4). The host sends the decrypted witness and its challenge,
+/// and the card answers with the encrypted challenge. SP 800-73-4 does not settle whether that answer is tag 82 or
+/// tag 80, so tag 82 is preferred and tag 80 is accepted when it is absent, as OpenSC does (card-piv.c,
+/// piv_general_mutual_authenticate). Thales IDPrime PIV answers with tag 80.
 fn authenticate_management_key_with_challenge<T: CardTransport + ?Sized>(
     transport: &mut T,
     management_key: &ManagementKey,
@@ -338,7 +342,14 @@ fn authenticate_management_key_with_challenge<T: CardTransport + ?Sized>(
     if status != 0x9000 {
         return Err(management_auth_error(status));
     }
-    let encrypted_response = response_field(&response, 0x82)?;
+    let encrypted_response = match response_field(&response, 0x82) {
+        Ok(field) => field,
+        Err(_) => response_field(&response, 0x80).map_err(|_| {
+            CredentialError::SmartCardOperation(
+                "card returned no management-key challenge response (tag 82 or 80)".into(),
+            )
+        })?,
+    };
     if encrypted_response.len() != 16 {
         return Err(CredentialError::ManagementKeyIncorrect);
     }
@@ -1150,6 +1161,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn management_authentication_accepts_the_challenge_under_tag_82_or_80() {
+        let management_key = ManagementKey::new(
+            ManagementKeyAlgorithm::Aes128,
+            decode_hex("000102030405060708090a0b0c0d0e0f"),
+        )
+        .unwrap();
+        let witness = decode_hex("00112233445566778899aabbccddeeff");
+        let encrypted_witness = decode_hex("69c4e0d86a7b0430d8cdb78070b4c55a");
+        let challenge = [0x00u8; 16];
+        let encrypted_challenge = decode_hex("c6a13b37878f5b826f4f8162a1c8d879");
+        let first = vec![0x00, 0x87, 0x08, 0x9b, 0x04, 0x7c, 0x02, 0x80, 0x00];
+        let mut first_response = vec![0x7c, 0x12, 0x80, 0x10];
+        first_response.extend_from_slice(&encrypted_witness);
+        let mut second = vec![0x00, 0x87, 0x08, 0x9b, 0x26, 0x7c, 0x24, 0x80, 0x10];
+        second.extend_from_slice(&witness);
+        second.extend_from_slice(&[0x81, 0x10]);
+        second.extend_from_slice(&challenge);
+        let answer = |tag: u8, value: &[u8]| {
+            let mut data = vec![0x7c, 0x12, tag, 0x10];
+            data.extend_from_slice(value);
+            response(&data, 0x9000)
+        };
+
+        let mut tag_82 = ScriptedTransport(vec![
+            (first.clone(), response(&first_response, 0x9000)),
+            (second.clone(), answer(0x82, &encrypted_challenge)),
+        ]);
+        authenticate_management_key_with_challenge(&mut tag_82, &management_key, Some(challenge))
+            .unwrap();
+
+        let mut tag_80 = ScriptedTransport(vec![
+            (first.clone(), response(&first_response, 0x9000)),
+            (second.clone(), answer(0x80, &encrypted_challenge)),
+        ]);
+        authenticate_management_key_with_challenge(&mut tag_80, &management_key, Some(challenge))
+            .unwrap();
+
+        let mut wrong_80 = ScriptedTransport(vec![
+            (first.clone(), response(&first_response, 0x9000)),
+            (
+                second.clone(),
+                answer(0x80, &decode_hex("4a1f4c8e6b2d0a9c7e5f3d1b8a6c2e0f")),
+            ),
+        ]);
+        assert_eq!(
+            authenticate_management_key_with_challenge(
+                &mut wrong_80,
+                &management_key,
+                Some(challenge)
+            ),
+            Err(CredentialError::ManagementKeyIncorrect)
+        );
+
+        let mut neither = ScriptedTransport(vec![
+            (first, response(&first_response, 0x9000)),
+            (second, response(&[], 0x9000)),
+        ]);
+        assert!(matches!(
+            authenticate_management_key_with_challenge(&mut neither, &management_key, Some(challenge)),
+            Err(CredentialError::SmartCardOperation(message)) if message.contains("tag 82 or 80")
+        ));
+    }
     #[test]
     fn generate_and_sign_apdus_parse_public_key_and_der_signature() {
         let slot = PivSlot::AUTHENTICATION;
