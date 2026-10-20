@@ -906,7 +906,6 @@ fn thales_device_info(reader: &str, serial: &str, connection: Transport) -> Devi
         "Thales PIV token"
     };
     let piv = vec![Application::Piv];
-    let is_nfc = connection == Transport::Nfc;
     DeviceInfo {
         id: DeviceId(format!("windows-pcsc:{reader}:{serial}")),
         vendor: "Thales".into(),
@@ -915,10 +914,10 @@ fn thales_device_info(reader: &str, serial: &str, connection: Transport) -> Devi
         firmware: None,
         form_factor: None,
         fips: None,
-        usb_enabled: if is_nfc { Vec::new() } else { piv.clone() },
-        usb_supported: if is_nfc { Vec::new() } else { piv.clone() },
-        nfc_enabled: if is_nfc { piv.clone() } else { Vec::new() },
-        nfc_supported: if is_nfc { piv.clone() } else { Vec::new() },
+        usb_enabled: Vec::new(),
+        usb_supported: Vec::new(),
+        nfc_enabled: Vec::new(),
+        nfc_supported: Vec::new(),
         config_locked: None,
         fips_approved: None,
         pin_complexity: None,
@@ -1153,6 +1152,22 @@ fn presence_changed(current: State, event: State) -> bool {
 mod tests {
     use super::*;
     use sigil_core::Application;
+
+    #[test]
+    fn thales_piv_is_discovered_without_yubikey_application_configuration() {
+        let device = thales_device_info(
+            "SafeNet eToken Fusion 0",
+            "540F9B50",
+            Transport::UsbSmartCard,
+        );
+        assert_eq!(device.applications, vec![Application::Piv]);
+        assert_eq!(device.supported_applications, vec![Application::Piv]);
+        assert!(device.usb_enabled.is_empty());
+        assert!(device.usb_supported.is_empty());
+        assert!(device.nfc_enabled.is_empty());
+        assert!(device.nfc_supported.is_empty());
+        assert!(device.piv_capabilities.is_some());
+    }
 
     #[test]
     fn watcher_ignores_in_use_changes_but_not_insertion_or_removal() {
