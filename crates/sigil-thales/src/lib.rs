@@ -611,8 +611,9 @@ mod tests {
     #[test]
     fn sets_aes128_management_key_with_the_captured_apdu_shape() {
         let key = ManagementKey::new(ManagementKeyAlgorithm::Aes128, vec![0x22; 16]).unwrap();
-        let expected =
-            bytes("00DB3FFF1D5C03FF840B7F4A15800108901022222222222222222222222222222222200");
+        let mut expected = bytes("00DB3FFF1D5C03FF840B7F4A158001089010");
+        expected.extend_from_slice(&[0x22; 16]);
+        expected.push(0x00);
         let mut transport = ScriptedTransport(VecDeque::from([(expected, ok(&[]))]));
         ThalesPiv.set_management_key(&mut transport, &key).unwrap();
         assert!(transport.0.is_empty());
