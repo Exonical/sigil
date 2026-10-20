@@ -3,7 +3,9 @@
 //! This crate holds Thales-specific identity and key-generation preparation. Standard PIV operations live in
 //! sigil-piv. The GlobalPlatform CPLC IC serial is available over USB and NFC, unlike USB iSerialNumber.
 
-use sigil_core::{CredentialError, PivKeyAlgorithm, PivSlot, Result};
+use sigil_core::{
+    CredentialError, ManagementKey, ManagementKeyAlgorithm, PivKeyAlgorithm, PivSlot, Result,
+};
 use sigil_piv::{
     CardTransport,
     vendor::{PivCapabilities, PivVendor},
@@ -121,9 +123,24 @@ impl PivVendor for ThalesPiv {
     fn capabilities(&self) -> PivCapabilities {
         PivCapabilities {
             piv_writes: true,
+            set_management_key: true,
             p384_generation: false,
             retired_slot_generation: false,
             ..PivCapabilities::default()
+        }
+    }
+
+    fn set_management_key(
+        &self,
+        transport: &mut dyn CardTransport,
+        new_key: &ManagementKey,
+    ) -> Result<()> {
+        let command = set_management_key_command(new_key)?;
+        let (_, sw) = sigil_piv::transceive(transport, &command)?;
+        if sw == 0x9000 {
+            Ok(())
+        } else {
+            Err(CredentialError::CardStatus(sw))
         }
     }
 
@@ -169,6 +186,30 @@ fn thales_key_object_id(slot: PivSlot) -> Option<u8> {
         0x82..=0x95 => Some(0x10 + slot.byte() - 0x82),
         _ => None,
     }
+}
+
+/// Thales stores the PIV management key in object FF840B. AES-128 is captured in SAC; AES-192 and AES-256 use the
+/// standard PIV algorithm identifiers by analogy and have not been verified on hardware.
+fn set_management_key_command(new_key: &ManagementKey) -> Result<Vec<u8>> {
+    let algorithm_id = match new_key.algorithm() {
+        ManagementKeyAlgorithm::Aes128 => 0x08,
+        ManagementKeyAlgorithm::Aes192 => 0x0a,
+        ManagementKeyAlgorithm::Aes256 => 0x0c,
+    };
+    let mut fields = sigil_piv::tlv::encode(0x80, &[algorithm_id])?;
+    fields.extend_from_slice(&sigil_piv::tlv::encode(0x90, new_key.as_bytes())?);
+    let template = sigil_piv::tlv::encode(0x7f4a, &fields)?;
+    let mut data = sigil_piv::tlv::encode(0x5c, &[0xff, 0x84, 0x0b])?;
+    data.extend_from_slice(&template);
+    if data.len() > u8::MAX as usize {
+        return Err(CredentialError::SmartCardOperation(
+            "Thales management-key APDU exceeds short Lc".into(),
+        ));
+    }
+    let mut command = vec![0x00, 0xdb, 0x3f, 0xff, data.len() as u8];
+    command.extend_from_slice(&data);
+    command.push(0x00);
+    Ok(command)
 }
 
 fn p256_parameters() -> Vec<(u8, Vec<u8>)> {
@@ -406,6 +447,7 @@ mod tests {
             ThalesPiv.capabilities(),
             sigil_piv::vendor::PivCapabilities {
                 piv_writes: true,
+                set_management_key: true,
                 p384_generation: false,
                 retired_slot_generation: false,
                 ..sigil_piv::vendor::PivCapabilities::default()
@@ -563,6 +605,43 @@ mod tests {
             ),
             Err(CredentialError::UnsupportedOperation(_))
         ));
+        assert!(transport.0.is_empty());
+    }
+
+    #[test]
+    fn sets_aes128_management_key_with_the_captured_apdu_shape() {
+        let key = ManagementKey::new(ManagementKeyAlgorithm::Aes128, vec![0x22; 16]).unwrap();
+        let expected =
+            bytes("00DB3FFF1D5C03FF840B7F4A15800108901022222222222222222222222222222222200");
+        let mut transport = ScriptedTransport(VecDeque::from([(expected, ok(&[]))]));
+        ThalesPiv.set_management_key(&mut transport, &key).unwrap();
+        assert!(transport.0.is_empty());
+    }
+
+    #[test]
+    fn aes256_management_key_uses_algorithm_id_and_short_lc() {
+        let key = ManagementKey::new(ManagementKeyAlgorithm::Aes256, vec![0x33; 32]).unwrap();
+        let mut transport = RecordingTransport(Vec::new());
+        ThalesPiv.set_management_key(&mut transport, &key).unwrap();
+        let command = &transport.0[0];
+        assert_eq!(
+            &command[..18],
+            &bytes("00DB3FFF2D5C03FF840B7F4A2580010C9020")
+        );
+        assert_eq!(&command[18..50], &[0x33; 32]);
+        assert_eq!(command[50], 0x00);
+        assert_eq!(usize::from(command[4]), command.len() - 6);
+    }
+
+    #[test]
+    fn management_key_write_maps_non_success_status() {
+        let key = ManagementKey::new(ManagementKeyAlgorithm::Aes128, vec![0x44; 16]).unwrap();
+        let command = set_management_key_command(&key).unwrap();
+        let mut transport = ScriptedTransport(VecDeque::from([(command, vec![0x6a, 0x80])]));
+        assert_eq!(
+            ThalesPiv.set_management_key(&mut transport, &key),
+            Err(CredentialError::CardStatus(0x6a80))
+        );
         assert!(transport.0.is_empty());
     }
 }
