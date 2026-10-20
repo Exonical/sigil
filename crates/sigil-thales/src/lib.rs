@@ -1,10 +1,9 @@
 //! Thales (SafeNet, formerly Gemalto) PIV tokens.
 //!
-//! This crate holds the Thales-specific reads. Everything else on these cards goes through the vendor-neutral
-//! functions in sigil-piv. The only identity read is the GlobalPlatform CPLC data, which both USB and NFC readers
-//! expose. USB iSerialNumber is not available over NFC, so the IC serial from CPLC is the device serial.
+//! This crate holds Thales-specific identity and key-generation preparation. Standard PIV operations live in
+//! sigil-piv. The GlobalPlatform CPLC IC serial is available over USB and NFC, unlike USB iSerialNumber.
 
-use sigil_core::{CredentialError, Result};
+use sigil_core::{CredentialError, PivKeyAlgorithm, PivSlot, Result};
 use sigil_piv::{
     CardTransport,
     vendor::{PivCapabilities, PivVendor},
@@ -110,8 +109,8 @@ pub fn verify_serial<T: CardTransport + ?Sized>(
     }
 }
 
-/// The Thales IDPrime PIV applet. Its serial is vendor-specific; every other operation takes the SP 800-73 defaults,
-/// which are read-only or unsupported.
+/// The Thales IDPrime PIV applet. It uses a vendor-specific CPLC serial and preloads EC domain parameters into a
+/// Thales key object before the standard GENERATE instruction.
 pub struct ThalesPiv;
 
 impl PivVendor for ThalesPiv {
@@ -130,15 +129,152 @@ impl PivVendor for ThalesPiv {
         true
     }
 
+    fn prepare_key_generation(
+        &self,
+        transport: &mut dyn CardTransport,
+        slot: PivSlot,
+        algorithm: PivKeyAlgorithm,
+    ) -> Result<()> {
+        let object_id = thales_key_object_id(slot).ok_or_else(|| {
+            CredentialError::UnsupportedOperation(format!(
+                "Thales key generation is not supported for slot {slot}"
+            ))
+        })?;
+        // RSA key generation has no captured Thales parameter-preparation sequence.
+        let (algorithm_id, parameters) = match algorithm {
+            PivKeyAlgorithm::EccP256 => (0x11, p256_parameters()),
+            PivKeyAlgorithm::EccP384 => (0x14, p384_parameters()),
+        };
+        for (tag, value) in parameters {
+            put_key_parameter(transport, object_id, algorithm_id, tag, &value)?;
+        }
+        Ok(())
+    }
+
     fn verify_serial(&self, transport: &mut dyn CardTransport, expected: &str) -> Result<String> {
         verify_serial(transport, expected)
     }
+}
+
+fn thales_key_object_id(slot: PivSlot) -> Option<u8> {
+    // Only 9C -> FF900C is in the SAC capture. The other standard and retired-slot IDs are inferred from the
+    // observed SAC wipe of FF900A/0C/0D/retired objects and read of FF900E.
+    match slot.byte() {
+        0x9a => Some(0x0a),
+        0x9c => Some(0x0c),
+        0x9d => Some(0x0d),
+        0x9e => Some(0x0e),
+        0x82..=0x95 => Some(0x10 + slot.byte() - 0x82),
+        _ => None,
+    }
+}
+
+fn p256_parameters() -> Vec<(u8, Vec<u8>)> {
+    vec![
+        (
+            0x81,
+            hex("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF"),
+        ),
+        (
+            0x82,
+            hex("FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC"),
+        ),
+        (
+            0x83,
+            hex("5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B"),
+        ),
+        (
+            0x84,
+            hex(
+                "046B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C2964FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5",
+            ),
+        ),
+        (
+            0x85,
+            hex("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551"),
+        ),
+        (0x87, vec![0x00, 0x01]),
+    ]
+}
+
+/// P-384 parameters follow SEC 2 by analogy with the captured P-256 writes; this encoding is untested on hardware.
+fn p384_parameters() -> Vec<(u8, Vec<u8>)> {
+    vec![
+        (
+            0x81,
+            hex(
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFF0000000000000000FFFFFFFF",
+            ),
+        ),
+        (
+            0x82,
+            hex(
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFF0000000000000000FFFFFFFC",
+            ),
+        ),
+        (
+            0x83,
+            hex(
+                "B3312FA7E23EE7E4988E056BE3F82D19181D9C6EFE8141120314088F5013875AC656398D8A2ED19D2A85C8EDD3EC2AEF",
+            ),
+        ),
+        (
+            0x84,
+            hex(
+                "04AA87CA22BE8B05378EB1C71EF320AD746E1D3B628BA79B9859F741E082542A385502F25DBF55296C3A545E3872760AB73617DE4A96262C6F5D9E98BF9292DC29F8F41DBD289A147CE9DA3113B5F0B8C00A60B1CE1D7E819D7A431D7C90EA0E5F",
+            ),
+        ),
+        (
+            0x85,
+            hex(
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973",
+            ),
+        ),
+        (0x87, vec![0x00, 0x01]),
+    ]
+}
+
+fn put_key_parameter(
+    transport: &mut dyn CardTransport,
+    object_id: u8,
+    algorithm_id: u8,
+    tag: u8,
+    value: &[u8],
+) -> Result<()> {
+    let mut key_parameters = sigil_piv::tlv::encode(0x80, &[algorithm_id])?;
+    key_parameters.extend_from_slice(&sigil_piv::tlv::encode(tag.into(), value)?);
+    let template = sigil_piv::tlv::encode(0x7f49, &key_parameters)?;
+    let object = [0xff, 0x90, object_id];
+    let mut data = sigil_piv::tlv::encode(0x5c, &object)?;
+    data.extend_from_slice(&template);
+    if data.len() > u8::MAX as usize {
+        return Err(CredentialError::SmartCardOperation(
+            "Thales key parameter APDU exceeds short Lc".into(),
+        ));
+    }
+    let mut command = vec![0x00, 0xdb, 0x3f, 0xff, data.len() as u8];
+    command.extend_from_slice(&data);
+    command.push(0x00);
+    let (_, sw) = sigil_piv::transceive(transport, &command)?;
+    if sw == 0x9000 {
+        Ok(())
+    } else {
+        Err(CredentialError::CardStatus(sw))
+    }
+}
+
+fn hex(value: &str) -> Vec<u8> {
+    (0..value.len())
+        .step_by(2)
+        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).expect("valid hex constant"))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
 
+    use p384::PublicKey as P384PublicKey;
     use sigil_core::KeyStatus;
 
     use super::*;
@@ -174,6 +310,15 @@ mod tests {
 
     fn ok(data: &[u8]) -> Vec<u8> {
         [data, &[0x90, 0x00]].concat()
+    }
+
+    struct RecordingTransport(Vec<Vec<u8>>);
+
+    impl CardTransport for RecordingTransport {
+        fn transmit(&mut self, command: &[u8]) -> Result<Vec<u8>> {
+            self.0.push(command.to_vec());
+            Ok(vec![0x90, 0x00])
+        }
     }
 
     #[test]
@@ -270,5 +415,150 @@ mod tests {
                 .iter()
                 .all(|entry| entry.certificate.is_none() && entry.key == KeyStatus::Unknown)
         );
+    }
+
+    #[test]
+    fn prepares_p256_parameters_for_slot_9c_with_the_captured_apdus() {
+        let captured = [
+            "00DB3FFF2D5C03FF900C7F49258001118120FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF00",
+            "00DB3FFF2D5C03FF900C7F49258001118220FFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC00",
+            "00DB3FFF2D5C03FF900C7F492580011183205AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B00",
+            "00DB3FFF4E5C03FF900C7F49468001118441046B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C2964FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F500",
+            "00DB3FFF2D5C03FF900C7F49258001118520FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC63255100",
+            "00DB3FFF0F5C03FF900C7F49078001118702000100",
+        ]
+        .map(bytes);
+        let steps = captured
+            .iter()
+            .map(|command| (command.clone(), ok(&[])))
+            .collect();
+        let mut transport = ScriptedTransport(steps);
+
+        ThalesPiv
+            .prepare_key_generation(&mut transport, PivSlot::SIGNATURE, PivKeyAlgorithm::EccP256)
+            .unwrap();
+        assert!(transport.0.is_empty(), "all six captured APDUs were used");
+    }
+
+    #[test]
+    fn p256_and_p384_parameters_have_expected_lengths_and_valid_generators() {
+        for (parameters, coordinate_len) in
+            [(p256_parameters(), 32usize), (p384_parameters(), 48usize)]
+        {
+            assert_eq!(parameters.len(), 6);
+            for tag in [0x81, 0x82, 0x83, 0x85] {
+                let value = &parameters
+                    .iter()
+                    .find(|(parameter_tag, _)| *parameter_tag == tag)
+                    .unwrap()
+                    .1;
+                assert_eq!(value.len(), coordinate_len, "parameter tag {tag:02X}");
+            }
+            let generator = &parameters.iter().find(|(tag, _)| *tag == 0x84).unwrap().1;
+            assert_eq!(generator.len(), coordinate_len * 2 + 1);
+            assert_eq!(generator[0], 0x04);
+            assert_eq!(
+                parameters
+                    .iter()
+                    .find(|(tag, _)| *tag == 0x87)
+                    .unwrap()
+                    .1
+                    .len(),
+                2
+            );
+        }
+
+        let p384 = p384_parameters();
+        for (tag, expected) in [
+            (
+                0x81,
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFFFF0000000000000000FFFFFFFF",
+            ),
+            (
+                0x83,
+                "B3312FA7E23EE7E4988E056BE3F82D19181D9C6EFE8141120314088F5013875AC656398D8A2ED19D2A85C8EDD3EC2AEF",
+            ),
+            (
+                0x85,
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC7634D81F4372DDF581A0DB248B0A77AECEC196ACCC52973",
+            ),
+        ] {
+            assert_eq!(
+                p384.iter()
+                    .find(|(actual_tag, _)| *actual_tag == tag)
+                    .unwrap()
+                    .1,
+                hex(expected)
+            );
+        }
+
+        assert!(
+            sigil_piv::management::public_key_spki(
+                PivKeyAlgorithm::EccP256,
+                &p256_parameters()
+                    .into_iter()
+                    .find(|(tag, _)| tag == &0x84)
+                    .unwrap()
+                    .1
+            )
+            .is_ok()
+        );
+        assert!(
+            P384PublicKey::from_sec1_bytes(
+                &p384_parameters()
+                    .into_iter()
+                    .find(|(tag, _)| tag == &0x84)
+                    .unwrap()
+                    .1
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn p384_slot_9a_preparation_uses_six_short_lc_apdus() {
+        let mut transport = RecordingTransport(Vec::new());
+        ThalesPiv
+            .prepare_key_generation(
+                &mut transport,
+                PivSlot::AUTHENTICATION,
+                PivKeyAlgorithm::EccP384,
+            )
+            .unwrap();
+        assert_eq!(transport.0.len(), 6);
+        for command in &transport.0 {
+            assert_eq!(&command[..4], &[0x00, 0xdb, 0x3f, 0xff]);
+            assert_eq!(usize::from(command[4]), command.len() - 6);
+            assert!(command.len() <= 261);
+            assert_eq!(command.last(), Some(&0x00));
+            assert_eq!(&command[7..10], &[0xff, 0x90, 0x0a]);
+        }
+    }
+
+    #[test]
+    fn maps_slot_9a_to_thales_key_object_ff900a() {
+        let mut transport = RecordingTransport(Vec::new());
+        ThalesPiv
+            .prepare_key_generation(
+                &mut transport,
+                PivSlot::AUTHENTICATION,
+                PivKeyAlgorithm::EccP256,
+            )
+            .unwrap();
+        assert_eq!(&transport.0[0][7..10], &[0xff, 0x90, 0x0a]);
+    }
+
+    #[test]
+    fn refused_slot_sends_no_apdu() {
+        let mut transport = RecordingTransport(Vec::new());
+        assert!(matches!(
+            ThalesPiv.prepare_key_generation(
+                &mut transport,
+                PivSlot::ATTESTATION,
+                PivKeyAlgorithm::EccP256,
+            ),
+            Err(CredentialError::UnsupportedOperation(_))
+        ));
+        assert!(transport.0.is_empty());
     }
 }

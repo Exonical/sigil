@@ -41,6 +41,16 @@ pub trait PivVendor: Send + Sync {
     /// leaves PIV selected.
     fn verify_serial(&self, transport: &mut dyn CardTransport, expected: &str) -> Result<String>;
 
+    /// Called after management-key authentication and before GENERATE, in the same transaction.
+    fn prepare_key_generation(
+        &self,
+        _transport: &mut dyn CardTransport,
+        _slot: PivSlot,
+        _algorithm: sigil_core::PivKeyAlgorithm,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     fn info(&self, transport: &mut dyn CardTransport) -> Result<PivInfo> {
         standard_info(transport)
     }

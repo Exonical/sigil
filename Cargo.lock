@@ -5582,6 +5582,7 @@ dependencies = [
 name = "sigil-thales"
 version = "0.2.0"
 dependencies = [
+ "p384",
  "sigil-core",
  "sigil-piv",
 ]

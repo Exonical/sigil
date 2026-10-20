@@ -228,14 +228,23 @@ pub fn generate_key(
     } else {
         return Err(unsupported(vendor.name(), "PIN and touch policies"));
     };
-    management::generate_key_pair_with_policies(
-        transport,
-        management_key,
-        configuration.slot,
-        configuration.algorithm,
-        policies,
-    )
-    .map_err(|error| vendor.map_error(device, error))
+    let result = (|| {
+        if configuration.slot == PivSlot::ATTESTATION {
+            return Err(CredentialError::UnsupportedOperation(
+                "slot F9 is reserved for the YubiKey attestation key".into(),
+            ));
+        }
+        select(transport)?;
+        management::authenticate_management_key_selected(transport, management_key)?;
+        vendor.prepare_key_generation(transport, configuration.slot, configuration.algorithm)?;
+        management::generate_key_pair_selected(
+            transport,
+            configuration.slot,
+            configuration.algorithm,
+            policies,
+        )
+    })();
+    result.map_err(|error| vendor.map_error(device, error))
 }
 
 pub fn attest(
@@ -467,9 +476,15 @@ pub fn verify_certificate_matches_key(certificate_der: &[u8], expected_spki: &[u
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use aes::{
+        Aes128,
+        cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray},
+    };
     use sigil_core::{
-        DeviceId, KeyStatus, MetadataAccess, PinPolicy, PivKeyAlgorithm, PivPin, PivPuk, PivSlot,
-        TouchPolicy,
+        DeviceId, KeyStatus, ManagementKeyAlgorithm, MetadataAccess, PinPolicy, PivKeyAlgorithm,
+        PivPin, PivPuk, PivSlot, TouchPolicy,
     };
 
     use super::*;
@@ -560,6 +575,127 @@ mod tests {
             _expected: &str,
         ) -> Result<String> {
             Err(CredentialError::DeviceMismatch)
+        }
+    }
+
+    struct SequenceVendor {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        fail_prepare: bool,
+    }
+
+    impl PivVendor for SequenceVendor {
+        fn name(&self) -> &'static str {
+            "SequenceTest"
+        }
+
+        fn capabilities(&self) -> PivCapabilities {
+            PivCapabilities {
+                piv_writes: true,
+                ..PivCapabilities::default()
+            }
+        }
+
+        fn verify_serial(
+            &self,
+            _transport: &mut dyn CardTransport,
+            _expected: &str,
+        ) -> Result<String> {
+            Err(CredentialError::DeviceMismatch)
+        }
+
+        fn prepare_key_generation(
+            &self,
+            _transport: &mut dyn CardTransport,
+            _slot: PivSlot,
+            _algorithm: PivKeyAlgorithm,
+        ) -> Result<()> {
+            assert_eq!(
+                self.events.lock().unwrap().last(),
+                Some(&"auth-complete"),
+                "vendor preparation follows management-key authentication"
+            );
+            self.events.lock().unwrap().push("prepare");
+            if self.fail_prepare {
+                Err(CredentialError::UnsupportedOperation(
+                    "test preparation failure".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    struct AuthenticatedCard {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        key: [u8; 16],
+        witness: [u8; 16],
+        authentication_round: u8,
+    }
+
+    impl AuthenticatedCard {
+        fn new(events: Arc<Mutex<Vec<&'static str>>>, key: [u8; 16]) -> Self {
+            Self {
+                events,
+                key,
+                witness: [0x5a; 16],
+                authentication_round: 0,
+            }
+        }
+
+        fn encrypt(&self, input: &[u8]) -> [u8; 16] {
+            let cipher = Aes128::new_from_slice(&self.key).unwrap();
+            let mut block = GenericArray::clone_from_slice(input);
+            cipher.encrypt_block(&mut block);
+            block.into()
+        }
+    }
+
+    impl CardTransport for AuthenticatedCard {
+        fn transmit(&mut self, command: &[u8]) -> Result<Vec<u8>> {
+            let ok = |data: &[u8]| [data, &[0x90, 0x00]].concat();
+            match command.get(1).copied() {
+                Some(0xa4) => {
+                    self.events.lock().unwrap().push("select");
+                    Ok(ok(&[]))
+                }
+                Some(0x87) => {
+                    self.authentication_round += 1;
+                    if self.authentication_round == 1 {
+                        self.events.lock().unwrap().push("auth-witness");
+                        let encrypted = self.encrypt(&self.witness);
+                        let field = tlv::encode(0x80, &encrypted)?;
+                        return Ok(ok(&tlv::encode(0x7c, &field)?));
+                    }
+                    let outer = tlv::parse(&command[5..])?;
+                    let challenge = outer
+                        .iter()
+                        .find(|(tag, _)| *tag == 0x7c)
+                        .and_then(|(_, value)| tlv::parse(value).ok())
+                        .and_then(|fields| {
+                            fields
+                                .into_iter()
+                                .find(|(tag, _)| *tag == 0x81)
+                                .map(|(_, value)| value)
+                        })
+                        .ok_or_else(|| {
+                            CredentialError::SmartCardOperation(
+                                "test authentication omitted host challenge".into(),
+                            )
+                        })?;
+                    assert_eq!(challenge.len(), 16);
+                    self.events.lock().unwrap().push("auth-complete");
+                    let encrypted = self.encrypt(&challenge);
+                    let field = tlv::encode(0x82, &encrypted)?;
+                    Ok(ok(&tlv::encode(0x7c, &field)?))
+                }
+                Some(0x47) => {
+                    self.events.lock().unwrap().push("generate");
+                    Ok(vec![0x6a, 0x80])
+                }
+                _ => Err(CredentialError::SmartCardOperation(
+                    "unexpected APDU in sequence test".into(),
+                )),
+            }
         }
     }
 
@@ -675,6 +811,68 @@ mod tests {
             Err(CredentialError::UnsupportedOperation(_))
         ));
         assert!(card.sent.is_empty());
+    }
+
+    #[test]
+    fn key_generation_authenticates_then_prepares_then_generates() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let vendor = SequenceVendor {
+            events: events.clone(),
+            fail_prepare: false,
+        };
+        let key_bytes = [0x11; 16];
+        let key = ManagementKey::new(ManagementKeyAlgorithm::Aes128, key_bytes.to_vec()).unwrap();
+        let mut card = AuthenticatedCard::new(events.clone(), key_bytes);
+
+        assert_eq!(
+            generate_key(
+                &mut card,
+                &vendor,
+                &device(),
+                &key,
+                configuration(PinPolicy::Default, TouchPolicy::Default),
+            ),
+            Err(CredentialError::CardStatus(0x6a80))
+        );
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                "select",
+                "auth-witness",
+                "auth-complete",
+                "prepare",
+                "generate"
+            ]
+        );
+    }
+
+    #[test]
+    fn key_generation_hook_error_stops_before_generate() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let vendor = SequenceVendor {
+            events: events.clone(),
+            fail_prepare: true,
+        };
+        let key_bytes = [0x11; 16];
+        let key = ManagementKey::new(ManagementKeyAlgorithm::Aes128, key_bytes.to_vec()).unwrap();
+        let mut card = AuthenticatedCard::new(events.clone(), key_bytes);
+
+        assert_eq!(
+            generate_key(
+                &mut card,
+                &vendor,
+                &device(),
+                &key,
+                configuration(PinPolicy::Default, TouchPolicy::Default),
+            ),
+            Err(CredentialError::UnsupportedOperation(
+                "test preparation failure".into()
+            ))
+        );
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec!["select", "auth-witness", "auth-complete", "prepare"]
+        );
     }
 
     #[test]

@@ -500,6 +500,21 @@ pub fn generate_key_pair_with_policies<T: CardTransport + ?Sized>(
     }
     select(transport)?;
     authenticate_management_key_selected(transport, management_key)?;
+    generate_key_pair_selected(transport, slot, algorithm, policies)
+}
+
+/// Generates a key on an already-selected PIV application after management-key authentication.
+pub fn generate_key_pair_selected<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    slot: PivSlot,
+    algorithm: PivKeyAlgorithm,
+    policies: Option<(PinPolicy, TouchPolicy)>,
+) -> Result<Vec<u8>> {
+    if slot == PivSlot::ATTESTATION {
+        return Err(CredentialError::UnsupportedOperation(
+            "slot F9 is reserved for the YubiKey attestation key".into(),
+        ));
+    }
     let command = generate_key_command(slot, algorithm, policies)?;
     let (response, status) = transceive(transport, &command)?;
     if status != 0x9000 {
