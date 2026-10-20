@@ -388,6 +388,7 @@ mod tests {
             supported_applications: Vec::new(),
             simulated: false,
             metadata_access: sigil_core::MetadataAccess::Unknown,
+            piv_capabilities: None,
         }
     }
 }

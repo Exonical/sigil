@@ -19,8 +19,11 @@ use sigil_core::{
     FidoStatus, Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result,
     Transport,
 };
+use sigil_piv::vendor::PivVendor;
+use sigil_thales::ThalesPiv;
 use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
 use sigil_yubikey::product::{key_type_for_pid, product_name};
+use sigil_yubikey::vendor::YubiKeyPiv;
 use windows_sys::Win32::{
     Devices::{
         DeviceAndDriverInstallation::{
@@ -242,6 +245,7 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     pin_complexity: None,
                     simulated: false,
                     metadata_access: MetadataAccess::Unknown,
+                    piv_capabilities: None,
                 };
                 if let (Ok(hid), Ok(path)) = (&hid_result, CString::new(path)) {
                     enrich_hid(&mut device, hid, &path);
@@ -298,6 +302,10 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
     } else {
         tracing::debug!(id = %device.id.0, "FIDO management metadata unavailable from device");
     }
+    device.piv_capabilities = device
+        .supported_applications
+        .contains(&Application::Piv)
+        .then(|| YubiKeyPiv.capabilities());
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -836,6 +844,7 @@ fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceIn
         pin_complexity: None,
         simulated: false,
         metadata_access: MetadataAccess::Unknown,
+        piv_capabilities: None,
     })
 }
 
@@ -919,6 +928,7 @@ fn thales_device_info(reader: &str, serial: &str, connection: Transport) -> Devi
         supported_applications: piv,
         simulated: false,
         metadata_access: MetadataAccess::Unknown,
+        piv_capabilities: Some(ThalesPiv.capabilities()),
     }
 }
 
@@ -1015,6 +1025,7 @@ fn device_for_reader(
         pin_complexity: details.as_ref().and_then(|info| info.pin_complexity),
         simulated: false,
         metadata_access,
+        piv_capabilities: Some(YubiKeyPiv.capabilities()),
     }
 }
 

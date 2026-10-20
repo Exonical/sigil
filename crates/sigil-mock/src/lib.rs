@@ -13,9 +13,9 @@ use sigil_core::{
     DeviceInfo, DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
     FingerprintProgress, FirmwareVersion, KeyOrigin, KeyStatus, ManagedPivInitializationOutcome,
     ManagementKey, ManagementKeyAlgorithm, ManagementKeyStatus, MetadataAccess, PinPolicy,
-    PivAlgorithm, PivAttestation, PivCertificate, PivInfo, PivInspection, PivKeyAlgorithm,
-    PivKeyMetadata, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, RetryStatus,
-    Secret, TouchPolicy, Transport,
+    PivAlgorithm, PivAttestation, PivCapabilities, PivCertificate, PivInfo, PivInspection,
+    PivKeyAlgorithm, PivKeyMetadata, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result,
+    RetryStatus, Secret, TouchPolicy, Transport,
 };
 
 struct MockPivSlot {
@@ -73,6 +73,7 @@ struct MockPivState {
     puk_retries: u8,
     management_key: ManagementKey,
     slots: HashMap<PivSlot, MockPivSlot>,
+    key_metadata_supported: bool,
 }
 
 impl MockPivState {
@@ -93,6 +94,12 @@ impl MockPivState {
         Self::factory_default(slots)
     }
 
+    fn thales_empty() -> Self {
+        let mut state = Self::factory_default(HashMap::new());
+        state.key_metadata_supported = false;
+        state
+    }
+
     fn factory_default(slots: HashMap<PivSlot, MockPivSlot>) -> Self {
         Self {
             pin: PivPin::new(b"123456".to_vec()).expect("factory default PIV PIN"),
@@ -108,6 +115,7 @@ impl MockPivState {
             )
             .expect("factory default management key"),
             slots,
+            key_metadata_supported: true,
         }
     }
 
@@ -166,9 +174,36 @@ impl MockPivState {
             None => Ok(PivSlotInfo {
                 slot,
                 certificate: None,
-                key: KeyStatus::Absent,
+                key: if self.key_metadata_supported {
+                    KeyStatus::Absent
+                } else {
+                    KeyStatus::Unknown
+                },
             }),
         }
+    }
+}
+
+fn mock_piv_state(device: &DeviceInfo) -> MockPivState {
+    if device.vendor == "Thales" {
+        MockPivState::thales_empty()
+    } else {
+        MockPivState::with_fixtures()
+    }
+}
+
+fn mock_yubikey_capabilities() -> PivCapabilities {
+    PivCapabilities {
+        piv_writes: true,
+        key_metadata: true,
+        pin_touch_policy: true,
+        set_management_key: true,
+        attestation: true,
+        delete_key: true,
+        reset: true,
+        factory_initialize: true,
+        p384_generation: true,
+        retired_slot_generation: true,
     }
 }
 
@@ -201,85 +236,114 @@ struct ManagedInitializationFault {
 
 impl MockDiscovery {
     pub fn with_example() -> Self {
-        Self::with_devices(vec![DeviceInfo {
-            id: DeviceId("mock-yubikey-12345678".into()),
-            vendor: "Yubico (simulated)".into(),
-            model: "YubiKey 5 NFC".into(),
-            serial: Some("12345678".into()),
-            firmware: Some(FirmwareVersion {
-                major: 5,
-                minor: 7,
-                patch: 1,
-            }),
-            form_factor: Some("Keychain (USB-A)".into()),
-            fips: None,
-            connection: Some(Transport::UsbSmartCard),
-            transports: vec![
-                Transport::UsbSmartCard,
-                Transport::UsbHid,
-                Transport::UsbOtp,
-                Transport::Nfc,
-            ],
-            applications: vec![
-                Application::Piv,
-                Application::Fido2,
-                Application::U2f,
-                Application::Otp,
-                Application::OpenPgp,
-                Application::Oath,
-                Application::YubiHsmAuth,
-            ],
-            supported_applications: vec![
-                Application::Piv,
-                Application::Fido2,
-                Application::U2f,
-                Application::Otp,
-                Application::OpenPgp,
-                Application::Oath,
-                Application::YubiHsmAuth,
-            ],
-            simulated: true,
-            metadata_access: MetadataAccess::Available,
-            usb_enabled: vec![
-                Application::Piv,
-                Application::Fido2,
-                Application::U2f,
-                Application::Otp,
-                Application::OpenPgp,
-                Application::Oath,
-                Application::YubiHsmAuth,
-            ],
-            usb_supported: vec![
-                Application::Piv,
-                Application::Fido2,
-                Application::U2f,
-                Application::Otp,
-                Application::OpenPgp,
-                Application::Oath,
-                Application::YubiHsmAuth,
-            ],
-            nfc_enabled: vec![
-                Application::Piv,
-                Application::Fido2,
-                Application::U2f,
-                Application::Otp,
-                Application::OpenPgp,
-                Application::Oath,
-                Application::YubiHsmAuth,
-            ],
-            nfc_supported: vec![
-                Application::Piv,
-                Application::Fido2,
-                Application::U2f,
-                Application::Otp,
-                Application::OpenPgp,
-                Application::Oath,
-                Application::YubiHsmAuth,
-            ],
-            config_locked: Some(false),
-            fips_approved: Some(Vec::new()),
-            pin_complexity: Some(true),
-        }])
+        Self::with_devices(vec![
+            DeviceInfo {
+                id: DeviceId("mock-yubikey-12345678".into()),
+                vendor: "Yubico (simulated)".into(),
+                model: "YubiKey 5 NFC".into(),
+                serial: Some("12345678".into()),
+                firmware: Some(FirmwareVersion {
+                    major: 5,
+                    minor: 7,
+                    patch: 1,
+                }),
+                form_factor: Some("Keychain (USB-A)".into()),
+                fips: None,
+                connection: Some(Transport::UsbSmartCard),
+                transports: vec![
+                    Transport::UsbSmartCard,
+                    Transport::UsbHid,
+                    Transport::UsbOtp,
+                    Transport::Nfc,
+                ],
+                applications: vec![
+                    Application::Piv,
+                    Application::Fido2,
+                    Application::U2f,
+                    Application::Otp,
+                    Application::OpenPgp,
+                    Application::Oath,
+                    Application::YubiHsmAuth,
+                ],
+                supported_applications: vec![
+                    Application::Piv,
+                    Application::Fido2,
+                    Application::U2f,
+                    Application::Otp,
+                    Application::OpenPgp,
+                    Application::Oath,
+                    Application::YubiHsmAuth,
+                ],
+                simulated: true,
+                metadata_access: MetadataAccess::Available,
+                usb_enabled: vec![
+                    Application::Piv,
+                    Application::Fido2,
+                    Application::U2f,
+                    Application::Otp,
+                    Application::OpenPgp,
+                    Application::Oath,
+                    Application::YubiHsmAuth,
+                ],
+                usb_supported: vec![
+                    Application::Piv,
+                    Application::Fido2,
+                    Application::U2f,
+                    Application::Otp,
+                    Application::OpenPgp,
+                    Application::Oath,
+                    Application::YubiHsmAuth,
+                ],
+                nfc_enabled: vec![
+                    Application::Piv,
+                    Application::Fido2,
+                    Application::U2f,
+                    Application::Otp,
+                    Application::OpenPgp,
+                    Application::Oath,
+                    Application::YubiHsmAuth,
+                ],
+                nfc_supported: vec![
+                    Application::Piv,
+                    Application::Fido2,
+                    Application::U2f,
+                    Application::Otp,
+                    Application::OpenPgp,
+                    Application::Oath,
+                    Application::YubiHsmAuth,
+                ],
+                config_locked: Some(false),
+                fips_approved: Some(Vec::new()),
+                pin_complexity: Some(true),
+                piv_capabilities: Some(mock_yubikey_capabilities()),
+            },
+            DeviceInfo {
+                id: DeviceId("mock-thales-540F9B50".into()),
+                vendor: "Thales".into(),
+                model: "SafeNet eToken Fusion NFC PIV".into(),
+                serial: Some("540F9B50".into()),
+                firmware: None,
+                form_factor: None,
+                fips: None,
+                connection: Some(Transport::UsbSmartCard),
+                transports: vec![Transport::UsbSmartCard],
+                applications: vec![Application::Piv],
+                supported_applications: vec![Application::Piv],
+                simulated: true,
+                metadata_access: MetadataAccess::Unknown,
+                usb_enabled: Vec::new(),
+                usb_supported: Vec::new(),
+                nfc_enabled: Vec::new(),
+                nfc_supported: Vec::new(),
+                config_locked: None,
+                fips_approved: None,
+                pin_complexity: None,
+                piv_capabilities: Some(PivCapabilities {
+                    piv_writes: true,
+                    ..PivCapabilities::default()
+                }),
+            },
+        ])
     }
 
     pub fn with_example_fips() -> Self {
@@ -296,7 +360,7 @@ impl MockDiscovery {
     pub fn with_devices(devices: Vec<DeviceInfo>) -> Self {
         let piv_states = devices
             .iter()
-            .map(|device| (device.id.clone(), MockPivState::with_fixtures()))
+            .map(|device| (device.id.clone(), mock_piv_state(device)))
             .collect();
         Self {
             devices: Mutex::new(devices),
@@ -328,6 +392,7 @@ impl MockDiscovery {
     pub fn connect(&self, mut device: DeviceInfo) -> Result<()> {
         device.simulated = true;
         let id = device.id.clone();
+        let piv_state = mock_piv_state(&device);
         let event = {
             let mut devices = self
                 .devices
@@ -345,7 +410,7 @@ impl MockDiscovery {
             .lock()
             .map_err(|_| CredentialError::InventoryUnavailable)?
             .entry(id)
-            .or_insert_with(MockPivState::with_fixtures);
+            .or_insert(piv_state);
         self.publish(event)
     }
 
@@ -967,6 +1032,46 @@ fn simulated_inspection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn example_includes_a_read_only_thales_piv_token() {
+        let mock = MockDiscovery::with_example();
+        let devices = mock.list().unwrap();
+        let yubikey = devices
+            .iter()
+            .find(|device| device.vendor.starts_with("Yubico"))
+            .unwrap();
+        let yubikey_capabilities = yubikey.piv_capabilities.unwrap();
+        assert!(yubikey_capabilities.p384_generation);
+        assert!(yubikey_capabilities.retired_slot_generation);
+
+        let thales_id = DeviceId("mock-thales-540F9B50".into());
+        let thales = devices
+            .into_iter()
+            .find(|device| device.id == thales_id)
+            .unwrap();
+        assert_eq!(thales.vendor, "Thales");
+        assert_eq!(thales.model, "SafeNet eToken Fusion NFC PIV");
+        assert_eq!(thales.serial.as_deref(), Some("540F9B50"));
+        assert!(thales.firmware.is_none());
+        assert_eq!(thales.applications, vec![Application::Piv]);
+        assert_eq!(thales.supported_applications, vec![Application::Piv]);
+        assert!(thales.usb_enabled.is_empty());
+        assert!(thales.usb_supported.is_empty());
+        assert!(thales.nfc_enabled.is_empty());
+        assert!(thales.nfc_supported.is_empty());
+        assert_eq!(
+            thales.piv_capabilities,
+            Some(PivCapabilities {
+                piv_writes: true,
+                ..PivCapabilities::default()
+            })
+        );
+
+        let slots = mock.piv_slots(&thales_id).unwrap();
+        assert_eq!(slots.len(), PivSlot::STANDARD.len());
+        assert!(slots.iter().all(|slot| slot.key == KeyStatus::Unknown));
+    }
 
     #[test]
     fn piv_mock_tracks_secrets_slots_and_reset_state() {

@@ -30,6 +30,8 @@ impl PivVendor for YubiKeyPiv {
             delete_key: true,
             reset: true,
             factory_initialize: true,
+            p384_generation: true,
+            retired_slot_generation: true,
         }
     }
 
@@ -173,6 +175,7 @@ mod tests {
             supported_applications: Vec::new(),
             simulated: false,
             metadata_access: MetadataAccess::Unknown,
+            piv_capabilities: Some(YubiKeyPiv.capabilities()),
         }
     }
 
@@ -189,6 +192,8 @@ mod tests {
                 && capabilities.delete_key
                 && capabilities.reset
                 && capabilities.factory_initialize
+                && capabilities.p384_generation
+                && capabilities.retired_slot_generation
         );
     }
 

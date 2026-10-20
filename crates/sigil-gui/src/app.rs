@@ -1,4 +1,7 @@
-use std::thread;
+use std::{
+    collections::{HashMap, HashSet},
+    thread,
+};
 
 use dioxus::prelude::*;
 use sigil_connect::{ConnectOptions, ConnectedService};
@@ -82,6 +85,7 @@ fn ConnectedApp() -> Element {
         status,
         piv_info: use_signal_sync(|| None::<(DeviceId, PivInfo)>),
         piv_slots: use_signal_sync(|| None::<(DeviceId, Vec<PivSlotInfo>)>),
+        generated_piv_spki: use_signal_sync(HashMap::new),
         fido_status: use_signal_sync(|| None::<(DeviceId, FidoStatus)>),
         passkeys: use_signal_sync(|| None::<(DeviceId, Vec<DiscoverableCredential>)>),
         fingerprints: use_signal_sync(|| None::<(DeviceId, Vec<Fingerprint>)>),
@@ -92,6 +96,18 @@ fn ConnectedApp() -> Element {
     };
     let profile_state = state.clone();
     use_effect(move || crate::managed::refresh_profiles(&profile_state));
+    let page_state = state.clone();
+    use_effect(move || {
+        let page = *page_state.page.read();
+        let available = crate::capabilities::page_after_device_change(
+            page,
+            page_state.current_device().as_ref(),
+        );
+        if available != page {
+            let mut current_page = page_state.page;
+            current_page.set(available);
+        }
+    });
     let watcher_state = state.clone();
     use_hook(move || {
         tracing::info!(
@@ -102,6 +118,7 @@ fn ConnectedApp() -> Element {
         let service = watcher_state.credentials.clone();
         let mut devices = watcher_state.devices;
         let mut selected = watcher_state.selected_device;
+        let mut generated_piv_spki = watcher_state.generated_piv_spki;
         let mut status = watcher_state.status;
         // The window can close while this thread runs; every signal access is
         // fallible so the thread exits quietly once the signals are dropped.
@@ -110,12 +127,17 @@ fn ConnectedApp() -> Element {
                 match result {
                     Ok(current) => {
                         let selected_id = selected.try_read().ok()?.clone();
+                        let current_ids: HashSet<_> =
+                            current.iter().map(|device| device.id.clone()).collect();
                         if !current
                             .iter()
                             .any(|device| Some(&device.id) == selected_id.as_ref())
                         {
                             *selected.try_write().ok()? =
                                 current.first().map(|device| device.id.clone());
+                        }
+                        if let Ok(mut generated) = generated_piv_spki.try_write() {
+                            generated.retain(|(id, _), _| current_ids.contains(id));
                         }
                         *devices.try_write().ok()? = current;
                         *status.try_write().ok()? = None;

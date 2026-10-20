@@ -82,6 +82,19 @@ enum MetadataAccess {
   METADATA_ACCESS_RESTRICTED = 2;
 }
 
+message PivCapabilities {
+  bool piv_writes = 1;
+  bool key_metadata = 2;
+  bool pin_touch_policy = 3;
+  bool set_management_key = 4;
+  bool attestation = 5;
+  bool delete_key = 6;
+  bool reset = 7;
+  bool factory_initialize = 8;
+  bool p384_generation = 9;
+  bool retired_slot_generation = 10;
+}
+
 message DeviceInfo {
   string id = 1;
   string vendor = 2;
@@ -104,6 +117,7 @@ message DeviceInfo {
   bool fips_approved_available = 19;
   repeated Application fips_approved = 20;
   optional bool pin_complexity = 21;
+  optional PivCapabilities piv_capabilities = 22;
 }
 
 message DeviceRequest {

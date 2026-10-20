@@ -459,6 +459,18 @@ mod device_management_tests {
             pin_complexity: None,
             simulated: true,
             metadata_access: MetadataAccess::Available,
+            piv_capabilities: Some(sigil_core::PivCapabilities {
+                piv_writes: true,
+                key_metadata: true,
+                pin_touch_policy: true,
+                set_management_key: true,
+                attestation: true,
+                delete_key: true,
+                reset: true,
+                factory_initialize: true,
+                p384_generation: true,
+                retired_slot_generation: true,
+            }),
         }
     }
 

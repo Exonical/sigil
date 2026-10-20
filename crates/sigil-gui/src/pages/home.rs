@@ -12,7 +12,7 @@ pub fn HomePage() -> Element {
                 if device.simulated {
                     div { class: "simulation-banner",
                         Icon { name: "info", size: 17 }
-                        span { "Simulated YubiKey. Changes affect fixture data only." }
+                        span { "Simulated token. Changes affect fixture data only." }
                     }
                 }
                 div { class: "hero-card",
@@ -20,7 +20,10 @@ pub fn HomePage() -> Element {
                     div {
                         p { class: "eyebrow", "CONNECTED DEVICE" }
                         h2 { "{device.model}" }
-                        p { class: "device-meta", "S/N: {device.serial.as_deref().unwrap_or(\"unavailable\")}  ·  F/W: {firmware(&device)}" }
+                        p { class: "device-meta", "S/N: {device.serial.as_deref().unwrap_or(\"unavailable\")}" }
+                        if device.firmware.is_some() {
+                            p { class: "device-meta", "F/W: {firmware(&device)}" }
+                        }
                     }
                     div { class: "hero-badges",
                         if device.fips == Some(true) {
@@ -49,7 +52,7 @@ pub fn HomePage() -> Element {
                             else if device.pin_complexity == Some(false) { "PIN complexity disabled" }
                             else { "PIN complexity not reported" }
                         }
-                        p { class: "muted", "Reported by the YubiKey management applet" }
+                        p { class: "muted", "Reported by the token management applet" }
                     }
                 }
 
@@ -89,7 +92,7 @@ pub fn HomePage() -> Element {
             div { class: "empty-state",
                 div { class: "empty-icon", Icon { name: "key", size: 28 } }
                 h2 { "No security key connected" }
-                p { "Connect a YubiKey to manage its applications and credentials." }
+                p { "Connect a security token to manage its applications and credentials." }
             }
         },
     }
@@ -108,7 +111,7 @@ pub(crate) fn application_name(application: &Application) -> &'static str {
         Application::Piv => "PIV",
         Application::Fido2 => "FIDO2",
         Application::U2f => "U2F",
-        Application::Otp => "Yubico OTP",
+        Application::Otp => "OTP",
         Application::OpenPgp => "OpenPGP",
         Application::Oath => "OATH",
         Application::YubiHsmAuth => "YubiHSM Auth",

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 use sigil_app::CredentialService;
 use sigil_connect::ConnectionMode;
@@ -34,7 +36,7 @@ impl Page {
             Self::Accounts => "OATH",
             Self::Passkeys => "FIDO2",
             Self::Certificates => "PIV",
-            Self::Slots => "YUBICO OTP",
+            Self::Slots => "OTP",
             Self::Settings => "SETTINGS",
         }
     }
@@ -95,6 +97,7 @@ pub struct AppState {
     pub status: SyncSignal<Option<String>>,
     pub piv_info: SyncSignal<Option<(DeviceId, PivInfo)>>,
     pub piv_slots: SyncSignal<Option<(DeviceId, Vec<PivSlotInfo>)>>,
+    pub generated_piv_spki: SyncSignal<HashMap<(DeviceId, PivSlot), Vec<u8>>>,
     pub fido_status: SyncSignal<Option<(DeviceId, FidoStatus)>>,
     pub passkeys: SyncSignal<Option<(DeviceId, Vec<DiscoverableCredential>)>>,
     pub fingerprints: SyncSignal<Option<(DeviceId, Vec<Fingerprint>)>>,

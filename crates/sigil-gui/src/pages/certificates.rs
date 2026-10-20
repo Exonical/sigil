@@ -14,8 +14,8 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
     let Some(device) = device else {
         return rsx! {
             div { class: "empty-state",
-                div { class: "empty-icon", Icon { name: "certificate", size: 28 } }
-                h2 { "Connect a YubiKey" }
+            div { class: "empty-icon", Icon { name: "certificate", size: 28 } }
+            h2 { "Connect a security token" }
                 p { "PIV certificates and keys will appear here." }
             }
         };
@@ -87,6 +87,12 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
         });
 
     let managed_ready = managed::ready(&state);
+    let factory_initialize_supported = device
+        .piv_capabilities
+        .is_some_and(|capabilities| capabilities.factory_initialize);
+    let managed_enrollment_supported = device
+        .piv_capabilities
+        .is_some_and(|capabilities| capabilities.attestation);
     let secrets_default = current_info.as_ref().is_some_and(|info| {
         info.puk
             .as_ref()
@@ -98,10 +104,11 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
     });
     let (banner_label, banner_action) = match (managed_ready, secrets_default) {
         (false, _) => ("Set up FIPS", DialogKind::SetupFips),
-        (true, true) => (
+        (true, true) if factory_initialize_supported => (
             "Set up managed PIV",
             DialogKind::Managed(ManagedAction::Initialize),
         ),
+        (true, true) => ("Change PIN", DialogKind::Piv(PivAction::ChangePin)),
         (true, false) => ("Change PIN", DialogKind::Piv(PivAction::ChangePin)),
     };
 
@@ -134,7 +141,7 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
                         h2 { "Certificates" }
                     }
                     div { class: "cert-heading-actions",
-                        if managed_ready {
+                        if managed_ready && managed_enrollment_supported {
                             button { class: "primary-button", onclick: move |_| dialog_signal.set(Some(DialogKind::Enroll(None))), "Enroll certificate" }
                         }
                         span { class: "muted small", "Select a slot to view details" }
@@ -169,7 +176,11 @@ fn SlotRow(slot_info: PivSlotInfo, selected: bool, onclick: EventHandler<MouseEv
         .as_ref()
         .map(|certificate| certificate.subject.as_str())
         .unwrap_or("No certificate loaded");
-    let present = matches!(slot_info.key, KeyStatus::Present(_));
+    let key_state = match &slot_info.key {
+        KeyStatus::Present(_) => "Key present",
+        KeyStatus::Absent => "Empty",
+        KeyStatus::Unknown => "Key status unknown",
+    };
     rsx! {
         button {
             class: if selected { "slot-row selected" } else { "slot-row" },
@@ -179,8 +190,7 @@ fn SlotRow(slot_info: PivSlotInfo, selected: bool, onclick: EventHandler<MouseEv
                 strong { "{slot_info.slot.name()}" }
                 span { class: if slot_info.certificate.is_some() { "slot-subject" } else { "muted slot-subject" }, "{subject}" }
             }
-            if present { span { class: "slot-key-state", "Key present" }
-            } else { span { class: "slot-key-state neutral", "Empty" } }
+            span { class: if matches!(&slot_info.key, KeyStatus::Present(_)) { "slot-key-state" } else { "slot-key-state neutral" }, "{key_state}" }
             Icon { name: "chevron-right", size: 17 }
         }
     }

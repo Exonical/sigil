@@ -3,29 +3,15 @@
 
 use sigil_core::{
     CredentialError, DeviceInfo, KeyStatus, ManagementKey, PinPolicy, PivAttestation, PivInfo,
-    PivPuk, PivSlot, Result, RetryStatus,
+    PivKeyAlgorithm, PivPuk, PivSlot, Result, RetryStatus,
 };
 
 use crate::{CardTransport, pin_retries, select};
 
+pub use sigil_core::PivCapabilities;
+
 /// What a vendor's card supports beyond the standard read path. Operations gated on a capability fail before any
 /// APDU is sent when it is false.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PivCapabilities {
-    /// SP 800-73 write operations: PIN and PUK change, unblock, key generation, signing, certificate import and delete.
-    pub piv_writes: bool,
-    /// Per-slot key metadata, when the vendor reports it.
-    pub key_metadata: bool,
-    /// Non-default PIN and touch policies at key generation.
-    pub pin_touch_policy: bool,
-    pub set_management_key: bool,
-    pub attestation: bool,
-    pub delete_key: bool,
-    pub reset: bool,
-    /// Resetting a factory-default token to a managed management key and PUK.
-    pub factory_initialize: bool,
-}
-
 pub(crate) fn unsupported(vendor: &str, operation: &str) -> CredentialError {
     CredentialError::UnsupportedOperation(format!("{operation} not supported on {vendor} tokens"))
 }
@@ -46,7 +32,7 @@ pub trait PivVendor: Send + Sync {
         &self,
         _transport: &mut dyn CardTransport,
         _slot: PivSlot,
-        _algorithm: sigil_core::PivKeyAlgorithm,
+        _algorithm: PivKeyAlgorithm,
     ) -> Result<()> {
         Ok(())
     }

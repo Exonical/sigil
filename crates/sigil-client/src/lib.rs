@@ -514,6 +514,7 @@ impl AgentClient {
         expected_serial: &str,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
         access_token: &str,
     ) -> Result<()> {
         self.runtime
@@ -525,7 +526,9 @@ impl AgentClient {
                         expected_serial: expected_serial.to_owned(),
                         management_key: Vec::new(),
                         management_key_algorithm: v1::ManagementKeyAlgorithm::Unspecified as i32,
-                        expected_public_key: Vec::new(),
+                        expected_public_key: expected_public_key
+                            .map(<[u8]>::to_vec)
+                            .unwrap_or_default(),
                         slot_byte: u32::from(slot.byte()),
                         certificate_der: certificate_der.to_vec(),
                         managed: Some(managed_authorization(access_token)),

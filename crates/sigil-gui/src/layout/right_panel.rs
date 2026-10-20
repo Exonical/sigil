@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
-use sigil_core::{KeyStatus, PivSlot, PivSlotInfo};
+use sigil_core::{Application, KeyStatus, PivSlot, PivSlotInfo};
 
 use crate::{
+    capabilities::{PivActionKind, slot_actions},
     icons::Icon,
     managed,
     state::{AppState, DialogKind, ManagedAction, Page, PivAction},
@@ -55,15 +56,19 @@ pub fn RightPanel() -> Element {
                 div { class: "right-panel-content panel-scroll",
                     if let Some(device) = device {
                         {match page {
-                            Page::Home => home_panel(&state),
-                            Page::Accounts => coming_soon_panel("OATH accounts", "OATH"),
-                            Page::Passkeys => passkeys_panel(&state),
-                            Page::Certificates => certificate_panel(&state, &device),
-                            Page::Slots => coming_soon_panel("OTP slot configuration", "YUBICO OTP"),
+                            Page::Home => home_panel(&state, &device),
+                            Page::Accounts if device.applications.contains(&Application::Oath) => coming_soon_panel("OATH accounts", "OATH"),
+                            Page::Accounts => rsx! {},
+                            Page::Passkeys if device.applications.contains(&Application::Fido2) => passkeys_panel(&state),
+                            Page::Passkeys => rsx! {},
+                            Page::Certificates if device.applications.contains(&Application::Piv) => certificate_panel(&state, &device),
+                            Page::Certificates => rsx! {},
+                            Page::Slots if device.applications.contains(&Application::Otp) => coming_soon_panel("OTP slot configuration", "OTP"),
+                            Page::Slots => rsx! {},
                             Page::Settings => settings_panel(&device),
                         }}
                     } else {
-                        div { class: "panel-empty muted", "Connect a YubiKey to see device actions." }
+                        div { class: "panel-empty muted", "Connect a security token to see device actions." }
                     }
                 }
             }
@@ -71,29 +76,38 @@ pub fn RightPanel() -> Element {
     }
 }
 
-fn home_panel(state: &AppState) -> Element {
+fn home_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Element {
+    let can_toggle_applications =
+        !device.usb_supported.is_empty() || !device.nfc_supported.is_empty();
+    let can_reset = device
+        .piv_capabilities
+        .is_some_and(|capabilities| capabilities.reset);
     rsx! {
         PanelSection { title: "DEVICE",
-            ActionRow {
-                icon: "grid",
-                title: "Toggle applications",
-                subtitle: "Choose which YubiKey applications are enabled".to_owned(),
-                warning: false,
-                disabled: false,
-                onclick: {
-                    let mut dialog = state.dialog;
-                    move |_| dialog.set(Some(DialogKind::ToggleApplications))
+            if can_toggle_applications {
+                ActionRow {
+                    icon: "grid",
+                    title: "Toggle applications",
+                    subtitle: "Choose which token applications are enabled".to_owned(),
+                    warning: false,
+                    disabled: false,
+                    onclick: {
+                        let mut dialog = state.dialog;
+                        move |_| dialog.set(Some(DialogKind::ToggleApplications))
+                    }
                 }
             }
-            ActionRow {
-                icon: "rotate",
-                title: "Factory reset",
-                subtitle: "Reset the PIV application and its keys".to_owned(),
-                warning: true,
-                disabled: false,
-                onclick: {
-                    let mut dialog = state.dialog;
-                    move |_| dialog.set(Some(DialogKind::FactoryReset))
+            if can_reset {
+                ActionRow {
+                    icon: "rotate",
+                    title: "Factory reset",
+                    subtitle: "Reset the PIV application and its keys".to_owned(),
+                    warning: true,
+                    disabled: false,
+                    onclick: {
+                        let mut dialog = state.dialog;
+                        move |_| dialog.set(Some(DialogKind::FactoryReset))
+                    }
                 }
             }
         }
@@ -147,6 +161,7 @@ fn passkeys_panel(state: &AppState) -> Element {
 }
 
 fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Element {
+    let capabilities = device.piv_capabilities.unwrap_or_default();
     let info = state
         .piv_info
         .read()
@@ -213,18 +228,20 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
 
     rsx! {
         PanelSection { title: "MANAGE",
-            ActionRow {
-                icon: "key",
-                title: "Change PIN",
-                subtitle: pin_subtitle,
-                warning: pin_default,
-                disabled: false,
-                onclick: {
-                    let mut dialog = state.dialog;
-                    move |_| dialog.set(Some(DialogKind::Piv(PivAction::ChangePin)))
+            if capabilities.piv_writes {
+                ActionRow {
+                    icon: "key",
+                    title: "Change PIN",
+                    subtitle: pin_subtitle,
+                    warning: pin_default,
+                    disabled: false,
+                    onclick: {
+                        let mut dialog = state.dialog;
+                        move |_| dialog.set(Some(DialogKind::Piv(PivAction::ChangePin)))
+                    }
                 }
             }
-            if !managed_mode {
+            if !managed_mode && capabilities.piv_writes {
             ActionRow {
                 icon: "key",
                 title: "Change PUK",
@@ -237,7 +254,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                 }
             }
             }
-            if managed_mode {
+            if managed_mode && capabilities.piv_writes {
                 ActionRow {
                     icon: "unlock",
                     title: "Unblock PIN",
@@ -250,7 +267,13 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                     }
                 }
             }
-            if !managed_mode && info.as_ref().and_then(|info| info.pin.as_ref()).is_some_and(|status| status.remaining == 0) {
+            if !managed_mode
+                && capabilities.piv_writes
+                && info
+                    .as_ref()
+                    .and_then(|info| info.pin.as_ref())
+                    .is_some_and(|status| status.remaining == 0)
+            {
                 ActionRow {
                 icon: "unlock",
                 title: "Unblock PIN",
@@ -263,7 +286,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                     }
                 }
             }
-            if !managed_mode {
+            if !managed_mode && capabilities.set_management_key {
             ActionRow {
                 icon: "lock",
                 title: "Management key",
@@ -281,9 +304,13 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
             }
             }
         }
-        if managed_mode {
+        if managed_mode
+            && (capabilities.factory_initialize
+                || capabilities.piv_writes
+                || capabilities.set_management_key)
+        {
             PanelSection { title: "MANAGED BY SIGIL",
-                if puk_default && mgmt_default {
+                if puk_default && mgmt_default && capabilities.factory_initialize {
                     ActionRow {
                         icon: "shield",
                         title: "Set up managed PIV",
@@ -296,6 +323,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                         }
                     }
                 } else {
+                    if capabilities.piv_writes {
                     ActionRow {
                         icon: "rotate",
                         title: "Rotate PUK",
@@ -307,6 +335,8 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                             move |_| dialog.set(Some(DialogKind::Managed(ManagedAction::RotatePuk)))
                         }
                     }
+                    }
+                    if capabilities.set_management_key {
                     ActionRow {
                         icon: "rotate",
                         title: "Rotate management key",
@@ -317,6 +347,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
                             let mut dialog = state.dialog;
                             move |_| dialog.set(Some(DialogKind::Managed(ManagedAction::RotateManagementKey)))
                         }
+                    }
                     }
                 }
             }
@@ -338,7 +369,7 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
         }
 
         if let Some(slot) = selected_slot {
-            {selected_slot_panel(state, slot)}
+            {selected_slot_panel(state, device, slot)}
         } else {
             PanelSection { title: "DETAILS",
                 p { class: "panel-detail muted", "Select a PIV slot to inspect its certificate and key." }
@@ -347,13 +378,25 @@ fn certificate_panel(state: &AppState, device: &sigil_core::DeviceInfo) -> Eleme
     }
 }
 
-fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
+fn selected_slot_panel(
+    state: &AppState,
+    device: &sigil_core::DeviceInfo,
+    slot: PivSlotInfo,
+) -> Element {
     let certificate = slot.certificate.as_ref();
     let metadata = match &slot.key {
         KeyStatus::Present(metadata) => Some(metadata),
         _ => None,
     };
     let slot_id = slot.slot;
+    let generated_spki_known = state
+        .generated_piv_spki
+        .read()
+        .contains_key(&(device.id.clone(), slot_id));
+    let actions = slot_actions(device, &slot, generated_spki_known);
+    let can_enroll = device
+        .piv_capabilities
+        .is_some_and(|capabilities| capabilities.attestation);
     rsx! {
         PanelSection { title: "DETAILS",
             if let Some(certificate) = certificate {
@@ -373,7 +416,7 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                     DetailValue { label: "ORIGIN", value: format!("{origin:?}") }
                 }
             }
-            if let Some(profile) = (managed::ready(state) && certificate.is_none() && metadata.is_some())
+            if let Some(profile) = (can_enroll && managed::ready(state) && certificate.is_none() && metadata.is_some())
                 .then(|| managed::enroll_shortcut(state, slot_id))
                 .flatten()
             {
@@ -389,10 +432,11 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                     }
                 }
             }
+            if actions.contains(&PivActionKind::GenerateKey) {
             ActionRow {
                 icon: "plus",
                 title: "Generate key",
-                subtitle: "Create a key on the YubiKey".to_owned(),
+                subtitle: "Create a key on the token".to_owned(),
                 warning: false,
                 disabled: slot_id == PivSlot::ATTESTATION,
                 onclick: {
@@ -400,6 +444,8 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                     move |_| dialog.set(Some(DialogKind::Piv(PivAction::GenerateKey(slot_id))))
                 }
             }
+            }
+            if actions.contains(&PivActionKind::ImportCertificate) {
             ActionRow {
                 icon: "upload",
                 title: "Import certificate",
@@ -410,6 +456,7 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                     let mut dialog = state.dialog;
                     move |_| dialog.set(Some(DialogKind::Piv(PivAction::ImportCertificate(slot_id))))
                 }
+            }
             }
             if certificate.is_some() {
                 ActionRow {
@@ -423,6 +470,7 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                         move |_| dialog.set(Some(DialogKind::Piv(PivAction::ExportCertificate(slot_id))))
                     }
                 }
+                if actions.contains(&PivActionKind::DeleteCertificate) {
                 ActionRow {
                     icon: "trash",
                     title: "Delete certificate",
@@ -434,8 +482,9 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                         move |_| dialog.set(Some(DialogKind::Piv(PivAction::DeleteCertificate(slot_id))))
                     }
                 }
+                }
             }
-            if metadata.is_some() && slot_id != PivSlot::ATTESTATION {
+            if actions.contains(&PivActionKind::CreateCsr) {
                 ActionRow {
                     icon: "certificate",
                     title: "Create CSR",
@@ -447,6 +496,8 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                         move |_| dialog.set(Some(DialogKind::Piv(PivAction::CreateCsr(slot_id))))
                     }
                 }
+            }
+            if actions.contains(&PivActionKind::Attest) {
                 ActionRow {
                     icon: "shield",
                     title: "Attest key",
@@ -458,6 +509,8 @@ fn selected_slot_panel(state: &AppState, slot: PivSlotInfo) -> Element {
                         move |_| dialog.set(Some(DialogKind::Piv(PivAction::Attest(slot_id))))
                     }
                 }
+            }
+            if actions.contains(&PivActionKind::DeleteKey) {
                 ActionRow {
                     icon: "trash",
                     title: "Delete key",
@@ -478,7 +531,9 @@ fn settings_panel(device: &sigil_core::DeviceInfo) -> Element {
     rsx! {
         PanelSection { title: "DEVICE",
             DetailValue { label: "SERIAL", value: device.serial.clone().unwrap_or_else(|| "Unavailable".into()) }
-            DetailValue { label: "FIRMWARE", value: crate::pages::home::firmware(device) }
+            if device.firmware.is_some() {
+                DetailValue { label: "FIRMWARE", value: crate::pages::home::firmware(device) }
+            }
             DetailValue { label: "MODEL", value: device.model.clone() }
         }
     }

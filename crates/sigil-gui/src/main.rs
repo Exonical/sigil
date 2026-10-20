@@ -1,5 +1,6 @@
 mod app;
 mod auth;
+mod capabilities;
 mod dialogs;
 mod icons;
 mod layout;

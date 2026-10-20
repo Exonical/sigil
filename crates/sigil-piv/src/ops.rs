@@ -218,6 +218,17 @@ pub fn generate_key(
 ) -> Result<Vec<u8>> {
     let capabilities = vendor.capabilities();
     require(vendor, capabilities.piv_writes, "key generation")?;
+    require(
+        vendor,
+        configuration.algorithm != PivKeyAlgorithm::EccP384 || capabilities.p384_generation,
+        "P-384 key generation",
+    )?;
+    let retired_slot = (0x82..=0x95).contains(&configuration.slot.byte());
+    require(
+        vendor,
+        !retired_slot || capabilities.retired_slot_generation,
+        "retired-slot key generation",
+    )?;
     vendor.validate_pin_policy(device, configuration.pin_policy)?;
     let policies = if capabilities.pin_touch_policy {
         Some((configuration.pin_policy, configuration.touch_policy))
@@ -721,6 +732,7 @@ mod tests {
             supported_applications: Vec::new(),
             simulated: false,
             metadata_access: MetadataAccess::Unknown,
+            piv_capabilities: None,
         }
     }
 
@@ -808,6 +820,58 @@ mod tests {
         );
         assert!(matches!(
             result,
+            Err(CredentialError::UnsupportedOperation(_))
+        ));
+        assert!(card.sent.is_empty());
+    }
+
+    #[test]
+    fn unsupported_p384_generation_is_refused_before_apdu() {
+        let vendor = TestVendor(PivCapabilities {
+            piv_writes: true,
+            ..PivCapabilities::default()
+        });
+        let mut card = FakeCard::empty();
+        let configuration = PivKeyConfiguration {
+            slot: PivSlot::AUTHENTICATION,
+            algorithm: PivKeyAlgorithm::EccP384,
+            pin_policy: PinPolicy::Default,
+            touch_policy: TouchPolicy::Default,
+        };
+        assert!(matches!(
+            generate_key(
+                &mut card,
+                &vendor,
+                &device(),
+                &management_key(),
+                configuration
+            ),
+            Err(CredentialError::UnsupportedOperation(_))
+        ));
+        assert!(card.sent.is_empty());
+    }
+
+    #[test]
+    fn unsupported_retired_slot_generation_is_refused_before_apdu() {
+        let vendor = TestVendor(PivCapabilities {
+            piv_writes: true,
+            ..PivCapabilities::default()
+        });
+        let mut card = FakeCard::empty();
+        let configuration = PivKeyConfiguration {
+            slot: PivSlot::retired(1).unwrap(),
+            algorithm: PivKeyAlgorithm::EccP256,
+            pin_policy: PinPolicy::Default,
+            touch_policy: TouchPolicy::Default,
+        };
+        assert!(matches!(
+            generate_key(
+                &mut card,
+                &vendor,
+                &device(),
+                &management_key(),
+                configuration
+            ),
             Err(CredentialError::UnsupportedOperation(_))
         ));
         assert!(card.sent.is_empty());

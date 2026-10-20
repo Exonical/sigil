@@ -121,6 +121,8 @@ impl PivVendor for ThalesPiv {
     fn capabilities(&self) -> PivCapabilities {
         PivCapabilities {
             piv_writes: true,
+            p384_generation: false,
+            retired_slot_generation: false,
             ..PivCapabilities::default()
         }
     }
@@ -404,6 +406,8 @@ mod tests {
             ThalesPiv.capabilities(),
             sigil_piv::vendor::PivCapabilities {
                 piv_writes: true,
+                p384_generation: false,
+                retired_slot_generation: false,
                 ..sigil_piv::vendor::PivCapabilities::default()
             }
         );

@@ -208,20 +208,21 @@ impl ManagedAuthority for FakeAuthority {
     }
 
     async fn complete_rotation(&self, rotation_id: &str, applied: bool) -> Result<(), Status> {
-        if self
-            .complete_failures
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |remaining| {
-                if remaining > 0 {
-                    Some(remaining - 1)
-                } else {
-                    None
+        let mut remaining = self.complete_failures.load(Ordering::SeqCst);
+        while remaining > 0 {
+            match self.complete_failures.compare_exchange_weak(
+                remaining,
+                remaining - 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    return Err(Status::unavailable(
+                        "fake backend is temporarily unavailable",
+                    ));
                 }
-            })
-            .is_ok()
-        {
-            return Err(Status::unavailable(
-                "fake backend is temporarily unavailable",
-            ));
+                Err(actual) => remaining = actual,
+            }
         }
         self.completions
             .lock()

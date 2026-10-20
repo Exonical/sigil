@@ -29,6 +29,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
     let toast_signal = state.toast;
     let piv_info_signal = state.piv_info;
     let piv_slots_signal = state.piv_slots;
+    let generated_spki_signal = state.generated_piv_spki;
     let info = state
         .piv_info
         .read()
@@ -50,6 +51,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
         .and_then(|info| info.management_key.as_ref())
         .and_then(|status| status.default_value)
         == Some(true);
+    let capabilities = device.piv_capabilities.unwrap_or_default();
     let fips = device.fips == Some(true);
     let current = use_signal(|| Zeroizing::new(String::new()));
     let new_secret = use_signal(|| Zeroizing::new(String::new()));
@@ -59,7 +61,13 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
     let mut output_path = use_signal(|| None::<PathBuf>);
     let mut format = use_signal(|| CertificateFormat::Pem);
     let mut algorithm = use_signal(|| PivKeyAlgorithm::EccP256);
-    let mut pin_policy = use_signal(|| PinPolicy::Once);
+    let mut pin_policy = use_signal(|| {
+        if capabilities.pin_touch_policy {
+            PinPolicy::Once
+        } else {
+            PinPolicy::Default
+        }
+    });
     let mut touch_policy = use_signal(|| TouchPolicy::Default);
     let generated_key = use_signal(|| Zeroizing::new(String::new()));
     let key_generation_error = use_signal(|| None::<String>);
@@ -141,32 +149,36 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                     value: if *algorithm.read() == PivKeyAlgorithm::EccP256 { "p256" } else { "p384" },
                     onchange: move |event| algorithm.set(if event.value() == "p384" { PivKeyAlgorithm::EccP384 } else { PivKeyAlgorithm::EccP256 }),
                     option { value: "p256", "ECC P-256" }
-                    option { value: "p384", "ECC P-384" }
-                }
-            }
-            div { class: "form-pair",
-                div { class: "modal-field",
-                    label { r#for: "pin-policy", "PIN policy" }
-                    select {
-                        id: "pin-policy",
-                        value: format!("{:?}", pin_policy.read()).to_ascii_lowercase(),
-                        onchange: move |event| pin_policy.set(parse_pin_policy(&event.value())),
-                        option { value: "default", "Default" }
-                        option { value: "once", "Once" }
-                        option { value: "always", "Always" }
-                        option { value: "never", disabled: fips, "Never" }
+                    if capabilities.p384_generation {
+                        option { value: "p384", "ECC P-384" }
                     }
                 }
-                div { class: "modal-field",
-                    label { r#for: "touch-policy", "Touch policy" }
-                    select {
-                        id: "touch-policy",
-                        value: format!("{:?}", touch_policy.read()).to_ascii_lowercase(),
-                        onchange: move |event| touch_policy.set(parse_touch_policy(&event.value())),
-                        option { value: "default", "Default" }
-                        option { value: "never", "Never" }
-                        option { value: "always", "Always" }
-                        option { value: "cached", "Cached" }
+            }
+            if capabilities.pin_touch_policy {
+                div { class: "form-pair",
+                    div { class: "modal-field",
+                        label { r#for: "pin-policy", "PIN policy" }
+                        select {
+                            id: "pin-policy",
+                            value: format!("{:?}", pin_policy.read()).to_ascii_lowercase(),
+                            onchange: move |event| pin_policy.set(parse_pin_policy(&event.value())),
+                            option { value: "default", "Default" }
+                            option { value: "once", "Once" }
+                            option { value: "always", "Always" }
+                            option { value: "never", disabled: fips, "Never" }
+                        }
+                    }
+                    div { class: "modal-field",
+                        label { r#for: "touch-policy", "Touch policy" }
+                        select {
+                            id: "touch-policy",
+                            value: format!("{:?}", touch_policy.read()).to_ascii_lowercase(),
+                            onchange: move |event| touch_policy.set(parse_touch_policy(&event.value())),
+                            option { value: "default", "Default" }
+                            option { value: "never", "Never" }
+                            option { value: "always", "Always" }
+                            option { value: "cached", "Cached" }
+                        }
                     }
                 }
             }
@@ -253,7 +265,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             }
         },
         PivAction::Attest(_) => rsx! {
-            p { class: "modal-help", "Export the signed attestation and the YubiKey attestation certificate." }
+            p { class: "modal-help", "Export the signed attestation and vendor attestation certificate." }
             div { class: "modal-field",
                 label { "Save attestation to" }
                 button { class: "secondary-button", onclick: move |_| {
@@ -277,21 +289,49 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             {destructive_confirmation(destructive_confirmed, "Permanently delete the private key in this slot?")}
         },
     };
-    let can_submit = validate_form(
-        action,
-        fips,
-        current_secret_default || managed_mode,
-        current.read().as_str(),
-        new_secret.read().as_str(),
-        confirmation.read().as_str(),
-        subject.read().as_str(),
-        input_path.read().as_ref(),
-        output_path.read().as_ref(),
-        *pin_policy.read(),
-        have_stored_key(),
-        !generated_key.read().is_empty(),
-        destructive_confirmed(),
-    );
+    let action_capability_supported = match action {
+        PivAction::ChangePin
+        | PivAction::ChangePuk
+        | PivAction::UnblockPin
+        | PivAction::GenerateKey(_)
+        | PivAction::ImportCertificate(_)
+        | PivAction::CreateCsr(_)
+        | PivAction::DeleteCertificate(_) => capabilities.piv_writes,
+        PivAction::ChangeManagementKey => capabilities.set_management_key,
+        PivAction::Attest(_) => capabilities.attestation,
+        PivAction::DeleteKey(_) => capabilities.delete_key,
+        PivAction::ExportCertificate(_) => true,
+    };
+    let algorithm_capability_supported = match action {
+        PivAction::GenerateKey(_) => {
+            *algorithm.read() != PivKeyAlgorithm::EccP384 || capabilities.p384_generation
+        }
+        _ => true,
+    };
+    let slot_capability_supported = match action {
+        PivAction::GenerateKey(slot) if (0x82..=0x95).contains(&slot.byte()) => {
+            capabilities.retired_slot_generation
+        }
+        _ => true,
+    };
+    let can_submit = action_capability_supported
+        && algorithm_capability_supported
+        && slot_capability_supported
+        && validate_form(
+            action,
+            fips,
+            current_secret_default || managed_mode,
+            current.read().as_str(),
+            new_secret.read().as_str(),
+            confirmation.read().as_str(),
+            subject.read().as_str(),
+            input_path.read().as_ref(),
+            output_path.read().as_ref(),
+            *pin_policy.read(),
+            have_stored_key(),
+            !generated_key.read().is_empty(),
+            destructive_confirmed(),
+        );
     let label = action_button(action);
     let live_validation = code_validation(
         new_secret.read().as_str(),
@@ -368,8 +408,16 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                             let mut generated_key = Zeroizing::new(generated_key.read().to_string());
                             let current_format = *format.read();
                             let current_algorithm = *algorithm.read();
-                            let current_pin_policy = *pin_policy.read();
-                            let current_touch_policy = *touch_policy.read();
+                            let current_pin_policy = if capabilities.pin_touch_policy {
+                                *pin_policy.read()
+                            } else {
+                                PinPolicy::Default
+                            };
+                            let current_touch_policy = if capabilities.pin_touch_policy {
+                                *touch_policy.read()
+                            } else {
+                                TouchPolicy::Default
+                            };
                             let destructive_confirmed = destructive_confirmed();
                             let mut busy = busy;
                             let mut error = error;
@@ -377,6 +425,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                             let mut dialog = dialog_signal;
                             let mut piv_info = piv_info_signal;
                             let mut piv_slots = piv_slots_signal;
+                            let mut generated_piv_spki = generated_spki_signal;
                             let managed_agent = state.managed.clone();
                             let managed_session = state.session.read().clone();
                             let managed_sessions = state.session;
@@ -400,7 +449,13 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                             touch_policy: current_touch_policy,
                                         }),
                                         PivAction::ImportCertificate(_) => match input_path.as_ref().map(std::fs::read) {
-                                            Some(Ok(der)) => SlotOperation::ImportCertificate(der),
+                                            Some(Ok(der)) => SlotOperation::ImportCertificate(
+                                                der,
+                                                generated_piv_spki
+                                                    .read()
+                                                    .get(&(id.clone(), slot))
+                                                    .cloned(),
+                                            ),
                                             Some(Err(value)) => {
                                                 error.set_live(Some(value.to_string()));
                                                 return;
@@ -425,14 +480,36 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                     let mut dialog = dialog;
                                     let mut error = error;
                                     let mut busy = busy;
+                                    let mut managed_generated_piv_spki = generated_piv_spki;
                                     std::thread::spawn(move || {
+                                        let operation = match operation {
+                                            SlotOperation::ImportCertificate(der, None) => {
+                                                let expected = service
+                                                    .piv_certificate(&id, slot)
+                                                    .ok()
+                                                    .flatten()
+                                                    .and_then(|certificate| {
+                                                        sigil_piv::management::certificate_spki(
+                                                            &certificate.der,
+                                                        )
+                                                        .ok()
+                                                    });
+                                                SlotOperation::ImportCertificate(der, expected)
+                                            }
+                                            operation => operation,
+                                        };
                                         let outcome = managed::fresh_token(&session, managed_sessions, managed_auth)
                                             .and_then(|token| {
                                                 managed::run_slot_operation(agent.as_ref(), token.as_str(), &id, &serial, slot, operation)
                                                     .map_err(|value| managed::error_message(&value))
                                             });
                                         match outcome {
-                                            Ok(()) => {
+                                            Ok(generated) => {
+                                                if let Some(spki) = generated
+                                                    && let Ok(mut keys) = managed_generated_piv_spki.try_write()
+                                                {
+                                                    keys.insert((id.clone(), slot), spki);
+                                                }
                                                 managed::reload_piv(&service, &id, &mut piv_info, &mut piv_slots);
                                                 toast.set_live(Some(format!("Managed PIV operation completed for slot {slot}.")));
                                                 dialog.set_live(None);
@@ -467,6 +544,22 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                         return;
                                     }
                                 };
+                                let key_slot = match &operation {
+                                    PivOperation::ImportCertificate(_, _, slot)
+                                    | PivOperation::CreateCsr(_, slot, _, _) => Some(*slot),
+                                    _ => None,
+                                };
+                                let expected_public_key = key_slot.and_then(|slot| {
+                                    generated_piv_spki
+                                        .read()
+                                        .get(&(id.clone(), slot))
+                                        .cloned()
+                                });
+                                if let PivOperation::GenerateKey(_, configuration) = &operation
+                                    && let Ok(mut keys) = generated_piv_spki.try_write()
+                                {
+                                    keys.remove(&(id.clone(), configuration.slot));
+                                }
                                 current.zeroize();
                                 new_secret.zeroize();
                                 confirmation.zeroize();
@@ -477,9 +570,22 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                 let id = id.clone();
                                 let serial = serial.clone();
                                 std::thread::spawn(move || {
-                                    let result = execute_operation(&service, &id, &serial, operation);
+                                    let mut generated_key = None;
+                                    let result = execute_operation(
+                                        &service,
+                                        &id,
+                                        &serial,
+                                        operation,
+                                        expected_public_key,
+                                        &mut generated_key,
+                                    );
                                     match result {
                                         Ok(message) => {
+                                            if let Some((slot, spki)) = generated_key
+                                                && let Ok(mut keys) = generated_piv_spki.try_write()
+                                            {
+                                                keys.insert((id.clone(), slot), spki);
+                                            }
                                             if let Ok(info) = service.piv_info(&id) {
                                                 piv_info.set_live(Some((id.clone(), info)));
                                             }
@@ -797,6 +903,25 @@ fn fips_code_note(fips: bool, kind: &'static str) -> Element {
     }
 }
 
+fn expected_slot_spki(
+    service: &CredentialService,
+    id: &sigil_core::DeviceId,
+    slot: PivSlot,
+    known: Option<Vec<u8>>,
+) -> Result<Option<Vec<u8>>, String> {
+    if known.is_some() {
+        return Ok(known);
+    }
+    service
+        .piv_certificate(id, slot)
+        .map_err(|error| error.to_string())?
+        .map(|certificate| {
+            sigil_piv::management::certificate_spki(&certificate.der)
+                .map_err(|error| error.to_string())
+        })
+        .transpose()
+}
+
 fn slot_key_section(
     managed_capable: bool,
     mut own_key: Signal<bool>,
@@ -906,7 +1031,8 @@ fn parse_hex(value: &str) -> Result<Zeroizing<Vec<u8>>, String> {
         return Err("Enter an even-length hexadecimal value.".into());
     }
     let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() / 2));
-    for pair in value.as_bytes().chunks_exact(2) {
+    let (pairs, _) = value.as_bytes().as_chunks::<2>();
+    for pair in pairs {
         let pair = std::str::from_utf8(pair).map_err(|_| "Invalid hexadecimal value")?;
         bytes.push(u8::from_str_radix(pair, 16).map_err(|_| "Invalid hexadecimal value")?);
     }
@@ -1285,6 +1411,8 @@ fn execute_operation(
     id: &sigil_core::DeviceId,
     serial: &str,
     operation: PivOperation,
+    expected_public_key: Option<Vec<u8>>,
+    generated_spki: &mut Option<(PivSlot, Vec<u8>)>,
 ) -> Result<String, String> {
     match operation {
         PivOperation::ChangePin(old, new) => service
@@ -1305,13 +1433,24 @@ fn execute_operation(
             .map_err(|error| error.to_string()),
         PivOperation::GenerateKey(management_key, configuration) => service
             .generate_key(id, serial, &management_key, configuration)
-            .map(|_| format!("Key generated in slot {}.", configuration.slot))
+            .map(|spki| {
+                *generated_spki = Some((configuration.slot, spki));
+                format!("Key generated in slot {}.", configuration.slot)
+            })
             .map_err(|error| error.to_string()),
         PivOperation::ImportCertificate(management_key, path, slot) => {
             let encoded = std::fs::read(&path).map_err(|error| error.to_string())?;
             let der = sigil_piv::decode_certificate(&encoded).map_err(|error| error.to_string())?;
+            let expected_public_key = expected_slot_spki(service, id, slot, expected_public_key)?;
             service
-                .import_certificate(id, serial, &management_key, slot, &der, None)
+                .import_certificate(
+                    id,
+                    serial,
+                    &management_key,
+                    slot,
+                    &der,
+                    expected_public_key.as_deref(),
+                )
                 .map(|()| format!("Certificate imported into slot {slot}."))
                 .map_err(|error| error.to_string())
         }
@@ -1322,13 +1461,23 @@ fn execute_operation(
                 std::fs::write(&path, bytes).map_err(|error| error.to_string())?;
                 Ok(format!("Certificate exported to {}.", path.display()))
             }),
-        PivOperation::CreateCsr(pin, slot, subject, path) => service
-            .sign_csr(id, serial, &pin, slot, &subject, None)
-            .map_err(|error| error.to_string())
-            .and_then(|csr| {
-                std::fs::write(&path, csr).map_err(|error| error.to_string())?;
-                Ok(format!("CSR saved to {}.", path.display()))
-            }),
+        PivOperation::CreateCsr(pin, slot, subject, path) => {
+            let expected_public_key = expected_slot_spki(service, id, slot, expected_public_key)?;
+            service
+                .sign_csr(
+                    id,
+                    serial,
+                    &pin,
+                    slot,
+                    &subject,
+                    expected_public_key.as_deref(),
+                )
+                .map_err(|error| error.to_string())
+                .and_then(|csr| {
+                    std::fs::write(&path, csr).map_err(|error| error.to_string())?;
+                    Ok(format!("CSR saved to {}.", path.display()))
+                })
+        }
         PivOperation::Attest(slot, path) => service
             .attest(id, serial, slot)
             .map_err(|error| error.to_string())
@@ -1340,7 +1489,7 @@ fn execute_operation(
                             .inspection
                             .attestation_root
                             .as_deref()
-                            .unwrap_or("a Yubico root")
+                            .unwrap_or("the vendor root")
                     )
                 } else {
                     format!(

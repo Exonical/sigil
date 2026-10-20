@@ -6,7 +6,10 @@ mod toggle_applications;
 
 use dioxus::prelude::*;
 
-use crate::state::{AppState, DialogKind};
+use crate::{
+    capabilities::managed_action_allowed,
+    state::{AppState, DialogKind},
+};
 
 #[component]
 pub fn DialogHost() -> Element {
@@ -26,10 +29,16 @@ pub fn DialogHost() -> Element {
         (Some(DialogKind::Piv(action)), Some(device)) => {
             rsx! { piv::PivDialog { device, action } }
         }
-        (Some(DialogKind::Managed(action)), Some(device)) => {
+        (Some(DialogKind::Managed(action)), Some(device))
+            if managed_action_allowed(&device, action) =>
+        {
             rsx! { managed_dialog::ManagedDialog { device, action } }
         }
-        (Some(DialogKind::Enroll(preselected)), Some(device)) => {
+        (Some(DialogKind::Enroll(preselected)), Some(device))
+            if device
+                .piv_capabilities
+                .is_some_and(|capabilities| capabilities.attestation) =>
+        {
             rsx! { enroll_dialog::EnrollDialog { device, preselected } }
         }
         _ => rsx! {},

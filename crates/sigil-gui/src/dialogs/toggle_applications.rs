@@ -55,7 +55,7 @@ pub fn ToggleApplicationsDialog(device: DeviceInfo) -> Element {
                     div {
                         p { class: "eyebrow", "DEVICE CONFIGURATION" }
                         h2 { "Toggle applications" }
-                        p { class: "modal-description", "Choose which YubiKey applications are enabled on each interface." }
+            p { class: "modal-description", "Choose which token applications are enabled on each interface." }
                     }
                     button { class: "icon-button", title: "Close dialog", onclick: move |_| dialog_signal.set(None), Icon { name: "x", size: 17 } }
                 }
@@ -91,13 +91,13 @@ pub fn ToggleApplicationsDialog(device: DeviceInfo) -> Element {
                                 value: "{lock_code.read().as_str()}",
                                 oninput: move |event| lock_code.set(Zeroizing::new(event.value())),
                             }
-                            p { class: "modal-help", "The configuration lock code is required to change a locked YubiKey." }
+            p { class: "modal-help", "The configuration lock code is required to change a locked token." }
                             if !lock_valid {
                                 div { class: "modal-error", "Enter exactly 32 hexadecimal characters." }
                             }
                         }
                     }
-                    p { class: "modal-help", "The YubiKey will restart to apply the change." }
+            p { class: "modal-help", "The token will restart to apply the change." }
                     if let Some(message) = error.read().as_ref() {
                         div { class: "modal-error", "{message}" }
                     }
@@ -148,7 +148,7 @@ pub fn ToggleApplicationsDialog(device: DeviceInfo) -> Element {
                                     );
                                     match result {
                                         Ok(()) => {
-                                            toast.set_live(Some("The YubiKey will restart to apply the change.".into()));
+                        toast.set_live(Some("The token will restart to apply the change.".into()));
                                             dialog.set_live(None);
                                         }
                                         Err(value) => error.set_live(Some(value.to_string())),
@@ -229,7 +229,8 @@ fn parse_lock_code(value: &str) -> Result<Secret, String> {
         return Err("Enter exactly 32 hexadecimal characters.".into());
     }
     let mut bytes = Zeroizing::new(Vec::with_capacity(16));
-    for pair in value.as_bytes().chunks_exact(2) {
+    let (pairs, _) = value.as_bytes().as_chunks::<2>();
+    for pair in pairs {
         let pair = std::str::from_utf8(pair).map_err(|_| "Invalid hexadecimal lock code")?;
         bytes.push(u8::from_str_radix(pair, 16).map_err(|_| "Invalid hexadecimal lock code")?);
     }

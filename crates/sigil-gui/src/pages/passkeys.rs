@@ -15,7 +15,7 @@ pub fn PasskeysPage(device: Option<DeviceInfo>) -> Element {
                 div { class: "empty-state",
                     div { class: "empty-icon", Icon { name: "key", size: 28 } }
                     h2 { "No security key connected" }
-                    p { "Connect a YubiKey to manage passkeys." }
+                p { "Connect a security token to manage passkeys." }
                 }
             };
         }

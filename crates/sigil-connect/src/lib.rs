@@ -88,6 +88,7 @@ pub trait ManagedPivAgent: Send + Sync {
         serial: &str,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
         token: &str,
     ) -> Result<(), CredentialError>;
     fn delete_certificate(
@@ -161,9 +162,17 @@ impl ManagedPivAgent for AgentClient {
         serial: &str,
         slot: PivSlot,
         certificate_der: &[u8],
+        expected_public_key: Option<&[u8]>,
         token: &str,
     ) -> Result<(), CredentialError> {
-        self.import_piv_certificate_managed(id, serial, slot, certificate_der, token)
+        self.import_piv_certificate_managed(
+            id,
+            serial,
+            slot,
+            certificate_der,
+            expected_public_key,
+            token,
+        )
     }
 
     fn delete_certificate(

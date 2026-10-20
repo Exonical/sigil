@@ -68,7 +68,7 @@ pub fn fresh_token(
 /// The managed slot operations that the slot dialog can run.
 pub enum SlotOperation {
     GenerateKey(PivKeyConfiguration),
-    ImportCertificate(Vec<u8>),
+    ImportCertificate(Vec<u8>, Option<Vec<u8>>),
     DeleteCertificate,
     DeleteKey,
 }
@@ -80,16 +80,25 @@ pub fn run_slot_operation(
     serial: &str,
     slot: PivSlot,
     operation: SlotOperation,
-) -> Result<(), CredentialError> {
+) -> Result<Option<Vec<u8>>, CredentialError> {
     match operation {
         SlotOperation::GenerateKey(configuration) => agent
             .generate_key(id, serial, configuration, token)
-            .map(|_| ()),
-        SlotOperation::ImportCertificate(der) => {
-            agent.import_certificate(id, serial, slot, &der, token)
-        }
-        SlotOperation::DeleteCertificate => agent.delete_certificate(id, serial, slot, token),
-        SlotOperation::DeleteKey => agent.delete_key(id, serial, slot, token),
+            .map(Some),
+        SlotOperation::ImportCertificate(der, expected_public_key) => agent
+            .import_certificate(
+                id,
+                serial,
+                slot,
+                &der,
+                expected_public_key.as_deref(),
+                token,
+            )
+            .map(|()| None),
+        SlotOperation::DeleteCertificate => agent
+            .delete_certificate(id, serial, slot, token)
+            .map(|()| None),
+        SlotOperation::DeleteKey => agent.delete_key(id, serial, slot, token).map(|()| None),
     }
 }
 

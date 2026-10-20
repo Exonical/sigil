@@ -344,9 +344,18 @@ mod tests {
     fn direct_mock_inventory_json_is_available_without_an_agent() -> Result<()> {
         let args = Args::try_parse_from(["cms", "--direct-mock", "device", "list", "--json"])?;
         let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
-        assert_eq!(result.len(), 1);
-        assert!(result[0].simulated);
-        assert_eq!(result[0].id.0, "mock-yubikey-12345678");
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|device| device.simulated));
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-yubikey-12345678")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-thales-540F9B50")
+        );
         Ok(())
     }
 
@@ -355,9 +364,18 @@ mod tests {
         let agent = start_mock_agent()?;
         let args = parse_for_agent(&agent, &["device", "list", "--json"])?;
         let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
-        assert_eq!(result.len(), 1);
-        assert!(result[0].simulated);
-        assert_eq!(result[0].id.0, "mock-yubikey-12345678");
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|device| device.simulated));
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-yubikey-12345678")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-thales-540F9B50")
+        );
         Ok(())
     }
 
@@ -512,10 +530,10 @@ mod tests {
             .collect();
         barrier.wait();
         for client in clients {
-            assert_eq!(client.join().expect("client thread"), 1);
+            assert_eq!(client.join().expect("client thread"), 2);
         }
         let client = AgentClient::connect(Some(&endpoint))?;
-        assert_eq!(client.list()?.len(), 1);
+        assert_eq!(client.list()?.len(), 2);
         Ok(())
     }
 

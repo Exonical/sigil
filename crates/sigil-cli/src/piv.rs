@@ -548,7 +548,7 @@ fn handle_with_prompter<P: SecretPrompter>(
                     let agent = managed_agent(agent)?;
                     let token = auth::managed_access_token()?;
                     agent
-                        .import_certificate(&id, &serial, slot, &certificate, &token)
+                        .import_certificate(&id, &serial, slot, &certificate, None, &token)
                         .map_err(managed_error)?;
                     return mutation_output(
                         json,
@@ -976,7 +976,8 @@ fn parse_hex(value: &str) -> Result<Zeroizing<Vec<u8>>> {
         "management key must be even-length hexadecimal"
     );
     let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() / 2));
-    for pair in value.as_bytes().chunks_exact(2) {
+    let (pairs, _) = value.as_bytes().as_chunks::<2>();
+    for pair in pairs {
         let digits = std::str::from_utf8(pair)?;
         bytes.push(
             u8::from_str_radix(digits, 16)

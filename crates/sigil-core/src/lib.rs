@@ -48,6 +48,21 @@ pub struct FirmwareVersion {
     pub patch: u8,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivCapabilities {
+    pub piv_writes: bool,
+    pub key_metadata: bool,
+    pub pin_touch_policy: bool,
+    pub set_management_key: bool,
+    pub attestation: bool,
+    pub delete_key: bool,
+    pub reset: bool,
+    pub factory_initialize: bool,
+    pub p384_generation: bool,
+    pub retired_slot_generation: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeviceInfo {
     /// Opaque identifier scoped to the discovery backend. Never infer a serial from this.
@@ -89,6 +104,9 @@ pub struct DeviceInfo {
     /// Whether the current process could read device management metadata.
     #[serde(default)]
     pub metadata_access: MetadataAccess,
+    /// PIV operations supported by the vendor implementation. `None` means read-only.
+    #[serde(default)]
+    pub piv_capabilities: Option<PivCapabilities>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -97,6 +97,40 @@ impl TryFrom<v1::FirmwareVersion> for core::FirmwareVersion {
     }
 }
 
+impl From<&core::PivCapabilities> for v1::PivCapabilities {
+    fn from(value: &core::PivCapabilities) -> Self {
+        Self {
+            piv_writes: value.piv_writes,
+            key_metadata: value.key_metadata,
+            pin_touch_policy: value.pin_touch_policy,
+            set_management_key: value.set_management_key,
+            attestation: value.attestation,
+            delete_key: value.delete_key,
+            reset: value.reset,
+            factory_initialize: value.factory_initialize,
+            p384_generation: value.p384_generation,
+            retired_slot_generation: value.retired_slot_generation,
+        }
+    }
+}
+
+impl From<v1::PivCapabilities> for core::PivCapabilities {
+    fn from(value: v1::PivCapabilities) -> Self {
+        Self {
+            piv_writes: value.piv_writes,
+            key_metadata: value.key_metadata,
+            pin_touch_policy: value.pin_touch_policy,
+            set_management_key: value.set_management_key,
+            attestation: value.attestation,
+            delete_key: value.delete_key,
+            reset: value.reset,
+            factory_initialize: value.factory_initialize,
+            p384_generation: value.p384_generation,
+            retired_slot_generation: value.retired_slot_generation,
+        }
+    }
+}
+
 impl From<&core::DeviceInfo> for v1::DeviceInfo {
     fn from(value: &core::DeviceInfo) -> Self {
         Self {
@@ -147,6 +181,7 @@ impl From<&core::DeviceInfo> for v1::DeviceInfo {
                 .map(application_to_proto)
                 .collect(),
             pin_complexity: value.pin_complexity,
+            piv_capabilities: value.piv_capabilities.as_ref().map(Into::into),
         }
     }
 }
@@ -219,6 +254,7 @@ impl TryFrom<v1::DeviceInfo> for core::DeviceInfo {
                 })
                 .transpose()?,
             pin_complexity: value.pin_complexity,
+            piv_capabilities: value.piv_capabilities.map(Into::into),
         })
     }
 }
@@ -817,8 +853,8 @@ mod tests {
     use super::*;
     use core::{
         Application, DeviceId, FirmwareVersion, KeyOrigin, KeyStatus, ManagementKeyStatus,
-        MetadataAccess, PinPolicy, PivAlgorithm, PivInfo, PivKeyMetadata, PivSlot, PivSlotInfo,
-        RetryStatus, TouchPolicy, Transport,
+        MetadataAccess, PinPolicy, PivAlgorithm, PivCapabilities, PivInfo, PivKeyMetadata, PivSlot,
+        PivSlotInfo, RetryStatus, TouchPolicy, Transport,
     };
     use sigil_core as core;
 
@@ -858,6 +894,18 @@ mod tests {
             config_locked: Some(false),
             fips_approved: Some(vec![Application::Piv]),
             pin_complexity: Some(true),
+            piv_capabilities: Some(PivCapabilities {
+                piv_writes: true,
+                key_metadata: true,
+                pin_touch_policy: true,
+                set_management_key: true,
+                attestation: true,
+                delete_key: true,
+                reset: true,
+                factory_initialize: true,
+                p384_generation: true,
+                retired_slot_generation: true,
+            }),
         }
     }
 

@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use sigil_core::DeviceId;
 
 use crate::{
+    capabilities::nav_pages,
     icons::Icon,
     pages::home::firmware,
     state::{AppState, Page},
@@ -21,11 +22,14 @@ pub fn LeftNav() -> Element {
         .iter()
         .find(|device| Some(&device.id) == selected.as_ref())
         .cloned();
+    let pages = nav_pages(current.as_ref());
     let collapsed = *state.nav_collapsed.read();
     let mut nav_collapsed = state.nav_collapsed;
     let mut selected_device = state.selected_device;
     let mut selected_slot = state.selected_slot;
     let mut dialog = state.dialog;
+    let mut page = state.page;
+    let device_options = devices.clone();
 
     rsx! {
         nav { class: if collapsed { "left-pane nav-collapsed" } else { "left-pane" },
@@ -48,10 +52,12 @@ pub fn LeftNav() -> Element {
                         if let Some(device) = current.as_ref() {
                             strong { "{device.model}" }
                             small { "S/N: {device.serial.as_deref().unwrap_or(\"unavailable\")}" }
-                            small { "F/W: {firmware(device)}" }
+                            if device.firmware.is_some() {
+                                small { "F/W: {firmware(device)}" }
+                            }
                         } else {
                             strong { "No key connected" }
-                            small { "Connect a YubiKey" }
+                            small { "Connect a security token" }
                         }
                     }
                     if devices.len() > 1 {
@@ -61,6 +67,10 @@ pub fn LeftNav() -> Element {
                             value: selected.as_ref().map(|id| id.0.clone()).unwrap_or_default(),
                             onchange: move |event| {
                                 let id = DeviceId(event.value());
+                                let device = device_options.iter().find(|device| device.id == id);
+                                if !nav_pages(device).contains(&page()) {
+                                    page.set(Page::Home);
+                                }
                                 selected_device.set(Some(id));
                                 selected_slot.set(None);
                                 dialog.set(None);
@@ -74,10 +84,18 @@ pub fn LeftNav() -> Element {
             }
             div { class: "nav-links",
                 NavItem { page: Page::Home, icon: "home" }
-                NavItem { page: Page::Accounts, icon: "users" }
-                NavItem { page: Page::Passkeys, icon: "key" }
-                NavItem { page: Page::Certificates, icon: "certificate" }
-                NavItem { page: Page::Slots, icon: "grid" }
+                if pages.contains(&Page::Accounts) {
+                    NavItem { page: Page::Accounts, icon: "users" }
+                }
+                if pages.contains(&Page::Passkeys) {
+                    NavItem { page: Page::Passkeys, icon: "key" }
+                }
+                if pages.contains(&Page::Certificates) {
+                    NavItem { page: Page::Certificates, icon: "certificate" }
+                }
+                if pages.contains(&Page::Slots) {
+                    NavItem { page: Page::Slots, icon: "grid" }
+                }
             }
             div { class: "nav-bottom",
                 crate::auth::AuthArea {}

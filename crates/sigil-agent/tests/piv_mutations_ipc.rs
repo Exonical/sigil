@@ -276,7 +276,11 @@ fn caller_configures_supported_applications_without_a_grant() -> Result<()> {
         Some(&[Application::Piv, Application::Oath]),
         None,
     )?;
-    let updated = client.list()?.remove(0);
+    let updated = client
+        .list()?
+        .into_iter()
+        .find(|device| device.id == id)
+        .expect("updated YubiKey remains listed");
     assert_eq!(
         updated.usb_enabled,
         vec![Application::Piv, Application::Fido2, Application::Oath]

@@ -969,9 +969,9 @@ mod tests {
     }
 
     fn decode_hex(input: &str) -> Vec<u8> {
-        input
-            .as_bytes()
-            .chunks_exact(2)
+        let (pairs, _) = input.as_bytes().as_chunks::<2>();
+        pairs
+            .iter()
             .map(|pair| {
                 let value = std::str::from_utf8(pair).unwrap();
                 u8::from_str_radix(value, 16).unwrap()
