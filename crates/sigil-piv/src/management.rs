@@ -50,17 +50,70 @@ fn command_apdu(ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<u8>> {
     if data.is_empty() {
         return Ok(command);
     }
+    if data.len() > u8::MAX as usize {
+        return Err(CredentialError::SmartCardOperation(
+            "PIV command data exceeds short Lc; use command chaining".into(),
+        ));
+    }
+    command.push(data.len() as u8);
+    command.extend_from_slice(data);
+    Ok(command)
+}
+
+fn command_apdus(ins: u8, p1: u8, p2: u8, data: &[u8]) -> Result<Vec<Vec<u8>>> {
     if data.len() <= u8::MAX as usize {
-        command.push(data.len() as u8);
-    } else if data.len() <= u16::MAX as usize {
-        command.extend_from_slice(&[0, (data.len() >> 8) as u8, data.len() as u8]);
-    } else {
+        return Ok(vec![command_apdu(ins, p1, p2, data)?]);
+    }
+    if data.len() > u16::MAX as usize {
         return Err(CredentialError::SmartCardOperation(
             "PIV command data exceeded 65535 bytes".into(),
         ));
     }
-    command.extend_from_slice(data);
-    Ok(command)
+    let chunks: Vec<_> = data.chunks(u8::MAX as usize).collect();
+    Ok(chunks
+        .iter()
+        .enumerate()
+        .map(|(index, chunk)| {
+            let cla = if index + 1 == chunks.len() {
+                0x00
+            } else {
+                0x10
+            };
+            let mut command = vec![cla, ins, p1, p2, chunk.len() as u8];
+            command.extend_from_slice(chunk);
+            command
+        })
+        .collect())
+}
+
+fn transceive_command_apdus<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    commands: &[Vec<u8>],
+) -> Result<(Vec<u8>, u16)> {
+    let Some((final_command, intermediate_commands)) = commands.split_last() else {
+        return Err(CredentialError::SmartCardOperation(
+            "PIV command chain is empty".into(),
+        ));
+    };
+    for command in intermediate_commands {
+        let (_, status) = transceive(transport, command)?;
+        if status != 0x9000 {
+            return Err(CredentialError::CardStatus(status));
+        }
+    }
+    transceive(transport, final_command)
+}
+
+fn transmit_command_apdus<T: CardTransport + ?Sized>(
+    transport: &mut T,
+    commands: &[Vec<u8>],
+) -> Result<()> {
+    let (_, status) = transceive_command_apdus(transport, commands)?;
+    if status == 0x9000 {
+        Ok(())
+    } else {
+        Err(CredentialError::CardStatus(status))
+    }
 }
 
 fn transmit<T: CardTransport + ?Sized>(transport: &mut T, command: &[u8]) -> Result<()> {
@@ -161,14 +214,23 @@ fn sign_digest_command(
     )
 }
 
-fn build_put_certificate_command(slot: PivSlot, certificate_der: &[u8]) -> Result<Vec<u8>> {
+fn build_put_certificate_data(slot: PivSlot, certificate_der: &[u8]) -> Result<Vec<u8>> {
     let tag = crate::data_object_tag(slot);
     let mut certificate_template = tlv::encode(0x70, certificate_der)?;
     certificate_template.extend_from_slice(&tlv::encode(0x71, &[0x00])?);
     certificate_template.extend_from_slice(&tlv::encode(0xfe, &[])?);
     let mut data = tlv::encode(0x5c, &tag)?;
     data.extend_from_slice(&tlv::encode(0x53, &certificate_template)?);
-    command_apdu(0xdb, 0x3f, 0xff, &data)
+    Ok(data)
+}
+
+fn build_put_certificate_commands(slot: PivSlot, certificate_der: &[u8]) -> Result<Vec<Vec<u8>>> {
+    command_apdus(
+        0xdb,
+        0x3f,
+        0xff,
+        &build_put_certificate_data(slot, certificate_der)?,
+    )
 }
 
 fn build_delete_certificate_command(slot: PivSlot) -> Result<Vec<u8>> {
@@ -724,8 +786,8 @@ pub fn put_certificate_selected<T: CardTransport + ?Sized>(
             "slot F9 is reserved for the YubiKey attestation certificate".into(),
         ));
     }
-    let command = build_put_certificate_command(slot, certificate_der)?;
-    transmit(transport, &command)
+    let commands = build_put_certificate_commands(slot, certificate_der)?;
+    transmit_command_apdus(transport, &commands)
 }
 
 pub fn put_data_object_selected<T: CardTransport + ?Sized>(
@@ -735,7 +797,8 @@ pub fn put_data_object_selected<T: CardTransport + ?Sized>(
 ) -> Result<()> {
     let mut data = tlv::encode(0x5c, tag)?;
     data.extend_from_slice(&tlv::encode(0x53, contents)?);
-    transmit(transport, &command_apdu(0xdb, 0x3f, 0xff, &data)?)
+    let commands = command_apdus(0xdb, 0x3f, 0xff, &data)?;
+    transmit_command_apdus(transport, &commands)
 }
 
 pub fn delete_certificate_selected<T: CardTransport + ?Sized>(
@@ -1332,7 +1395,9 @@ mod tests {
     #[test]
     fn certificate_put_delete_and_data_read_build_apdus() {
         let cert = b"certificate";
-        let command = build_put_certificate_command(PivSlot::AUTHENTICATION, cert).unwrap();
+        let commands = build_put_certificate_commands(PivSlot::AUTHENTICATION, cert).unwrap();
+        assert_eq!(commands.len(), 1);
+        let command = commands[0].clone();
         assert_eq!(&command[..4], &[0x00, 0xdb, 0x3f, 0xff]);
         assert_eq!(command[4], 0x19);
         let mut put = ScriptedTransport(vec![(command, response(&[], 0x9000))]);
@@ -1361,6 +1426,57 @@ mod tests {
             read_data_object_selected(&mut transport, &[0x5f, 0xff, 0x01]).unwrap(),
             Some(b"f9 certificate".to_vec())
         );
+    }
+
+    #[test]
+    fn large_certificate_put_uses_short_lc_chaining_and_reassembles_exactly() {
+        let certificate = vec![0xa5; 600];
+        let data = build_put_certificate_data(PivSlot::AUTHENTICATION, &certificate).unwrap();
+        let commands =
+            build_put_certificate_commands(PivSlot::AUTHENTICATION, &certificate).unwrap();
+
+        assert_eq!(commands.len(), 3);
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| command[0])
+                .collect::<Vec<_>>(),
+            vec![0x10, 0x10, 0x00]
+        );
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| usize::from(command[4]))
+                .collect::<Vec<_>>(),
+            vec![255, 255, data.len() - 510]
+        );
+        assert!(
+            commands
+                .iter()
+                .all(|command| command.len() == usize::from(command[4]) + 5)
+        );
+        let reassembled: Vec<_> = commands
+            .iter()
+            .flat_map(|command| command[5..].iter().copied())
+            .collect();
+        assert_eq!(reassembled, data);
+    }
+
+    #[test]
+    fn intermediate_chaining_error_stops_before_the_remaining_chunks() {
+        let certificate = vec![0x5a; 600];
+        let commands =
+            build_put_certificate_commands(PivSlot::AUTHENTICATION, &certificate).unwrap();
+        let mut transport = ScriptedTransport(vec![
+            (commands[0].clone(), response(&[], 0x9000)),
+            (commands[1].clone(), response(&[], 0x6a80)),
+        ]);
+
+        assert_eq!(
+            put_certificate_selected(&mut transport, PivSlot::AUTHENTICATION, &certificate),
+            Err(CredentialError::CardStatus(0x6a80))
+        );
+        assert!(transport.0.is_empty(), "third chunk must not be sent");
     }
 
     #[test]
