@@ -1,0 +1,17 @@
+[package]
+name = "sigil-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+sigil-core = { path = "../sigil-core" }
+sigil-proto = { path = "../sigil-proto" }
+tokio = { version = "1.53.1", features = ["full"] }
+tonic = { version = "0.14.6", features = ["transport"] }
+tower = { version = "0.5", features = ["util"] }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Pipes", "Win32_System_Services", "Win32_System_Threading"] }

@@ -1,0 +1,24 @@
+listen_grpc = "0.0.0.0:8443"
+database_url = "postgres://sigil:sigil-dev-only@127.0.0.1:5432/sigil?sslmode=disable"
+
+[tls]
+cert_file = "certs/server.crt"
+key_file = "certs/server.key"
+client_ca_file = "certs/station-client-ca.crt"
+
+[oidc]
+issuer = "https://authentik.example.invalid/application/o/sigil/"
+audience = "sigil-backend"
+groups_claim = "groups"
+
+[oidc.role_groups]
+admin = ["sigil-admins"]
+helpdesk = ["sigil-helpdesk"]
+
+[grants]
+key_id = "sigil-piv-2026"
+signing_key_file = "keys/grant-private.pem"
+lifetime_seconds = 120
+
+[policy]
+self_service_operations = []

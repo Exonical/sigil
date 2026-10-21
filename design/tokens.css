@@ -1,0 +1,61 @@
+/*
+ * Sigil design tokens. Single source of truth for the desktop GUI and the admin portal.
+ * Dark only. Consumers read these as CSS custom properties; see design/README.md for the usage rules.
+ * Contrast (WCAG 2.x) on --sg-bg: text 16.2:1, text-2 7.5:1, text-3 5.8:1, accent 8.3:1, status colours 4.7:1 or more.
+ */
+:root {
+  /* Surfaces */
+  --sg-bg: #0a0b0c;
+  --sg-panel: #111315;
+  --sg-raised: #181b1e;
+
+  /* Hairlines */
+  --sg-line: #262a2f;
+  --sg-line-strong: #3a3f45;
+
+  /* Text */
+  --sg-text: #e7e9ea;
+  --sg-text-2: #9aa0a6;
+  --sg-text-3: #858c93;
+
+  /* Signal accent (safety orange). Filled buttons use --sg-accent-ink text. */
+  --sg-accent: #ff8a00;
+  --sg-accent-ink: #0a0b0c;
+  --sg-accent-tint: rgb(255 138 0 / 0.12);
+
+  /* Status. Each has a subdued tint for backgrounds. */
+  --sg-ok: #5faf7a;
+  --sg-ok-tint: rgb(95 175 122 / 0.12);
+  --sg-warn: #e8b04a;
+  --sg-warn-tint: rgb(232 176 74 / 0.12);
+  --sg-danger: #e5534b;
+  --sg-danger-tint: rgb(229 83 75 / 0.14);
+  --sg-info: #7fa7cf;
+  --sg-info-tint: rgb(127 167 207 / 0.12);
+
+  /* Shape: sharp corners. Inputs may use the small radius. */
+  --sg-radius: 0px;
+  --sg-radius-input: 2px;
+
+  /* Spacing scale (4px base) */
+  --sg-space-1: 4px;
+  --sg-space-2: 8px;
+  --sg-space-3: 12px;
+  --sg-space-4: 16px;
+  --sg-space-5: 24px;
+  --sg-space-6: 32px;
+
+  /* Focus: a 1px accent outline with a 2px offset, on every interactive element */
+  --sg-focus: #ff8a00;
+  --sg-focus-width: 1px;
+  --sg-focus-offset: 2px;
+
+  /* Typography */
+  --sg-font-sans: "Inter Tight", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sg-font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --sg-text-label: 11px;
+  --sg-tracking-label: 0.12em;
+  --sg-text-body: 14px;
+  --sg-text-heading: 28px;
+  --sg-tracking-heading: -0.02em;
+}

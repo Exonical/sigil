@@ -1,0 +1,140 @@
+# yaml-language-server: $schema=https://version-2026-8.goauthentik.io/blueprints/schema.json
+version: 1
+metadata:
+  name: Sigil development identity provider
+  labels:
+    blueprints.goauthentik.io/instantiate: "true"
+entries:
+  - model: authentik_core.group
+    id: sigil-admins
+    identifiers:
+      name: sigil-admins
+    attrs:
+      name: sigil-admins
+  - model: authentik_core.group
+    id: sigil-helpdesk
+    identifiers:
+      name: sigil-helpdesk
+    attrs:
+      name: sigil-helpdesk
+  - model: authentik_core.user
+    id: sigil-admin1
+    identifiers:
+      username: admin1
+    attrs:
+      username: admin1
+      name: Sigil Development Admin
+      email: admin1@example.test
+      is_active: true
+      password: !Env SIGIL_ADMIN1_PASSWORD
+      groups:
+        - !KeyOf sigil-admins
+  - model: authentik_core.user
+    id: sigil-helpdesk1
+    identifiers:
+      username: helpdesk1
+    attrs:
+      username: helpdesk1
+      name: Sigil Development Helpdesk
+      email: helpdesk1@example.test
+      is_active: true
+      password: !Env SIGIL_HELPDESK1_PASSWORD
+      groups:
+        - !KeyOf sigil-helpdesk
+  - model: authentik_core.user
+    id: sigil-user1
+    identifiers:
+      username: user1
+    attrs:
+      username: user1
+      name: Sigil Development User
+      email: user1@example.test
+      is_active: true
+      password: !Env SIGIL_USER1_PASSWORD
+  - model: authentik_core.token
+    id: sigil-dev-test-app-password
+    identifiers:
+      identifier: sigil-dev-test-app-password
+    attrs:
+      identifier: sigil-dev-test-app-password
+      user: !KeyOf sigil-admin1
+      intent: app_password
+      key: !Env SIGIL_DEV_TEST_APP_PASSWORD
+  - model: authentik_providers_oauth2.oauth2provider
+    id: sigil-dev-test-provider
+    identifiers:
+      name: sigil-dev-test
+    attrs:
+      name: sigil-dev-test
+      client_id: sigil-dev-test
+      client_type: confidential
+      client_secret: !Env SIGIL_DEV_TEST_CLIENT_SECRET
+      grant_types:
+        - client_credentials
+        - "urn:ietf:params:oauth:grant-type:token-exchange"
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris: []
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, offline_access]]
+      include_claims_in_id_token: true
+  - model: authentik_providers_oauth2.oauth2provider
+    id: sigil-provider
+    identifiers:
+      name: sigil
+    attrs:
+      name: sigil
+      client_id: sigil
+      client_type: public
+      grant_types:
+        - authorization_code
+        - refresh_token
+      authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      redirect_uris:
+        - matching_mode: regex
+          url: "http://127\\.0\\.0\\.1:\\d+/callback"
+        - matching_mode: regex
+          url: "http://localhost:\\d+/callback"
+        - matching_mode: strict
+          url: "https://localhost:8443/callback"
+        - matching_mode: strict
+          url: "https://localhost:8444/callback"
+        - matching_mode: strict
+          url: "http://localhost:5173/callback"
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, openid]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, profile]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, email]]
+        - !Find [authentik_providers_oauth2.scopemapping, [scope_name, offline_access]]
+      jwt_federation_providers:
+        - !KeyOf sigil-dev-test-provider
+      include_claims_in_id_token: true
+  - model: authentik_core.application
+    id: sigil-application
+    identifiers:
+      slug: sigil
+    attrs:
+      name: Sigil
+      slug: sigil
+      provider: !KeyOf sigil-provider
+  - model: authentik_core.application
+    id: sigil-dev-test-application
+    identifiers:
+      slug: sigil-dev-test
+    attrs:
+      name: Sigil development test client
+      slug: sigil-dev-test
+      provider: !KeyOf sigil-dev-test-provider
+  - model: authentik_brands.brand
+    state: present
+    identifiers:
+      domain: authentik-default
+      default: true
+    attrs:
+      web_certificate: !Find [authentik_crypto.certificatekeypair, [name, sigil-localhost]]

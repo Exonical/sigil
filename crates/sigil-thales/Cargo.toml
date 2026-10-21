@@ -1,0 +1,13 @@
+[package]
+name = "sigil-thales"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sigil-core = { path = "../sigil-core" }
+sigil-piv = { path = "../sigil-piv" }
+
+[dev-dependencies]
+p384 = { version = "0.14.0", features = ["ecdsa", "pkcs8"] }

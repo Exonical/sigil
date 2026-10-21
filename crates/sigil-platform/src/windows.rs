@@ -1,5 +1,5 @@
-//! Windows CCID discovery using WinSCard through pcsc. Only read-only
-//! management APDUs are sent; no arbitrary APDU interface escapes this module.
+//! Windows PC/SC discovery and typed credential operations using WinSCard.
+//! No arbitrary APDU interface escapes the provider crates.
 
 use std::{
     collections::HashSet,
@@ -15,10 +15,15 @@ use ctap_hid_fido2::fidokey::get_info::InfoOption;
 use ctap_hid_fido2::{Cfg, FidoKeyHid, FidoKeyHidFactory, HidParam};
 use pcsc::{Context, Error as PcscError, Protocols, ReaderState, Scope, ShareMode, State};
 use sigil_core::{
-    CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential, FidoStatus,
-    Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result, Transport,
+    Application, CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
+    FidoStatus, Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result,
+    Transport,
 };
+use sigil_piv::vendor::PivVendor;
+use sigil_thales::ThalesPiv;
 use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
+use sigil_yubikey::product::{key_type_for_pid, product_name};
+use sigil_yubikey::vendor::YubiKeyPiv;
 use windows_sys::Win32::{
     Devices::{
         DeviceAndDriverInstallation::{
@@ -31,9 +36,11 @@ use windows_sys::Win32::{
     Foundation::ERROR_NO_MORE_ITEMS,
 };
 
-use crate::reconcile;
+use crate::{FidoHidResolution, reconcile};
 
 mod ctap;
+mod fido_resolver;
+pub(super) mod piv;
 
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
 const MAX_INFO_PAGES: u8 = 4;
@@ -59,7 +66,9 @@ pub(super) fn subscribe() -> Result<Receiver<DeviceEvent>> {
         .name("sigil-device-events".into())
         .spawn(move || watch_devices(sender))
         .map_err(|_| {
-            CredentialError::BackendUnavailable("could not start the smart-card event watcher")
+            CredentialError::BackendUnavailable(
+                "could not start the smart-card event watcher".into(),
+            )
         })?;
     Ok(receiver)
 }
@@ -68,44 +77,95 @@ fn establish() -> std::result::Result<Context, PcscError> {
     Context::establish(Scope::User)
 }
 
+// pcsc panics on transmit when SCardConnect reported no active protocol,
+// which Windows can do while a card is resetting (for example after a
+// management-applet reboot). Renegotiate once, then fail instead of panicking.
+pub(super) fn connect_shared(
+    context: &Context,
+    reader: &CStr,
+) -> std::result::Result<pcsc::Card, PcscError> {
+    let mut card = context.connect(reader, ShareMode::Shared, Protocols::ANY)?;
+    let has_protocol = |card: &pcsc::Card| matches!(card.status2_owned(), Ok(status) if status.protocol2().is_some());
+    if !has_protocol(&card) {
+        card.reconnect(
+            ShareMode::Shared,
+            Protocols::ANY,
+            pcsc::Disposition::LeaveCard,
+        )?;
+        if !has_protocol(&card) {
+            return Err(PcscError::UnpoweredCard);
+        }
+    }
+    Ok(card)
+}
+
 fn service_stopped(error: PcscError) -> bool {
     matches!(error, PcscError::NoService | PcscError::ServiceStopped)
 }
 
 fn reader_names(context: &Context) -> Result<Vec<CString>> {
     match context.list_readers_owned() {
-        Ok(readers) => Ok(readers
-            .into_iter()
-            .filter(|reader| is_yubikey_reader(reader))
-            .collect()),
+        Ok(readers) => Ok(readers),
         Err(PcscError::NoReadersAvailable) => Ok(Vec::new()),
         Err(error) => Err(CredentialError::PcscUnavailable(error.to_string())),
     }
 }
 
-fn is_yubikey_reader(reader: &CStr) -> bool {
-    let name = reader.to_string_lossy().to_ascii_lowercase();
-    name.contains("yubikey") || name.contains("yubico")
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReaderKind {
+    YubiKeyUsb,
+    Other,
+}
+
+fn reader_kind(name: &CStr) -> ReaderKind {
+    let name = name.to_string_lossy().to_ascii_lowercase();
+    if name.contains("yubikey") || name.contains("yubico") {
+        ReaderKind::YubiKeyUsb
+    } else {
+        ReaderKind::Other
+    }
 }
 
 fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
     let mut devices = Vec::new();
     for reader in reader_names(context)? {
         let name = reader.to_string_lossy().into_owned();
-        let card = match context.connect(&reader, ShareMode::Shared, Protocols::ANY) {
-            Ok(card) => card,
-            Err(PcscError::NoSmartcard | PcscError::UnknownReader) => continue,
-            Err(error) => {
-                tracing::warn!(reader = %name, error = %error, "could not inspect smart-card reader");
-                devices.push(device_for_reader(&name, None));
-                continue;
+        match reader_kind(&reader) {
+            ReaderKind::YubiKeyUsb => {
+                let mut card = match connect_shared(context, &reader) {
+                    Ok(card) => card,
+                    Err(PcscError::NoSmartcard | PcscError::UnknownReader) => continue,
+                    Err(error) => {
+                        tracing::warn!(reader = %name, error = %error, "could not inspect smart-card reader");
+                        devices.push(device_for_reader(&name, None, Transport::UsbSmartCard));
+                        continue;
+                    }
+                };
+                let details = read_management_info(&mut card);
+                if details.is_none() {
+                    tracing::debug!(reader = %name, "YubiKey management information unavailable");
+                }
+                devices.push(device_for_reader(&name, details, Transport::UsbSmartCard));
             }
-        };
-        let details = read_management_info(&card);
-        if details.is_none() {
-            tracing::debug!(reader = %name, "YubiKey management information unavailable");
+            ReaderKind::Other => {
+                let mut card = match connect_shared(context, &reader) {
+                    Ok(card) => card,
+                    Err(error) => {
+                        tracing::debug!(reader = %name, error = %error, "could not probe non-YubiKey smart-card reader");
+                        continue;
+                    }
+                };
+                if let Some(details) = read_management_info(&mut card) {
+                    devices.push(device_for_reader(&name, Some(details), Transport::Nfc));
+                    continue;
+                }
+                // TODO: other SP 800-73 PIV cards need a generic vendor identity before they can be listed.
+                match thales_device(&name, &mut card) {
+                    Some(device) => devices.push(device),
+                    None => tracing::debug!(reader = %name, "non-YubiKey smart-card ignored"),
+                }
+            }
         }
-        devices.push(device_for_reader(&name, details));
     }
     // FIDO-only product IDs have no CCID interface, so these cannot duplicate
     // a PC/SC result. HID presence does not prove CTAP2 or a firmware version.
@@ -171,11 +231,21 @@ fn scan_hid(include_ccid: bool) -> std::result::Result<Vec<DeviceInfo>, String> 
                     serial: None,
                     firmware: None,
                     form_factor: None,
+                    fips: None,
+                    connection: Some(Transport::UsbHid),
                     transports: vec![Transport::UsbHid],
                     applications: Vec::new(),
                     supported_applications: Vec::new(),
+                    usb_enabled: Vec::new(),
+                    usb_supported: Vec::new(),
+                    nfc_enabled: Vec::new(),
+                    nfc_supported: Vec::new(),
+                    config_locked: None,
+                    fips_approved: None,
+                    pin_complexity: None,
                     simulated: false,
                     metadata_access: MetadataAccess::Unknown,
+                    piv_capabilities: None,
                 };
                 if let (Ok(hid), Ok(path)) = (&hid_result, CString::new(path)) {
                     enrich_hid(&mut device, hid, &path);
@@ -205,11 +275,23 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
         device.metadata_access = MetadataAccess::Available;
         device.firmware = metadata.firmware;
         if let Some(details) = metadata.details {
+            let key_type = yubico_pid_from_path(&path.to_string_lossy()).and_then(key_type_for_pid);
+            if let Some(name) = product_name(&details, key_type) {
+                device.model = name;
+            }
             device.serial = details.serial;
             device.firmware = details.firmware.or(device.firmware.take());
             device.form_factor = details.form_factor;
-            device.applications = details.enabled_applications;
-            device.supported_applications = details.supported_applications;
+            device.fips = details.fips;
+            device.applications = details.usb_enabled_applications.clone();
+            device.supported_applications = details.usb_supported_applications.clone();
+            device.usb_enabled = details.usb_enabled_applications;
+            device.usb_supported = details.usb_supported_applications;
+            device.nfc_enabled = details.nfc_enabled_applications;
+            device.nfc_supported = details.nfc_supported_applications;
+            device.config_locked = details.config_locked;
+            device.fips_approved = details.fips_approved_applications;
+            device.pin_complexity = details.pin_complexity;
             if details.transports.contains(&Transport::UsbOtp) {
                 device.transports.push(Transport::UsbOtp);
             }
@@ -220,26 +302,145 @@ fn enrich_hid(device: &mut DeviceInfo, hid: &hidapi::HidApi, path: &CStr) {
     } else {
         tracing::debug!(id = %device.id.0, "FIDO management metadata unavailable from device");
     }
+    device.piv_capabilities = device
+        .supported_applications
+        .contains(&Application::Piv)
+        .then(|| YubiKeyPiv.capabilities());
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FidoRoute<'a> {
+    Hid(&'a str),
+    PcscUsb,
+}
+
+fn fido_route<'a>(id: &'a DeviceId, connection: Option<&Transport>) -> Result<FidoRoute<'a>> {
+    if let Some(path) = id.0.strip_prefix("windows-hid:") {
+        return Ok(FidoRoute::Hid(path));
+    }
+    if id.0.starts_with("windows-pcsc:") {
+        return match connection {
+            Some(Transport::UsbSmartCard) => Ok(FidoRoute::PcscUsb),
+            Some(Transport::Nfc) => Err(CredentialError::UnsupportedOperation(
+                "FIDO over NFC is not supported yet".into(),
+            )),
+            _ => Err(CredentialError::UnsupportedOperation(
+                "FIDO inspection requires a USB HID or CCID device".into(),
+            )),
+        };
+    }
+    Err(CredentialError::UnsupportedOperation(
+        "FIDO inspection requires a supported HID or USB CCID device".into(),
+    ))
+}
+
+fn resolve_fido_hid_for_pcsc_device(device: &DeviceInfo) -> Result<Option<FidoHidResolution>> {
+    let (reader, _) = piv::parse_device_id(&device.id)?;
+    let reader = CString::new(reader).map_err(|_| {
+        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
+    })?;
+    fido_resolver::resolve_fido_hid_for_reader(&reader).map_err(CredentialError::SmartCardOperation)
+}
+
+fn fido_hid_path_for_reader(reader: &CStr) -> Result<Option<String>> {
+    fido_resolver::fido_hid_path_for_reader(reader).map_err(CredentialError::SmartCardOperation)
+}
+
+pub(super) fn resolve_fido_hid_for_device(id: &DeviceId) -> Result<Option<FidoHidResolution>> {
+    let device = list()?
+        .into_iter()
+        .find(|device| device.id == *id)
+        .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))?;
+    if !matches!(
+        fido_route(id, device.connection.as_ref())?,
+        FidoRoute::PcscUsb
+    ) {
+        return Ok(None);
+    }
+    resolve_fido_hid_for_pcsc_device(&device)
+}
+
+fn map_hid_open_error(error: hidapi::HidError) -> CredentialError {
+    let detail = error.to_string();
+    let access_denied = matches!(
+        &error,
+        hidapi::HidError::IoError { error }
+            if error.kind() == std::io::ErrorKind::PermissionDenied
+                || error.raw_os_error() == Some(5)
+    ) || error_detail_is_access_denied(&detail);
+    if access_denied {
+        CredentialError::FidoAccessRestricted
+    } else {
+        CredentialError::FidoOperation(detail)
+    }
+}
+
+fn map_fido_factory_error(error: impl std::fmt::Display) -> CredentialError {
+    let detail = error.to_string();
+    if error_detail_is_access_denied(&detail) {
+        CredentialError::FidoAccessRestricted
+    } else {
+        CredentialError::FidoOperation(detail)
+    }
+}
+
+fn error_detail_is_access_denied(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    detail.contains("access is denied")
+        || detail.contains("access denied")
+        || detail.contains("os error 5")
+        || detail.contains("win32error(5)")
+}
+
+fn open_hid_fido(path: &str, expected_serial: Option<&str>) -> Result<FidoKeyHid> {
+    let hid =
+        hidapi::HidApi::new().map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+    let hid_path = CString::new(path).map_err(|_| {
+        CredentialError::SmartCardOperation("FIDO HID path contains a NUL byte".into())
+    })?;
+    let handle = hid.open_path(&hid_path).map_err(map_hid_open_error)?;
+    if let Some(expected_serial) = expected_serial
+        && let Some(actual_serial) = ctap::read_info(&handle)
+            .and_then(|metadata| metadata.details)
+            .and_then(|details| details.serial)
+        && actual_serial != expected_serial
+    {
+        return Err(CredentialError::DeviceNotFound(format!(
+            "PC/SC serial {expected_serial} does not match FIDO HID serial {actual_serial}"
+        )));
+    }
+    drop(handle);
+    let mut config = Cfg::init();
+    config.keep_alive_msg.clear(); // Library diagnostics must not corrupt CLI JSON output.
+    FidoKeyHidFactory::create_by_params(&[HidParam::Path(path.to_owned())], &config)
+        .map_err(map_fido_factory_error)
 }
 
 fn open_fido(id: &DeviceId) -> Result<FidoKeyHid> {
-    let path =
-        id.0.strip_prefix("windows-hid:")
-            .ok_or(CredentialError::UnsupportedOperation(
-                "FIDO inspection requires a HID device",
-            ))?;
     // Only open a present device we discovered. An opaque ID is not a general HID path API.
     let device = list()?
         .into_iter()
         .find(|device| device.id == *id)
         .ok_or_else(|| CredentialError::DeviceNotFound(id.0.clone()))?;
-    if device.metadata_access == MetadataAccess::Restricted {
+    let route = fido_route(id, device.connection.as_ref())?;
+    if matches!(route, FidoRoute::Hid(_)) && device.metadata_access == MetadataAccess::Restricted {
         return Err(CredentialError::FidoAccessRestricted);
     }
-    let mut config = Cfg::init();
-    config.keep_alive_msg.clear(); // Library diagnostics must not corrupt CLI JSON output.
-    FidoKeyHidFactory::create_by_params(&[HidParam::Path(path.to_owned())], &config)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))
+    match route {
+        FidoRoute::Hid(path) => open_hid_fido(path, None),
+        FidoRoute::PcscUsb => {
+            let (reader, _) = piv::parse_device_id(id)?;
+            let reader = CString::new(reader).map_err(|_| {
+                CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
+            })?;
+            let Some(path) = fido_hid_path_for_reader(&reader)? else {
+                return Err(CredentialError::UnsupportedOperation(
+                    "this device has no FIDO HID interface".into(),
+                ));
+            };
+            open_hid_fido(&path, device.serial.as_deref())
+        }
+    }
 }
 
 pub(super) fn fido_status(id: &DeviceId) -> Result<FidoStatus> {
@@ -286,8 +487,34 @@ pub(super) fn fido_status(id: &DeviceId) -> Result<FidoStatus> {
     })
 }
 
+fn map_fido_pin_error(error: impl std::fmt::Display) -> CredentialError {
+    let detail = error.to_string();
+    // ctap-hid-fido2 exposes CTAP status responses as anyhow message text, not a typed status.
+    if detail.contains("0x35 CTAP2_ERR_PIN_NOT_SET") {
+        CredentialError::FidoPinNotSet
+    } else {
+        CredentialError::FidoOperation(detail)
+    }
+}
+
+fn require_fido_pin_set(key: &FidoKeyHid) -> Result<()> {
+    let pin_set = key
+        .enable_info_option(&InfoOption::ClientPin)
+        .map_err(map_fido_pin_error)?;
+    require_fido_pin_configured(pin_set)
+}
+
+fn require_fido_pin_configured(pin_set: Option<bool>) -> Result<()> {
+    if pin_set == Some(false) {
+        Err(CredentialError::FidoPinNotSet)
+    } else {
+        Ok(())
+    }
+}
+
 fn open_bio(id: &DeviceId) -> Result<FidoKeyHid> {
     let mut key = open_fido(id)?;
+    require_fido_pin_set(&key)?;
     let standard = key
         .enable_info_option(&InfoOption::BioEnroll)
         .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
@@ -302,7 +529,7 @@ fn open_bio(id: &DeviceId) -> Result<FidoKeyHid> {
         .versions;
     if !standard && !(preview && versions.iter().any(|version| version == "FIDO_2_1_PRE")) {
         return Err(CredentialError::UnsupportedOperation(
-            "FIDO fingerprint enrollment",
+            "FIDO fingerprint enrollment".into(),
         ));
     }
     key.use_pre_bio_enrollment = !standard;
@@ -320,7 +547,7 @@ pub(super) fn fingerprints(id: &DeviceId, pin: &str) -> Result<Vec<Fingerprint>>
     let key = open_bio(id)?;
     let templates = key
         .bio_enrollment_enumerate_enrollments(pin)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     Ok(templates
         .into_iter()
         .map(|template| Fingerprint {
@@ -345,7 +572,7 @@ pub(super) fn enroll_fingerprint(
     });
     let (session, mut step) = key
         .bio_enrollment_begin(pin, Some(30_000))
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     let result = (|| {
         for _ in 0..40 {
             on_progress(FingerprintProgress {
@@ -364,7 +591,7 @@ pub(super) fn enroll_fingerprint(
             });
             step = key
                 .bio_enrollment_next(&session, Some(30_000))
-                .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+                .map_err(map_fido_pin_error)?;
         }
         Err(CredentialError::FidoOperation(
             "fingerprint capture limit reached".into(),
@@ -400,7 +627,7 @@ pub(super) fn remove_fingerprint(id: &DeviceId, pin: &str, fingerprint_id: &str)
     let key = open_bio(id)?;
     let templates = key
         .bio_enrollment_enumerate_enrollments(pin)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     if !templates
         .iter()
         .any(|template| template.template_id == bytes)
@@ -410,7 +637,7 @@ pub(super) fn remove_fingerprint(id: &DeviceId, pin: &str, fingerprint_id: &str)
         ));
     }
     key.bio_enrollment_remove(pin, &bytes)
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))
+        .map_err(map_fido_pin_error)
 }
 
 pub(super) fn discoverable_credentials(
@@ -421,6 +648,7 @@ pub(super) fn discoverable_credentials(
         return Err(CredentialError::FidoOperation("enter the FIDO2 PIN".into()));
     }
     let mut key = open_fido(id)?;
+    require_fido_pin_set(&key)?;
     let standard = key
         .enable_info_option(&InfoOption::CredMgmt)
         .map_err(|error| CredentialError::FidoOperation(error.to_string()))?
@@ -432,24 +660,24 @@ pub(super) fn discoverable_credentials(
             != Some(true)
     {
         return Err(CredentialError::UnsupportedOperation(
-            "FIDO credential management",
+            "FIDO credential management".into(),
         ));
     }
     key.use_pre_credential_management = !standard;
     let count = key
         .credential_management_get_creds_metadata(Some(pin))
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     if count.existing_resident_credentials_count == 0 {
         return Ok(Vec::new());
     }
     let rps = key
         .credential_management_enumerate_rps(Some(pin))
-        .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+        .map_err(map_fido_pin_error)?;
     let mut credentials = Vec::new();
     for rp in rps {
         let entries = key
             .credential_management_enumerate_credentials(Some(pin), &rp.rpid_hash)
-            .map_err(|error| CredentialError::FidoOperation(error.to_string()))?;
+            .map_err(map_fido_pin_error)?;
         for entry in entries {
             credentials.push(DiscoverableCredential {
                 rp_id: rp.public_key_credential_rp_entity.id.clone(),
@@ -602,11 +830,21 @@ fn fido_device(info: &hidapi::DeviceInfo, include_ccid: bool) -> Option<DeviceIn
             .map(str::to_owned),
         firmware: None,
         form_factor: None,
+        fips: None,
+        connection: Some(Transport::UsbHid),
         transports: vec![Transport::UsbHid],
         applications: Vec::new(),
         supported_applications: Vec::new(),
+        usb_enabled: Vec::new(),
+        usb_supported: Vec::new(),
+        nfc_enabled: Vec::new(),
+        nfc_supported: Vec::new(),
+        config_locked: None,
+        fips_approved: None,
+        pin_complexity: None,
         simulated: false,
         metadata_access: MetadataAccess::Unknown,
+        piv_capabilities: None,
     })
 }
 
@@ -620,15 +858,121 @@ fn is_fido_ccid_pid(pid: u16) -> bool {
     matches!(pid, 0x0115 | 0x0116 | 0x0406 | 0x0407)
 }
 
-fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInfo {
+/// Lists a Thales PIV token on a non-YubiKey reader. The ATR selects the family, and the CPLC IC serial identifies the
+/// card. The read happens in one transaction and writes nothing.
+fn thales_device(reader: &str, card: &mut pcsc::Card) -> Option<DeviceInfo> {
+    let status = card.status2_owned().ok()?;
+    if !sigil_thales::is_thales_atr(status.atr()) {
+        return None;
+    }
+    let transaction = match card.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => {
+            tracing::warn!(reader, error = %error, "could not start Thales transaction");
+            return None;
+        }
+    };
+    let mut transport = piv::PcscTransport::new(&transaction);
+    let cplc = match sigil_thales::read_cplc(&mut transport) {
+        Ok(cplc) => cplc,
+        Err(error) => {
+            tracing::warn!(reader, error = %error, "could not read Thales CPLC data");
+            return None;
+        }
+    };
+    let connection = if is_contactless_reader(reader) {
+        Transport::Nfc
+    } else {
+        Transport::UsbSmartCard
+    };
+    Some(thales_device_info(
+        reader,
+        &sigil_thales::serial(&cplc),
+        connection,
+    ))
+}
+
+fn is_contactless_reader(reader: &str) -> bool {
+    let reader = reader.to_ascii_lowercase();
+    reader.contains("contactless") || reader.contains("nfc")
+}
+
+fn thales_device_info(reader: &str, serial: &str, connection: Transport) -> DeviceInfo {
+    // The model is named only for the SKU the user identified. Card data alone does not separate Fusion NFC PIV from
+    // other eToken Fusion SKUs.
+    let model = if reader.contains("eToken Fusion") {
+        "SafeNet eToken Fusion NFC PIV"
+    } else {
+        "Thales PIV token"
+    };
+    let piv = vec![Application::Piv];
+    DeviceInfo {
+        id: DeviceId(format!("windows-pcsc:{reader}:{serial}")),
+        vendor: "Thales".into(),
+        model: model.into(),
+        serial: Some(serial.to_owned()),
+        firmware: None,
+        form_factor: None,
+        fips: None,
+        usb_enabled: Vec::new(),
+        usb_supported: Vec::new(),
+        nfc_enabled: Vec::new(),
+        nfc_supported: Vec::new(),
+        config_locked: None,
+        fips_approved: None,
+        pin_complexity: None,
+        connection: Some(connection.clone()),
+        transports: vec![connection],
+        applications: piv.clone(),
+        supported_applications: piv,
+        simulated: false,
+        metadata_access: MetadataAccess::Unknown,
+        piv_capabilities: Some(ThalesPiv.capabilities()),
+    }
+}
+
+fn device_for_reader(
+    reader: &str,
+    details: Option<ManagementInfo>,
+    connection: Transport,
+) -> DeviceInfo {
     let metadata_access = if details.is_some() {
         MetadataAccess::Available
     } else {
         MetadataAccess::Unknown
     };
+    let is_nfc = connection == Transport::Nfc;
     let serial = details.as_ref().and_then(|info| info.serial.clone());
     let firmware = details.as_ref().and_then(|info| info.firmware.clone());
     let form_factor = details.as_ref().and_then(|info| info.form_factor.clone());
+    let fips = details.as_ref().and_then(|info| info.fips);
+    let mut transports = details
+        .as_ref()
+        .map(|info| info.transports.clone())
+        .unwrap_or_else(|| vec![Transport::UsbSmartCard]);
+    if is_nfc && !transports.contains(&Transport::Nfc) {
+        transports.push(Transport::Nfc);
+    }
+    let applications = details
+        .as_ref()
+        .map(|info| {
+            if is_nfc {
+                info.nfc_enabled_applications.clone()
+            } else {
+                info.usb_enabled_applications.clone()
+            }
+        })
+        .unwrap_or_default();
+    let supported_applications = details
+        .as_ref()
+        .map(|info| {
+            if is_nfc {
+                info.nfc_supported_applications.clone()
+            } else {
+                info.usb_supported_applications.clone()
+            }
+        })
+        .unwrap_or_default();
     let id = DeviceId(format!(
         "windows-pcsc:{reader}:{}",
         serial.as_deref().unwrap_or("unknown")
@@ -636,28 +980,59 @@ fn device_for_reader(reader: &str, details: Option<ManagementInfo>) -> DeviceInf
     DeviceInfo {
         id,
         vendor: "Yubico".into(),
-        // Do not fabricate a retail model from a form factor or reader name.
-        model: "YubiKey (CCID)".into(),
+        // Yubico's product name, derived from the device-reported management data the way ykman's get_name
+        // derives it. The transport-only name applies only when that data could not be read.
+        model: details
+            .as_ref()
+            .and_then(|info| product_name(info, None))
+            .unwrap_or_else(|| {
+                (if is_nfc {
+                    "YubiKey (NFC)"
+                } else {
+                    "YubiKey (CCID)"
+                })
+                .to_owned()
+            }),
         serial,
         firmware,
         form_factor,
-        transports: details
+        fips,
+        connection: Some(connection),
+        transports,
+        applications,
+        supported_applications,
+        usb_enabled: details
             .as_ref()
-            .map(|info| info.transports.clone())
-            .unwrap_or_else(|| vec![Transport::UsbSmartCard]),
-        applications: details
+            .map(|info| info.usb_enabled_applications.clone())
+            .unwrap_or_default(),
+        usb_supported: details
             .as_ref()
-            .map(|info| info.enabled_applications.clone())
+            .map(|info| info.usb_supported_applications.clone())
             .unwrap_or_default(),
-        supported_applications: details
-            .map(|info| info.supported_applications)
+        nfc_enabled: details
+            .as_ref()
+            .map(|info| info.nfc_enabled_applications.clone())
             .unwrap_or_default(),
+        nfc_supported: details
+            .as_ref()
+            .map(|info| info.nfc_supported_applications.clone())
+            .unwrap_or_default(),
+        config_locked: details.as_ref().and_then(|info| info.config_locked),
+        fips_approved: details
+            .as_ref()
+            .and_then(|info| info.fips_approved_applications.clone()),
+        pin_complexity: details.as_ref().and_then(|info| info.pin_complexity),
         simulated: false,
         metadata_access,
+        piv_capabilities: Some(YubiKeyPiv.capabilities()),
     }
 }
 
-fn read_management_info(card: &pcsc::Card) -> Option<ManagementInfo> {
+// Hold a transaction so another process cannot select a different applet
+// between the SELECT and the GET DEVICE INFO pages.
+fn read_management_info(card: &mut pcsc::Card) -> Option<ManagementInfo> {
+    let transaction = card.transaction().ok()?;
+    let card: &pcsc::Card = &transaction;
     let mut select = vec![0x00, 0xa4, 0x04, 0x00, MANAGEMENT_AID.len() as u8];
     select.extend_from_slice(&MANAGEMENT_AID);
     let select_response = send_read_only(card, &select)?;
@@ -740,20 +1115,223 @@ fn watch(context: Context, sender: &Sender<DeviceEvent>, previous: &mut Vec<Devi
         if !reconcile(previous, current, sender) {
             return false;
         }
-        match context.get_status_change(Duration::from_secs(5), &mut states) {
-            Ok(()) => states.iter_mut().for_each(ReaderState::sync_current_state),
-            Err(PcscError::Timeout) => {}
-            Err(error) => {
-                tracing::warn!(%error, "smart-card watcher stopped");
-                return true;
+        // Scanning connects to each card, which toggles INUSE for every
+        // watcher (including this one). Rescan only on insertion, removal or
+        // reader changes, or on the periodic timeout that also covers HID.
+        loop {
+            match context.get_status_change(Duration::from_secs(5), &mut states) {
+                Ok(()) => {
+                    let relevant = states.iter().enumerate().any(|(index, state)| {
+                        if index == 0 {
+                            state.event_state().contains(State::CHANGED)
+                        } else {
+                            presence_changed(state.current_state(), state.event_state())
+                        }
+                    });
+                    states.iter_mut().for_each(ReaderState::sync_current_state);
+                    if relevant {
+                        break;
+                    }
+                }
+                Err(PcscError::Timeout) => break,
+                Err(error) => {
+                    tracing::warn!(%error, "smart-card watcher stopped");
+                    return true;
+                }
             }
         }
     }
 }
 
+fn presence_changed(current: State, event: State) -> bool {
+    let mask = State::PRESENT | State::EMPTY | State::MUTE | State::UNAVAILABLE | State::UNKNOWN;
+    (current & mask) != (event & mask)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sigil_core::Application;
+
+    #[test]
+    fn thales_piv_is_discovered_without_yubikey_application_configuration() {
+        let device = thales_device_info(
+            "SafeNet eToken Fusion 0",
+            "540F9B50",
+            Transport::UsbSmartCard,
+        );
+        assert_eq!(device.applications, vec![Application::Piv]);
+        assert_eq!(device.supported_applications, vec![Application::Piv]);
+        assert!(device.usb_enabled.is_empty());
+        assert!(device.usb_supported.is_empty());
+        assert!(device.nfc_enabled.is_empty());
+        assert!(device.nfc_supported.is_empty());
+        assert!(device.piv_capabilities.is_some());
+    }
+
+    #[test]
+    fn watcher_ignores_in_use_changes_but_not_insertion_or_removal() {
+        let idle = State::PRESENT;
+        assert!(!presence_changed(
+            idle,
+            State::PRESENT | State::INUSE | State::CHANGED
+        ));
+        assert!(!presence_changed(
+            State::PRESENT | State::INUSE,
+            idle | State::CHANGED
+        ));
+        assert!(presence_changed(idle, State::EMPTY | State::CHANGED));
+        assert!(presence_changed(
+            State::EMPTY,
+            State::PRESENT | State::CHANGED
+        ));
+        assert!(presence_changed(State::UNAWARE, State::PRESENT));
+    }
+
+    fn reader_kind_from_name(name: &str) -> ReaderKind {
+        let reader = CString::new(name).expect("reader name");
+        reader_kind(reader.as_c_str())
+    }
+
+    fn management_info_for_reader() -> ManagementInfo {
+        ManagementInfo {
+            serial: Some("12345678".into()),
+            firmware: Some(FirmwareVersion {
+                major: 5,
+                minor: 7,
+                patch: 1,
+            }),
+            form_factor: Some("Keychain (USB-A)".into()),
+            form_factor_code: sigil_yubikey::management::FormFactor::UsbAKeychain,
+            device_fips: false,
+            sky: false,
+            fips: Some(false),
+            transports: vec![
+                Transport::UsbSmartCard,
+                Transport::UsbHid,
+                Transport::UsbOtp,
+                Transport::Nfc,
+            ],
+            usb_enabled_applications: vec![Application::Fido2],
+            usb_supported_applications: vec![Application::Fido2, Application::Piv],
+            usb_supported_bits: 0x210,
+            nfc_enabled_applications: vec![Application::Piv],
+            nfc_supported_applications: vec![Application::Piv, Application::Oath],
+            config_locked: Some(false),
+            fips_approved_applications: None,
+            pin_complexity: Some(false),
+        }
+    }
+
+    #[test]
+    fn classifies_yubico_readers_and_external_pcsc_readers() {
+        for name in ["Yubico YubiKey OTP+FIDO+CCID 0", "YubiKey 5 NFC"] {
+            assert_eq!(reader_kind_from_name(name), ReaderKind::YubiKeyUsb);
+        }
+        for name in [
+            "ACS ACR1252 1S CL Reader PICC 0",
+            "HID Global OMNIKEY 5022 Smart Card Reader 0",
+            "Identiv uTrust 3700 F CL Reader 0",
+        ] {
+            assert_eq!(reader_kind_from_name(name), ReaderKind::Other);
+        }
+    }
+
+    #[test]
+    fn fido_dispatch_accepts_hid_and_pcsc_usb_ids() {
+        assert_eq!(
+            fido_route(
+                &DeviceId("windows-hid:fido-path".into()),
+                Some(&Transport::UsbHid),
+            )
+            .unwrap(),
+            FidoRoute::Hid("fido-path")
+        );
+        assert_eq!(
+            fido_route(
+                &DeviceId("windows-pcsc:Reader:39192733".into()),
+                Some(&Transport::UsbSmartCard),
+            )
+            .unwrap(),
+            FidoRoute::PcscUsb
+        );
+    }
+
+    #[test]
+    fn fido_dispatch_rejects_nfc_before_resolving_hid() {
+        assert!(matches!(
+            fido_route(
+                &DeviceId("windows-pcsc:Reader:39192733".into()),
+                Some(&Transport::Nfc),
+            ),
+            Err(CredentialError::UnsupportedOperation(message))
+                if message == "FIDO over NFC is not supported yet"
+        ));
+    }
+
+    #[test]
+    fn maps_pin_not_set_ctap_error_and_fails_fast_from_get_info() {
+        assert_eq!(
+            map_fido_pin_error(
+                "response_status err = 0x35 CTAP2_ERR_PIN_NOT_SET No PIN has been set."
+            ),
+            CredentialError::FidoPinNotSet
+        );
+        assert_eq!(
+            map_fido_pin_error("response_status err = 0x31 CTAP2_ERR_PIN_INVALID"),
+            CredentialError::FidoOperation(
+                "response_status err = 0x31 CTAP2_ERR_PIN_INVALID".into()
+            )
+        );
+        assert_eq!(
+            require_fido_pin_configured(Some(false)),
+            Err(CredentialError::FidoPinNotSet)
+        );
+        assert_eq!(require_fido_pin_configured(Some(true)), Ok(()));
+        assert_eq!(require_fido_pin_configured(None), Ok(()));
+    }
+
+    #[test]
+    fn reader_connection_selects_nfc_or_usb_management_capabilities() {
+        let nfc = device_for_reader(
+            "ACS ACR1252 Reader 0",
+            Some(management_info_for_reader()),
+            Transport::Nfc,
+        );
+        assert_eq!(nfc.model, "YubiKey 5 NFC");
+        assert_eq!(nfc.connection, Some(Transport::Nfc));
+        assert_eq!(nfc.fips, Some(false));
+        assert_eq!(nfc.applications, vec![Application::Piv]);
+        assert_eq!(
+            nfc.supported_applications,
+            vec![Application::Piv, Application::Oath]
+        );
+        assert!(nfc.transports.contains(&Transport::Nfc));
+        assert_eq!(nfc.id.0, "windows-pcsc:ACS ACR1252 Reader 0:12345678");
+
+        let usb = device_for_reader(
+            "Yubico YubiKey 0",
+            Some(management_info_for_reader()),
+            Transport::UsbSmartCard,
+        );
+        assert_eq!(usb.model, "YubiKey 5 NFC");
+        assert_eq!(usb.connection, Some(Transport::UsbSmartCard));
+        assert_eq!(usb.fips, Some(false));
+        assert_eq!(usb.applications, vec![Application::Fido2]);
+        assert_eq!(
+            usb.supported_applications,
+            vec![Application::Fido2, Application::Piv]
+        );
+        assert_eq!(
+            usb.transports,
+            vec![
+                Transport::UsbSmartCard,
+                Transport::UsbHid,
+                Transport::UsbOtp,
+                Transport::Nfc,
+            ]
+        );
+    }
 
     #[test]
     fn fido_only_products_cannot_duplicate_ccid_readers() {
@@ -782,10 +1360,12 @@ mod tests {
 
     #[test]
     fn unavailable_metadata_does_not_invent_capabilities() {
-        let device = device_for_reader("Yubico YubiKey 0", None);
+        let device = device_for_reader("Yubico YubiKey 0", None, Transport::UsbSmartCard);
         assert!(!device.simulated);
         assert!(device.serial.is_none());
+        assert!(device.fips.is_none());
         assert!(device.applications.is_empty());
+        assert_eq!(device.connection, Some(Transport::UsbSmartCard));
         assert_eq!(device.transports, vec![Transport::UsbSmartCard]);
     }
 }

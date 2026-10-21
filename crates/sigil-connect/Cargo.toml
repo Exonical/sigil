@@ -1,0 +1,23 @@
+[package]
+name = "sigil-connect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+sigil-app = { path = "../sigil-app" }
+sigil-client = { path = "../sigil-client" }
+sigil-core = { path = "../sigil-core" }
+sigil-mock = { path = "../sigil-mock" }
+sigil-platform = { path = "../sigil-platform" }
+sigil-proto = { path = "../sigil-proto" }
+thiserror.workspace = true
+toml = "0.8.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Registry", "Win32_System_Threading"] }

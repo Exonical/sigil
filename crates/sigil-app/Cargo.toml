@@ -1,13 +1,16 @@
 [package]
 name = "sigil-app"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 sigil-core = { path = "../sigil-core" }
+sigil-piv = { path = "../sigil-piv" }
+getrandom = "0.4"
 tracing.workspace = true
+zeroize = "1.9.0"
 
 [dev-dependencies]
 sigil-mock = { path = "../sigil-mock" }

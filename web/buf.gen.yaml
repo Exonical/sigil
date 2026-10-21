@@ -1,0 +1,9 @@
+version: v2
+plugins:
+  - local:
+      - node
+      - node_modules/@bufbuild/protoc-gen-es/bin/protoc-gen-es
+    out: .
+    opt:
+      - target=ts
+

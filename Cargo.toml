@@ -5,12 +5,20 @@ members = [
     "crates/sigil-app",
     "crates/sigil-mock",
     "crates/sigil-platform",
+    "crates/sigil-thales",
     "crates/sigil-yubikey",
+    "crates/sigil-piv",
+    "crates/sigil-proto",
+    "crates/sigil-agent",
+    "crates/sigil-client",
+    "crates/sigil-connect",
+    "crates/sigil-auth",
     "crates/sigil-cli",
     "crates/sigil-gui",
 ]
 
 [workspace.package]
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.88"
@@ -23,4 +31,3 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
-

@@ -1,0 +1,548 @@
+syntax = "proto3";
+
+package sigil.agent.v1;
+
+option go_package = "github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1";
+
+service Agent {
+  rpc GetAgentInfo(Empty) returns (GetAgentInfoResponse);
+  rpc ListDevices(Empty) returns (ListDevicesResponse);
+  rpc GetDevice(GetDeviceRequest) returns (DeviceInfo);
+  rpc SetEnabledApplications(SetEnabledApplicationsRequest) returns (Empty);
+  rpc WatchDevices(Empty) returns (stream DeviceEvent);
+  rpc GetFidoStatus(DeviceRequest) returns (FidoStatus);
+  rpc ListDiscoverableCredentials(PinRequest) returns (DiscoverableCredentialList);
+  rpc ListFingerprints(PinRequest) returns (FingerprintList);
+  rpc EnrollFingerprint(EnrollFingerprintRequest) returns (stream EnrollFingerprintEvent);
+  rpc RemoveFingerprint(RemoveFingerprintRequest) returns (Empty);
+  rpc GetPivInfo(DeviceRequest) returns (PivInfo);
+  rpc ListPivSlots(DeviceRequest) returns (PivSlotInfoList);
+  rpc GetPivCertificate(GetPivCertificateRequest) returns (GetPivCertificateResponse);
+  rpc ChangePivPin(ChangePivPinRequest) returns (Empty);
+  rpc ChangePivPuk(ChangePivPukRequest) returns (Empty);
+  rpc UnblockPivPin(UnblockPivPinRequest) returns (Empty);
+  rpc ChangePivManagementKey(ChangePivManagementKeyRequest) returns (Empty);
+  rpc GeneratePivKey(GeneratePivKeyRequest) returns (GeneratePivKeyResponse);
+  rpc AttestPivKey(AttestPivKeyRequest) returns (AttestPivKeyResponse);
+  rpc SignPivCsr(SignPivCsrRequest) returns (SignPivCsrResponse);
+  rpc ImportPivCertificate(ImportPivCertificateRequest) returns (Empty);
+  rpc DeletePivCertificate(DeletePivCertificateRequest) returns (Empty);
+  rpc DeletePivKey(DeletePivKeyRequest) returns (Empty);
+  rpc ResetPiv(ResetPivRequest) returns (Empty);
+  rpc InitializeManagedPiv(InitializeManagedPivRequest) returns (Empty);
+  rpc RotateManagedPivSecret(RotateManagedPivSecretRequest) returns (Empty);
+  rpc ListCertificateProfiles(ListCertificateProfilesRequest) returns (ListCertificateProfilesResponse);
+  rpc EnrollPivCertificate(EnrollPivCertificateRequest) returns (EnrollPivCertificateResponse);
+}
+
+message Empty {}
+
+message Caller {
+  string os_user = 1;
+  optional uint32 session_id = 2;
+  uint32 pid = 3;
+}
+
+message GetAgentInfoResponse {
+  uint32 protocol_version = 1;
+  string agent_version = 2;
+  string platform = 3;
+  string station_id = 4;
+  Caller caller = 5;
+}
+
+message FirmwareVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+  uint32 patch = 3;
+}
+
+enum Transport {
+  TRANSPORT_UNSPECIFIED = 0;
+  TRANSPORT_USB_SMART_CARD = 1;
+  TRANSPORT_USB_HID = 2;
+  TRANSPORT_USB_OTP = 3;
+  TRANSPORT_NFC = 4;
+}
+
+enum Application {
+  APPLICATION_UNSPECIFIED = 0;
+  APPLICATION_PIV = 1;
+  APPLICATION_FIDO2 = 2;
+  APPLICATION_U2F = 3;
+  APPLICATION_OTP = 4;
+  APPLICATION_OPEN_PGP = 5;
+  APPLICATION_OATH = 6;
+  APPLICATION_YUBI_HSM_AUTH = 7;
+}
+
+enum MetadataAccess {
+  METADATA_ACCESS_UNKNOWN = 0;
+  METADATA_ACCESS_AVAILABLE = 1;
+  METADATA_ACCESS_RESTRICTED = 2;
+}
+
+message PivCapabilities {
+  bool piv_writes = 1;
+  bool key_metadata = 2;
+  bool pin_touch_policy = 3;
+  bool set_management_key = 4;
+  bool attestation = 5;
+  bool delete_key = 6;
+  bool reset = 7;
+  bool factory_initialize = 8;
+  bool p384_generation = 9;
+  bool retired_slot_generation = 10;
+}
+
+message DeviceInfo {
+  string id = 1;
+  string vendor = 2;
+  string model = 3;
+  optional string serial = 4;
+  optional FirmwareVersion firmware = 5;
+  optional string form_factor = 6;
+  optional Transport connection = 7;
+  repeated Transport transports = 8;
+  repeated Application applications = 9;
+  repeated Application supported_applications = 10;
+  bool simulated = 11;
+  MetadataAccess metadata_access = 12;
+  optional bool fips = 13;
+  repeated Application usb_enabled = 14;
+  repeated Application usb_supported = 15;
+  repeated Application nfc_enabled = 16;
+  repeated Application nfc_supported = 17;
+  optional bool config_locked = 18;
+  bool fips_approved_available = 19;
+  repeated Application fips_approved = 20;
+  optional bool pin_complexity = 21;
+  optional PivCapabilities piv_capabilities = 22;
+}
+
+message DeviceRequest {
+  string id = 1;
+}
+
+message SetEnabledApplicationsRequest {
+  string id = 1;
+  string expected_serial = 2;
+  repeated Application usb_enabled = 3;
+  bool set_nfc = 4;
+  repeated Application nfc_enabled = 5;
+  bytes lock_code = 6;
+}
+
+message GetDeviceRequest {
+  string id = 1;
+}
+
+message ListDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message DeviceEvent {
+  oneof event {
+    DeviceInfo connected = 1;
+    DeviceInfo updated = 2;
+    string disconnected_id = 3;
+  }
+}
+
+message FidoStatus {
+  repeated string versions = 1;
+  optional bool pin_set = 2;
+  optional int32 pin_retries = 3;
+  bool credential_management = 4;
+  bool fingerprint_enrollment = 5;
+}
+
+message PinRequest {
+  string id = 1;
+  string pin = 2;
+}
+
+message DiscoverableCredential {
+  string rp_id = 1;
+  string rp_name = 2;
+  string user_name = 3;
+  string user_display_name = 4;
+  string credential_id = 5;
+}
+
+message DiscoverableCredentialList {
+  repeated DiscoverableCredential credentials = 1;
+}
+
+message Fingerprint {
+  string id = 1;
+  optional string name = 2;
+}
+
+message FingerprintList {
+  repeated Fingerprint fingerprints = 1;
+}
+
+message EnrollFingerprintRequest {
+  string id = 1;
+  string pin = 2;
+}
+
+message FingerprintProgress {
+  string message = 1;
+  uint32 remaining_samples = 2;
+}
+
+message EnrollFingerprintEvent {
+  oneof event {
+    FingerprintProgress progress = 1;
+    Fingerprint result = 2;
+  }
+}
+
+message RemoveFingerprintRequest {
+  string id = 1;
+  string pin = 2;
+  string fingerprint_id = 3;
+}
+
+enum PivAlgorithmKind {
+  PIV_ALGORITHM_KIND_UNSPECIFIED = 0;
+  PIV_ALGORITHM_KIND_RSA_1024 = 1;
+  PIV_ALGORITHM_KIND_RSA_2048 = 2;
+  PIV_ALGORITHM_KIND_RSA_3072 = 3;
+  PIV_ALGORITHM_KIND_RSA_4096 = 4;
+  PIV_ALGORITHM_KIND_ECC_P256 = 5;
+  PIV_ALGORITHM_KIND_ECC_P384 = 6;
+  PIV_ALGORITHM_KIND_ED25519 = 7;
+  PIV_ALGORITHM_KIND_X25519 = 8;
+  PIV_ALGORITHM_KIND_TDES = 9;
+  PIV_ALGORITHM_KIND_AES_128 = 10;
+  PIV_ALGORITHM_KIND_AES_192 = 11;
+  PIV_ALGORITHM_KIND_AES_256 = 12;
+  PIV_ALGORITHM_KIND_UNKNOWN = 13;
+}
+
+message PivAlgorithm {
+  PivAlgorithmKind kind = 1;
+  uint32 unknown_id = 2;
+}
+
+enum PinPolicy {
+  PIN_POLICY_UNSPECIFIED = 0;
+  PIN_POLICY_DEFAULT = 1;
+  PIN_POLICY_NEVER = 2;
+  PIN_POLICY_ONCE = 3;
+  PIN_POLICY_ALWAYS = 4;
+  PIN_POLICY_MATCH_ONCE = 5;
+  PIN_POLICY_MATCH_ALWAYS = 6;
+}
+
+enum TouchPolicy {
+  TOUCH_POLICY_UNSPECIFIED = 0;
+  TOUCH_POLICY_DEFAULT = 1;
+  TOUCH_POLICY_NEVER = 2;
+  TOUCH_POLICY_ALWAYS = 3;
+  TOUCH_POLICY_CACHED = 4;
+}
+
+enum KeyOrigin {
+  KEY_ORIGIN_UNSPECIFIED = 0;
+  KEY_ORIGIN_GENERATED = 1;
+  KEY_ORIGIN_IMPORTED = 2;
+}
+
+message PivKeyMetadata {
+  PivAlgorithm algorithm = 1;
+  PinPolicy pin_policy = 2;
+  TouchPolicy touch_policy = 3;
+  optional KeyOrigin origin = 4;
+}
+
+message KeyStatus {
+  oneof status {
+    PivKeyMetadata present = 1;
+    bool absent = 2;
+    bool unknown = 3;
+  }
+}
+
+message CertificateSummary {
+  string subject = 1;
+  string issuer = 2;
+  string serial = 3;
+  string not_before = 4;
+  string not_after = 5;
+  optional PivAlgorithm public_key_algorithm = 6;
+  string sha256_fingerprint = 7;
+}
+
+message PivSlotInfo {
+  uint32 slot_byte = 1;
+  optional CertificateSummary certificate = 2;
+  KeyStatus key = 3;
+}
+
+message PivSlotInfoList {
+  repeated PivSlotInfo slots = 1;
+}
+
+message RetryStatus {
+  uint32 remaining = 1;
+  optional uint32 total = 2;
+  optional bool default_value = 3;
+}
+
+message ManagementKeyStatus {
+  PivAlgorithm algorithm = 1;
+  optional bool default_value = 2;
+  optional TouchPolicy touch_policy = 3;
+}
+
+message PivInfo {
+  optional FirmwareVersion version = 1;
+  optional RetryStatus pin = 2;
+  optional RetryStatus puk = 3;
+  optional ManagementKeyStatus management_key = 4;
+}
+
+message GetPivCertificateRequest {
+  string id = 1;
+  uint32 slot_byte = 2;
+}
+
+message GetPivCertificateResponse {
+  bool found = 1;
+  optional CertificateSummary summary = 2;
+  bytes der = 3;
+}
+
+enum ManagementKeyAlgorithm {
+  MANAGEMENT_KEY_ALGORITHM_UNSPECIFIED = 0;
+  MANAGEMENT_KEY_ALGORITHM_AES_128 = 1;
+  MANAGEMENT_KEY_ALGORITHM_AES_192 = 2;
+  MANAGEMENT_KEY_ALGORITHM_AES_256 = 3;
+}
+
+enum PivKeyGenerationAlgorithm {
+  PIV_KEY_GENERATION_ALGORITHM_UNSPECIFIED = 0;
+  PIV_KEY_GENERATION_ECC_P256 = 1;
+  PIV_KEY_GENERATION_ECC_P384 = 2;
+}
+
+message ChangePivPinRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes old_pin = 3;
+  bytes new_pin = 4;
+}
+
+message ChangePivPukRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes old_puk = 3;
+  bytes new_puk = 4;
+  ManagedAuthorization managed = 5;
+}
+
+message ManagedAuthorization {
+  string access_token = 1;
+}
+
+message UnblockPivPinRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes puk = 3;
+  bytes new_pin = 4;
+  ManagedAuthorization managed = 5;
+}
+
+message ChangePivManagementKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes current_management_key = 3;
+  ManagementKeyAlgorithm current_algorithm = 4;
+  ManagementKeyAlgorithm new_algorithm = 5;
+  bytes new_management_key = 6;
+  ManagedAuthorization managed = 7;
+}
+
+message GeneratePivKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+  PivKeyGenerationAlgorithm algorithm = 6;
+  PinPolicy pin_policy = 7;
+  TouchPolicy touch_policy = 8;
+  ManagedAuthorization managed = 9;
+}
+
+message GeneratePivKeyResponse {
+  bytes subject_public_key_info = 1;
+}
+
+message AttestPivKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  uint32 slot_byte = 3;
+}
+
+message AttestPivKeyResponse {
+  bytes attestation_der = 1;
+  bytes intermediate_der = 2;
+  // The chain check and the fields the attestation asserts. A failed check is reported here, not as an RPC error.
+  bool verified = 3;
+  string verification_error = 4;
+  string attestation_root = 5;
+  optional uint64 attested_serial = 6;
+  string firmware = 7;
+  optional uint32 attested_slot = 8;
+  optional uint32 pin_policy = 9;
+  optional uint32 touch_policy = 10;
+  bytes subject_public_key_info = 11;
+}
+
+message SignPivCsrRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes pin = 3;
+  uint32 slot_byte = 4;
+  string subject_dn = 5;
+  // Public key the CSR is bound to, as SubjectPublicKeyInfo DER. Empty means not supplied.
+  bytes expected_public_key = 6;
+}
+
+message SignPivCsrResponse {
+  bytes csr_der = 1;
+}
+
+message ImportPivCertificateRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+  bytes certificate_der = 6;
+  ManagedAuthorization managed = 7;
+  // Public key the certificate is bound to, as SubjectPublicKeyInfo DER. Empty means not supplied.
+  bytes expected_public_key = 8;
+}
+
+message DeletePivCertificateRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+  ManagedAuthorization managed = 6;
+}
+
+message DeletePivKeyRequest {
+  string id = 1;
+  string expected_serial = 2;
+  bytes management_key = 3;
+  ManagementKeyAlgorithm management_key_algorithm = 4;
+  uint32 slot_byte = 5;
+  ManagedAuthorization managed = 6;
+}
+
+message ResetPivRequest {
+  string id = 1;
+  string confirm_serial = 2;
+}
+
+message InitializeManagedPivRequest {
+  string id = 1;
+  string expected_serial = 2;
+  ManagedAuthorization managed = 3;
+}
+
+enum ManagedSecretKind {
+  MANAGED_SECRET_KIND_UNSPECIFIED = 0;
+  MANAGED_SECRET_KIND_PUK = 1;
+  MANAGED_SECRET_KIND_MANAGEMENT_KEY = 2;
+}
+
+message RotateManagedPivSecretRequest {
+  string id = 1;
+  string expected_serial = 2;
+  ManagedAuthorization managed = 3;
+  ManagedSecretKind kind = 4;
+}
+
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  ERROR_DEVICE_NOT_FOUND = 1;
+  ERROR_DEVICE_REMOVED = 2;
+  ERROR_UNSUPPORTED_OPERATION = 3;
+  ERROR_BACKEND_UNAVAILABLE = 4;
+  ERROR_PCSC_UNAVAILABLE = 5;
+  ERROR_INVENTORY_UNAVAILABLE = 6;
+  ERROR_FIDO_ACCESS_RESTRICTED = 7;
+  ERROR_FIDO_OPERATION = 8;
+  ERROR_INVALID_SLOT = 9;
+  ERROR_PIV_UNAVAILABLE = 10;
+  ERROR_SMART_CARD_OPERATION = 11;
+  ERROR_CARD_STATUS = 12;
+  ERROR_CERTIFICATE_PARSE = 13;
+  ERROR_CERTIFICATE_NOT_FOUND = 14;
+  OPERATION_UNAUTHORIZED = 15;
+  CALLER_REJECTED = 16;
+  AGENT_UNAVAILABLE = 17;
+  PROTOCOL_MISMATCH = 18;
+  AGENT_UNTRUSTED = 19;
+  FIDO_PIN_NOT_SET = 20;
+  PIN_INCORRECT = 21;
+  PUK_INCORRECT = 22;
+  PIN_BLOCKED = 23;
+  PUK_BLOCKED = 24;
+  MANAGEMENT_KEY_INCORRECT = 25;
+  DEVICE_MISMATCH = 26;
+  PIV_FIPS_NOT_APPROVED = 27;
+  PIV_NOT_FACTORY_DEFAULT = 28;
+  MANAGED_ROTATION_INCOMPLETE = 29;
+  BACKEND_REJECTED = 30;
+  PIN_COMPLEXITY_VIOLATION = 31;
+}
+
+message AgentError {
+  ErrorKind kind = 1;
+  string detail = 2;
+}
+
+message ListCertificateProfilesRequest {
+  string id = 1;
+  ManagedAuthorization managed = 2;
+}
+
+message CertificateProfile {
+  string name = 1;
+  string display_name = 2;
+  uint32 slot_byte = 3;
+  string algorithm = 4;
+  string pin_policy = 5;
+  string touch_policy = 6;
+  // The subject common name the CA will issue for the token's assigned user. CSRs must carry it.
+  string expected_subject = 7;
+}
+
+message ListCertificateProfilesResponse {
+  repeated CertificateProfile profiles = 1;
+}
+
+message EnrollPivCertificateRequest {
+  string id = 1;
+  string expected_serial = 2;
+  string profile = 3;
+  bytes pin = 4;
+  ManagedAuthorization managed = 5;
+}
+
+message EnrollPivCertificateResponse {
+  bytes certificate_der = 1;
+  int64 not_after_unix = 2;
+  string subject = 3;
+  string serial_number = 4;
+}

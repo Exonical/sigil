@@ -1,0 +1,138 @@
+syntax = "proto3";
+
+package sigil.backend.v1;
+
+import "sigil/agent/v1/grant.proto";
+
+option go_package = "github.com/Exonical/sigil/backend/gen/sigil/backend/v1;backendv1";
+
+service AgentGateway {
+  rpc RequestGrant(RequestGrantRequest) returns (RequestGrantResponse);
+  rpc AuthorizeManagedOperation(AuthorizeManagedOperationRequest) returns (AuthorizeManagedOperationResponse);
+  rpc CompleteRotation(CompleteRotationRequest) returns (CompleteRotationResponse);
+  rpc ReportAudit(ReportAuditRequest) returns (ReportAuditResponse);
+  rpc ReportTokens(ReportTokensRequest) returns (ReportTokensResponse);
+  rpc ListProfiles(ListProfilesRequest) returns (ListProfilesResponse);
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+}
+
+message RequestGrantRequest {
+  string access_token = 1;
+  sigil.agent.v1.Operation operation = 2;
+  string token_vendor = 3;
+  string token_serial = 4;
+  string caller_os_user = 5;
+  uint32 piv_slot = 6;
+}
+
+message RequestGrantResponse {
+  sigil.agent.v1.SignedGrant grant = 1;
+}
+
+message AuthorizeManagedOperationRequest {
+  string access_token = 1;
+  sigil.agent.v1.Operation operation = 2;
+  string token_vendor = 3;
+  string token_serial = 4;
+  string caller_os_user = 5;
+  uint32 piv_slot = 6;
+}
+
+message EscrowedSecret {
+  bytes value = 1;
+  string algorithm = 2;
+}
+
+message AuthorizeManagedOperationResponse {
+  sigil.agent.v1.SignedGrant grant = 1;
+  EscrowedSecret current_management_key = 2;
+  EscrowedSecret current_puk = 3;
+  string rotation_id = 4;
+  EscrowedSecret new_management_key = 5;
+  EscrowedSecret new_puk = 6;
+}
+
+message CompleteRotationRequest {
+  string rotation_id = 1;
+  bool applied = 2;
+}
+
+message CompleteRotationResponse {}
+
+message AgentAuditEvent {
+  uint64 sequence = 1;
+  int64 occurred_at_unix_ms = 2;
+  string rpc = 3;
+  string operation = 4;
+  string device_id = 5;
+  string token_serial = 6;
+  string caller_os_user = 7;
+  uint32 caller_session_id = 8;
+  string outcome = 9;
+  string code = 10;
+  string grant_id = 11;
+  string rotation_id = 12;
+}
+
+message ReportAuditRequest {
+  repeated AgentAuditEvent events = 1;
+}
+
+message ReportAuditResponse {
+  uint64 accepted_through = 1;
+}
+
+message ObservedToken {
+  string vendor = 1;
+  string model = 2;
+  string serial = 3;
+  string firmware = 4;
+  string form_factor = 5;
+  string connection = 6;
+}
+
+message ReportTokensRequest {
+  repeated ObservedToken tokens = 1;
+}
+
+message ReportTokensResponse {}
+
+message ListProfilesRequest {
+  string access_token = 1;
+  // Optional. When a token is named, only profiles the caller may enroll on that token are returned.
+  string token_vendor = 2;
+  string token_serial = 3;
+}
+
+message CertificateProfile {
+  string name = 1;
+  string display_name = 2;
+  uint32 piv_slot = 3;
+  string algorithm = 4;
+  string pin_policy = 5;
+  string touch_policy = 6;
+  // Set when a token was named: the subject the CA will issue for that token. CSRs must carry this CN.
+  string expected_subject = 7;
+}
+
+message ListProfilesResponse {
+  repeated CertificateProfile profiles = 1;
+}
+
+message IssueCertificateRequest {
+  string access_token = 1;
+  string token_vendor = 2;
+  string token_serial = 3;
+  string caller_os_user = 4;
+  string profile = 5;
+  bytes csr_der = 6;
+  bytes attestation_der = 7;
+  bytes attestation_intermediate_der = 8;
+}
+
+message IssueCertificateResponse {
+  repeated bytes chain_der = 1;
+  string serial_number = 2;
+  string subject = 3;
+  int64 not_after_unix = 4;
+}

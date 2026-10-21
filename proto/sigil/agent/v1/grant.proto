@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package sigil.agent.v1;
+
+option go_package = "github.com/Exonical/sigil/backend/gen/sigil/agent/v1;agentv1";
+
+enum Operation {
+  OPERATION_UNSPECIFIED = 0;
+  reserved 1, 2;
+  reserved "FIDO_FINGERPRINT_ENROLL", "FIDO_FINGERPRINT_REMOVE";
+  PIV_GENERATE_KEY = 3;
+  PIV_IMPORT_CERTIFICATE = 4;
+  PIV_DELETE_CERTIFICATE = 5;
+  PIV_UNBLOCK_PIN = 6;
+  PIV_CHANGE_PUK = 7;
+  PIV_CHANGE_MANAGEMENT_KEY = 8;
+  PIV_SET_RETRIES = 9;
+  PIV_DELETE_KEY = 10;
+  PIV_MANAGED_INITIALIZE = 11;
+}
+
+message OperationGrant {
+  uint32 version = 1;
+  string grant_id = 2;
+  Operation operation = 3;
+  string subject = 4;
+  string station_id = 5;
+  string token_serial = 6;
+  string caller_os_user = 7;
+  int64 not_before_unix = 8;
+  int64 expires_at_unix = 9;
+  reserved 10;
+  reserved "fingerprint_id";
+  uint32 piv_slot = 11;
+}
+
+message SignedGrant {
+  bytes grant = 1;
+  bytes signature = 2;
+  string key_id = 3;
+}

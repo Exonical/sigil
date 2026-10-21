@@ -1,6 +1,6 @@
 [package]
 name = "sigil-cli"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -12,10 +12,17 @@ path = "src/main.rs"
 [dependencies]
 sigil-core = { path = "../sigil-core" }
 sigil-app = { path = "../sigil-app" }
-sigil-mock = { path = "../sigil-mock" }
-sigil-platform = { path = "../sigil-platform" }
+sigil-connect = { path = "../sigil-connect" }
+sigil-auth = { path = "../sigil-auth" }
+tokio = { version = "1.53.1", features = ["rt", "macros"] }
 clap.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 tracing-subscriber.workspace = true
 rpassword = "7"
+zeroize = "1.9.0"
+
+[dev-dependencies]
+sigil-agent = { path = "../sigil-agent", features = ["test-support"] }
+sigil-client = { path = "../sigil-client" }
+sigil-mock = { path = "../sigil-mock" }

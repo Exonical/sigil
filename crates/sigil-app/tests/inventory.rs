@@ -2,7 +2,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sigil_app::CredentialService;
-use sigil_core::{CredentialError, DeviceDiscovery, DeviceEvent, DeviceId};
+use sigil_core::{
+    CertificateFormat, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId, KeyStatus, PivSlot,
+};
 use sigil_mock::MockDiscovery;
 
 #[test]
@@ -104,4 +106,35 @@ fn fido_inspection_uses_the_selected_device() {
         service.enroll_fingerprint(&id, "test PIN", &mut |_| {}),
         Err(CredentialError::UnsupportedOperation(_))
     ));
+}
+
+#[test]
+fn piv_inspection_uses_mock_certificates_and_rejects_unknown_devices() {
+    let service = CredentialService::new(Arc::new(MockDiscovery::with_example()));
+    let id = DeviceId("mock-yubikey-12345678".into());
+    let info = service.piv_info(&id).expect("PIV info");
+    assert_eq!(info.pin.as_ref().unwrap().remaining, 3);
+    assert_eq!(
+        info.management_key.as_ref().unwrap().algorithm,
+        sigil_core::PivAlgorithm::Aes192
+    );
+    let slots = service.piv_slots(&id).expect("PIV slots");
+    assert_eq!(slots.len(), 4);
+    assert_eq!(slots[1].key, KeyStatus::Absent);
+    assert!(
+        slots[0]
+            .certificate
+            .as_ref()
+            .unwrap()
+            .subject
+            .contains("Simulated PIV Authentication")
+    );
+    let pem = service
+        .export_certificate(&id, PivSlot::AUTHENTICATION, CertificateFormat::Pem)
+        .expect("certificate export");
+    assert!(pem.starts_with(b"-----BEGIN CERTIFICATE-----\n"));
+    assert_eq!(
+        service.piv_info(&DeviceId("missing".into())),
+        Err(CredentialError::DeviceNotFound("missing".into()))
+    );
 }

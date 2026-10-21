@@ -1,6 +1,6 @@
 [package]
 name = "sigil-core"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -8,4 +8,7 @@ rust-version.workspace = true
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+zeroize = "1.9.0"
 
+[dev-dependencies]
+serde_json.workspace = true

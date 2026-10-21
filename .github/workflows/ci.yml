@@ -9,6 +9,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.401
       - name: Install Rust components
         run: rustup component add rustfmt clippy
       - name: Format
@@ -17,11 +20,25 @@ jobs:
         run: cargo test --workspace
       - name: Lint workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Exercise CLI inventory JSON
+      - name: Exercise direct-mock CLI inventory JSON
         shell: pwsh
         run: |
-          $inventory = cargo run -q -p sigil-cli -- --backend mock device list --json | ConvertFrom-Json
-          if ($inventory.Count -ne 1 -or -not $inventory[0].simulated) { throw 'Mock inventory JSON check failed' }
+          $devices = cargo run -q -p sigil-cli -- --direct-mock device list --json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($devices.Count -ne 1 -or -not $devices[0].simulated -or $devices[0].id -ne "mock-yubikey-12345678") {
+            throw "direct-mock CLI inventory did not return the simulated fixture"
+          }
+      - name: Restore WiX tool
+        run: dotnet tool restore
+      - name: Build Windows MSI
+        shell: pwsh
+        run: ./installer/windows/build.ps1
+      - name: Upload Windows MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: Sigil-Windows-x64
+          path: target/installer/Sigil-*-x64.msi
+          if-no-files-found: error
 
   linux:
     runs-on: ubuntu-latest
@@ -33,3 +50,45 @@ jobs:
         run: cargo test --workspace --exclude sigil-gui
       - name: Lint non-GUI workspace
         run: cargo clippy --workspace --exclude sigil-gui --all-targets -- -D warnings
+
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: sigil-test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      SIGIL_TEST_DATABASE_URL: postgres://postgres:sigil-test@127.0.0.1:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.27.1
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Generate shared Go protobuf code
+        working-directory: backend
+        run: go generate ./...
+      - name: Check generated code is current
+        run: git diff --exit-code
+      - name: Check Go formatting
+        working-directory: backend
+        run: test -z "$(gofmt -l $(find . -type f -name '*.go'))"
+      - name: Vet Go backend
+        working-directory: backend
+        run: go vet ./...
+      - name: Staticcheck Go backend
+        working-directory: backend
+        run: go tool staticcheck ./...
+      - name: Test Go backend with PostgreSQL integration tests
+        working-directory: backend
+        run: go test ./...
+      - name: Verify Go grant fixture with Rust agent
+        run: cargo test -p sigil-agent verifies_go_golden_piv_grant

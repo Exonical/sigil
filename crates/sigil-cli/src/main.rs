@@ -1,31 +1,22 @@
-use std::sync::Arc;
-
 use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use sigil_app::CredentialService;
-use sigil_core::{DeviceDiscovery, DeviceId, DeviceInfo};
+use sigil_connect::{ConnectOptions, ConnectionMode};
+use sigil_core::{CredentialError, DeviceId, DeviceInfo};
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-enum Backend {
-    Mock,
-    Native,
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        if cfg!(target_os = "windows") {
-            Self::Native
-        } else {
-            Self::Mock
-        }
-    }
-}
+mod auth;
+mod piv;
 
 #[derive(Parser)]
 #[command(name = "cms", about = "Sigil credential manager")]
 struct Args {
-    #[arg(long, global = true, value_enum, default_value_t = Backend::default())]
-    backend: Backend,
+    #[arg(long, global = true, conflicts_with = "direct")]
+    agent: Option<String>,
+    #[arg(long, global = true, conflicts_with = "agent")]
+    direct: bool,
+    #[cfg(debug_assertions)]
+    #[arg(long, global = true, hide = true, conflicts_with_all = ["agent", "direct"])]
+    direct_mock: bool,
     #[arg(long, global = true)]
     json: bool,
     #[command(subcommand)]
@@ -34,6 +25,12 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Sign in to the identity provider in the browser.
+    Login,
+    /// Sign out and revoke the stored refresh token.
+    Logout,
+    /// Show the signed-in user.
+    Whoami,
     Device {
         #[command(subcommand)]
         command: DeviceCommand,
@@ -41,6 +38,10 @@ enum Command {
     Fido {
         #[command(subcommand)]
         command: FidoCommand,
+    },
+    Piv {
+        #[command(subcommand)]
+        command: piv::PivCommand,
     },
 }
 
@@ -86,14 +87,6 @@ enum DeviceCommand {
     Info { device: String },
 }
 
-fn service(backend: Backend) -> CredentialService {
-    let discovery: Arc<dyn DeviceDiscovery> = match backend {
-        Backend::Mock => Arc::new(sigil_mock::MockDiscovery::with_example()),
-        Backend::Native => Arc::new(sigil_platform::NativeDiscovery),
-    };
-    CredentialService::new(discovery)
-}
-
 fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
     if json {
         return Ok(serde_json::to_string_pretty(devices)?);
@@ -114,23 +107,60 @@ fn render_list(devices: &[DeviceInfo], json: bool) -> Result<String> {
 }
 
 fn run(args: Args) -> Result<String> {
-    let service = service(args.backend);
-    match args.command {
+    if auth::is_auth_command(&args.command) {
+        return auth::handle(&args.command, args.json);
+    }
+    let connection = sigil_connect::connect(ConnectOptions {
+        agent: args.agent,
+        direct: args.direct,
+        #[cfg(debug_assertions)]
+        direct_mock: args.direct_mock,
+    })?;
+    if let Some(warning) = &connection.warning {
+        eprintln!("{warning}");
+    }
+    let direct = matches!(connection.mode, ConnectionMode::Direct { .. });
+    let managed = connection.managed.as_deref();
+    run_command(&connection.credentials, managed, args.command, args.json).map_err(|error| {
+        if direct
+            && error
+                .downcast_ref::<CredentialError>()
+                .is_some_and(|error| *error == CredentialError::FidoAccessRestricted)
+        {
+            anyhow::anyhow!("run from an elevated terminal or start the Sigil agent service")
+        } else {
+            error
+        }
+    })
+}
+
+fn run_command(
+    service: &CredentialService,
+    managed: Option<&dyn sigil_connect::ManagedPivAgent>,
+    command: Command,
+    json: bool,
+) -> Result<String> {
+    match command {
+        Command::Login | Command::Logout | Command::Whoami => auth::handle(&command, json),
         Command::Device {
             command: DeviceCommand::List,
-        } => render_list(&service.devices()?, args.json),
+        } => render_list(&service.devices()?, json),
         Command::Device {
             command: DeviceCommand::Info { device },
         } => {
             let info = service.device(&DeviceId(device))?;
-            if args.json {
+            if json {
                 Ok(serde_json::to_string_pretty(&info)?)
             } else {
                 Ok(format!(
-                    "{}\nID: {}\nVendor: {}\nSerial: {}\nFirmware: {}\nForm factor: {}\nEnabled applications: {}\nSupported applications: {}\nSimulated: {}",
+                    "{}\nID: {}\nVendor: {}\nConnection: {}\nSerial: {}\nFirmware: {}\nForm factor: {}\nEnabled applications: {}\nSupported applications: {}\nSimulated: {}",
                     info.model,
                     info.id.0,
                     info.vendor,
+                    info.connection
+                        .as_ref()
+                        .map(|connection| format!("{connection:?}"))
+                        .unwrap_or_else(|| "unknown".into()),
                     info.serial.as_deref().unwrap_or("unknown"),
                     info.firmware
                         .as_ref()
@@ -151,11 +181,12 @@ fn run(args: Args) -> Result<String> {
                 ))
             }
         }
+        Command::Piv { command } => piv::handle(service, managed, command, json),
         Command::Fido {
             command: FidoCommand::Info { device },
         } => {
             let status = service.fido_status(&DeviceId(device))?;
-            if args.json {
+            if json {
                 Ok(serde_json::to_string_pretty(&status)?)
             } else {
                 Ok(format!(
@@ -181,7 +212,7 @@ fn run(args: Args) -> Result<String> {
             let pin = rpassword::prompt_password("FIDO2 PIN: ")?;
             eprintln!();
             let credentials = service.discoverable_credentials(&id, &pin)?;
-            if args.json {
+            if json {
                 Ok(serde_json::to_string_pretty(&credentials)?)
             } else if credentials.is_empty() {
                 Ok("No discoverable credentials found.".into())
@@ -227,7 +258,7 @@ fn run(args: Args) -> Result<String> {
             match action {
                 (Some(fingerprint_id), _) => {
                     service.remove_fingerprint(&id, &pin, &fingerprint_id)?;
-                    Ok(if args.json {
+                    Ok(if json {
                         "{\"removed\":true}".into()
                     } else {
                         "Fingerprint removed.".into()
@@ -240,7 +271,7 @@ fn run(args: Args) -> Result<String> {
                             progress.message, progress.remaining_samples
                         );
                     })?;
-                    if args.json {
+                    if json {
                         Ok(serde_json::to_string_pretty(&fingerprint)?)
                     } else {
                         Ok(format!("Fingerprint enrolled: {}", fingerprint.id))
@@ -248,7 +279,7 @@ fn run(args: Args) -> Result<String> {
                 }
                 _ => {
                     let fingerprints = service.fingerprints(&id, &pin)?;
-                    if args.json {
+                    if json {
                         Ok(serde_json::to_string_pretty(&fingerprints)?)
                     } else if fingerprints.is_empty() {
                         Ok("No fingerprints enrolled.".into())
@@ -286,48 +317,340 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use sigil_agent::test_support::TestAgent;
+    use sigil_client::AgentClient;
+    use sigil_core::{DeviceDiscovery, DeviceEvent, FidoInspection};
+
     use super::*;
+
+    fn parse_for_agent(agent: &TestAgent, command: &[&str]) -> Result<Args> {
+        let mut args = vec![
+            "cms".to_owned(),
+            "--agent".to_owned(),
+            agent.endpoint().to_owned(),
+        ];
+        args.extend(command.iter().map(|value| (*value).to_owned()));
+        Ok(Args::try_parse_from(args)?)
+    }
+
+    fn start_mock_agent() -> Result<TestAgent> {
+        TestAgent::spawn_mock()
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn direct_mock_inventory_json_is_available_without_an_agent() -> Result<()> {
+        let args = Args::try_parse_from(["cms", "--direct-mock", "device", "list", "--json"])?;
+        let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|device| device.simulated));
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-yubikey-12345678")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-thales-540F9B50")
+        );
+        Ok(())
+    }
 
     #[test]
     fn json_list_is_parseable_and_clearly_simulated() -> Result<()> {
-        let args = Args::try_parse_from(["cms", "--backend", "mock", "device", "list", "--json"])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["device", "list", "--json"])?;
         let result: Vec<DeviceInfo> = serde_json::from_str(&run(args)?)?;
-        assert_eq!(result.len(), 1);
-        assert!(result[0].simulated);
-        assert_eq!(result[0].id.0, "mock-yubikey-12345678");
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|device| device.simulated));
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-yubikey-12345678")
+        );
+        assert!(
+            result
+                .iter()
+                .any(|device| device.id.0 == "mock-thales-540F9B50")
+        );
         Ok(())
     }
 
     #[test]
     fn explicit_device_selection() -> Result<()> {
-        let args = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "device",
-            "info",
-            "mock-yubikey-12345678",
-            "--json",
-        ])?;
-        let value: DeviceInfo = serde_json::from_str(&run(args)?)?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(
+            &agent,
+            &["device", "info", "mock-yubikey-12345678", "--json"],
+        )?;
+        let output: serde_json::Value = serde_json::from_str(&run(args)?)?;
+        assert_eq!(output["connection"], "usb_smart_card");
+        let value: DeviceInfo = serde_json::from_value(output)?;
         assert_eq!(value.serial.as_deref(), Some("12345678"));
         Ok(())
     }
 
     #[test]
     fn fido_status_is_structured_for_selected_device() -> Result<()> {
-        let args = Args::try_parse_from([
-            "cms",
-            "--backend",
-            "mock",
-            "fido",
-            "info",
-            "mock-yubikey-12345678",
-            "--json",
-        ])?;
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["fido", "info", "mock-yubikey-12345678", "--json"])?;
         let value: sigil_core::FidoStatus = serde_json::from_str(&run(args)?)?;
         assert!(value.credential_management);
         assert_eq!(value.pin_retries, Some(8));
+        Ok(())
+    }
+
+    #[test]
+    fn piv_slots_json_includes_fixture_and_absent_standard_slot() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["piv", "slots", "mock-yubikey-12345678", "--json"])?;
+        let slots: Vec<sigil_core::PivSlotInfo> = serde_json::from_str(&run(args)?)?;
+        assert_eq!(slots.len(), 4);
+        let signature = slots
+            .iter()
+            .find(|slot| slot.slot == sigil_core::PivSlot::SIGNATURE)
+            .unwrap();
+        assert_eq!(signature.key, sigil_core::KeyStatus::Absent);
+        let authentication = slots
+            .iter()
+            .find(|slot| slot.slot == sigil_core::PivSlot::AUTHENTICATION)
+            .unwrap();
+        assert!(
+            authentication
+                .certificate
+                .as_ref()
+                .unwrap()
+                .subject
+                .contains("Simulated PIV Authentication")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn piv_info_json_reports_retry_status() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let args = parse_for_agent(&agent, &["piv", "info", "mock-yubikey-12345678", "--json"])?;
+        let info: sigil_core::PivInfo = serde_json::from_str(&run(args)?)?;
+        assert_eq!(info.pin.unwrap().remaining, 3);
+        Ok(())
+    }
+
+    #[test]
+    fn piv_certificate_show_and_export_handle_missing_and_existing_paths() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let missing = parse_for_agent(
+            &agent,
+            &["piv", "certificate", "show", "mock-yubikey-12345678", "9c"],
+        )?;
+        assert!(run(missing).is_err());
+
+        let path = std::env::temp_dir().join(format!(
+            "sigil-piv-{}.pem",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let path_argument = path.to_string_lossy().to_string();
+        let export_args = || {
+            parse_for_agent(
+                &agent,
+                &[
+                    "piv",
+                    "certificate",
+                    "export",
+                    "mock-yubikey-12345678",
+                    "9a",
+                    "--output",
+                    &path_argument,
+                ],
+            )
+        };
+        run(export_args()?)?;
+        let pem = std::fs::read(&path)?;
+        assert!(pem.starts_with(b"-----BEGIN CERTIFICATE-----"));
+        assert!(run(export_args()?).is_err());
+        std::fs::remove_file(path)?;
+
+        let der = parse_for_agent(
+            &agent,
+            &[
+                "piv",
+                "certificate",
+                "export",
+                "mock-yubikey-12345678",
+                "9a",
+                "--format",
+                "der",
+            ],
+        )?;
+        assert!(
+            run(der)
+                .unwrap_err()
+                .to_string()
+                .contains("DER output requires --output")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn watch_devices_receives_mock_connection_events_over_ipc() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let client = AgentClient::connect(Some(agent.endpoint()))?;
+        let events = client.subscribe()?;
+        let mock = agent.mock().expect("mock backend");
+        let mut device = mock.list()?.remove(0);
+        device.id = DeviceId("mock-connected-2".into());
+        mock.connect(device.clone())?;
+        assert_eq!(
+            events.recv_timeout(std::time::Duration::from_secs(5))?,
+            DeviceEvent::Connected(device)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn named_pipe_accepts_concurrent_clients_and_a_later_client() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let endpoint = agent.endpoint().to_owned();
+        let barrier = Arc::new(Barrier::new(3));
+        let clients: Vec<_> = (0..2)
+            .map(|_| {
+                let endpoint = endpoint.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let client = AgentClient::connect(Some(&endpoint)).expect("test agent client");
+                    client.list().expect("mock device list").len()
+                })
+            })
+            .collect();
+        barrier.wait();
+        for client in clients {
+            assert_eq!(client.join().expect("client thread"), 2);
+        }
+        let client = AgentClient::connect(Some(&endpoint))?;
+        assert_eq!(client.list()?.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn fingerprint_requests_do_not_require_backend_grants() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let client = AgentClient::connect(Some(agent.endpoint()))?;
+        let id = DeviceId("mock-yubikey-12345678".into());
+        assert!(matches!(
+            client.remove_fingerprint(&id, "1234", "0102"),
+            Err(sigil_core::CredentialError::UnsupportedOperation(_))
+        ));
+        assert!(matches!(
+            client.enroll_fingerprint(&id, "1234", &mut |_| {}),
+            Err(sigil_core::CredentialError::UnsupportedOperation(_))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn managed_flags_conflict_with_management_key_options() {
+        for command in [
+            vec![
+                "cms",
+                "piv",
+                "key",
+                "generate",
+                "dev",
+                "--slot",
+                "9a",
+                "--algorithm",
+                "p256",
+                "--managed",
+                "--current-default",
+            ],
+            vec![
+                "cms",
+                "piv",
+                "key",
+                "delete",
+                "dev",
+                "--slot",
+                "9a",
+                "--managed",
+                "--current-default",
+            ],
+            vec![
+                "cms",
+                "piv",
+                "certificate",
+                "import",
+                "dev",
+                "--slot",
+                "9a",
+                "--file",
+                "x.pem",
+                "--managed",
+                "--current-default",
+            ],
+            vec![
+                "cms",
+                "piv",
+                "certificate",
+                "delete",
+                "dev",
+                "--slot",
+                "9a",
+                "--managed",
+                "--current-default",
+            ],
+        ] {
+            assert!(Args::try_parse_from(command).is_err());
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn managed_commands_in_direct_mode_require_the_agent() -> Result<()> {
+        for command in [
+            vec![
+                "cms",
+                "--direct-mock",
+                "piv",
+                "managed",
+                "init",
+                "mock-yubikey-12345678",
+            ],
+            vec![
+                "cms",
+                "--direct-mock",
+                "piv",
+                "managed",
+                "rotate",
+                "mock-yubikey-12345678",
+                "--secret",
+                "puk",
+            ],
+        ] {
+            let error = run(Args::try_parse_from(command)?).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("managed operations need the Sigil agent"),
+                "unexpected error: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn named_pipe_agent_info_reports_the_sid_and_current_pid() -> Result<()> {
+        let agent = start_mock_agent()?;
+        let client = AgentClient::connect(Some(agent.endpoint()))?;
+        let caller = client.agent_info().caller.as_ref().expect("caller info");
+        assert!(caller.os_user.starts_with("S-1-5-"));
+        assert_eq!(caller.pid, std::process::id());
         Ok(())
     }
 }
