@@ -83,7 +83,7 @@ func (s *Server) RequestGrant(ctx context.Context, request *backendv1.RequestGra
 	}
 	if _, managed := planManagedOperation(request.Operation); managed {
 		reason := "operation requires managed escrow authorization"
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "RequestGrant", "token", request.TokenSerial, "denied", reason); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "RequestGrant", "token", request.TokenSerial, audit.OutcomeDenied, reason); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record grant decision")
 		}
 		return nil, status.Error(codes.FailedPrecondition, reason)
@@ -100,7 +100,7 @@ func (s *Server) RequestGrant(ctx context.Context, request *backendv1.RequestGra
 		PolicyReason: authorization.decision.Reason,
 	})
 	if err != nil {
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "RequestGrant", "token", request.TokenSerial, "error", "grant issuance failed"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "RequestGrant", "token", request.TokenSerial, audit.OutcomeError, "grant issuance failed"); auditErr != nil {
 			s.logger.Error("audit grant issuance failure failed", "error", auditErr)
 		}
 		s.logger.Error("grant issuance failed", "error", err)
@@ -133,7 +133,7 @@ func (s *Server) authorize(
 	}
 	token, err := s.inventory.FindToken(ctx, tokenVendor, tokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
-		if auditErr := s.auditEvent(ctx, "user", principal.UserID, rpcName, "token", tokenSerial, "denied", "token is not in inventory"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", principal.UserID, rpcName, "token", tokenSerial, audit.OutcomeDenied, "token is not in inventory"); auditErr != nil {
 			s.logger.Error("audit unknown token decision failed", "error", auditErr)
 			return authorization{}, status.Error(codes.Internal, "could not record authorization decision")
 		}
@@ -158,7 +158,7 @@ func (s *Server) authorize(
 			Action:     rpcName,
 			TargetType: "token",
 			TargetID:   tokenSerial,
-			Outcome:    "denied",
+			Outcome:    string(audit.OutcomeDenied),
 			Detail: map[string]any{
 				"operation": agentv1.Operation_name[int32(operation)],
 				"station":   station.ID,
@@ -171,7 +171,7 @@ func (s *Server) authorize(
 		return authorization{}, status.Error(codes.PermissionDenied, decision.Reason)
 	}
 	if err := grants.ValidatePIVSlot(operation, pivSlot); err != nil {
-		if auditErr := s.auditEvent(ctx, "user", principal.UserID, rpcName, "token", tokenSerial, "denied", err.Error()); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", principal.UserID, rpcName, "token", tokenSerial, audit.OutcomeDenied, err.Error()); auditErr != nil {
 			s.logger.Error("audit invalid grant request failed", "error", auditErr)
 			return authorization{}, status.Error(codes.Internal, "could not record authorization decision")
 		}
@@ -190,10 +190,10 @@ func (s *Server) authenticatePrincipal(ctx context.Context, actorID, rpcName, to
 		return principal, nil
 	}
 	storeFailure := errors.Is(err, authn.ErrUserStore)
-	outcome := "denied"
+	outcome := audit.OutcomeDenied
 	reason := "OIDC access token rejected"
 	if storeFailure {
-		outcome = "error"
+		outcome = audit.OutcomeError
 		reason = "OIDC user persistence failed"
 	}
 	if auditErr := s.auditEvent(ctx, "station", actorID, rpcName, "token", tokenSerial, outcome, reason); auditErr != nil {
@@ -219,13 +219,13 @@ func (s *Server) ReportTokens(ctx context.Context, request *backendv1.ReportToke
 	if err := s.inventory.Report(ctx, station.ID, request.Tokens); err != nil {
 		var validationErr *inventory.ValidationError
 		if errors.As(err, &validationErr) {
-			if auditErr := s.auditEvent(ctx, "station", actorID, "ReportTokens", "inventory", station.ID, "denied", validationErr.Error()); auditErr != nil {
+			if auditErr := s.auditEvent(ctx, "station", actorID, "ReportTokens", "inventory", station.ID, audit.OutcomeDenied, validationErr.Error()); auditErr != nil {
 				s.logger.Error("audit invalid token report failed", "error", auditErr)
 				return nil, status.Error(codes.Internal, "could not record token report decision")
 			}
 			return nil, status.Error(codes.InvalidArgument, validationErr.Error())
 		}
-		if auditErr := s.auditEvent(ctx, "station", actorID, "ReportTokens", "inventory", station.ID, "error", "token report failed"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "station", actorID, "ReportTokens", "inventory", station.ID, audit.OutcomeError, "token report failed"); auditErr != nil {
 			s.logger.Error("audit token report failure failed", "error", auditErr)
 		}
 		s.logger.Error("token report failed", "error", err)
@@ -257,7 +257,7 @@ func (s *Server) authenticatedStation(ctx context.Context) (db.Station, string, 
 		if len(stations) > 1 {
 			reason = "station certificate DNS SANs match multiple active stations"
 		}
-		if auditErr := s.auditEventDetail(ctx, "station", actorID, "AuthenticateStation", "station", actorID, "denied", map[string]any{
+		if auditErr := s.auditEventDetail(ctx, "station", actorID, "AuthenticateStation", "station", actorID, audit.OutcomeDenied, map[string]any{
 			"reason":             reason,
 			"certificate_serial": serial,
 			"spki_sha256":        actorID,
@@ -272,7 +272,7 @@ func (s *Server) authenticatedStation(ctx context.Context) (db.Station, string, 
 		return db.Station{}, actorID, status.Error(codes.Unauthenticated, "station is not registered or active")
 	}
 	station := stations[0]
-	if auditErr := s.auditEventDetail(ctx, "station", actorID, "AuthenticateStation", "station", station.ID, "success", map[string]any{
+	if auditErr := s.auditEventDetail(ctx, "station", actorID, "AuthenticateStation", "station", station.ID, audit.OutcomeSuccess, map[string]any{
 		"station_dns_name":   station.DNSName,
 		"certificate_serial": serial,
 		"spki_sha256":        actorID,
@@ -327,18 +327,18 @@ func intersects(left, right []string) bool {
 	return false
 }
 
-func (s *Server) auditEvent(ctx context.Context, actorType, actorID, action, targetType, targetID, outcome, reason string) error {
+func (s *Server) auditEvent(ctx context.Context, actorType, actorID, action, targetType, targetID string, outcome audit.Outcome, reason string) error {
 	return s.auditEventDetail(ctx, actorType, actorID, action, targetType, targetID, outcome, map[string]any{"reason": reason})
 }
 
-func (s *Server) auditEventDetail(ctx context.Context, actorType, actorID, action, targetType, targetID, outcome string, detail map[string]any) error {
+func (s *Server) auditEventDetail(ctx context.Context, actorType, actorID, action, targetType, targetID string, outcome audit.Outcome, detail map[string]any) error {
 	return audit.AppendStandalone(ctx, s.store.Pool, audit.Event{
 		ActorType:  actorType,
 		ActorID:    actorID,
 		Action:     action,
 		TargetType: targetType,
 		TargetID:   targetID,
-		Outcome:    outcome,
+		Outcome:    string(outcome),
 		Detail:     detail,
 	})
 }

@@ -14,6 +14,7 @@ import (
 
 	backendv1 "github.com/Exonical/sigil/backend/gen/sigil/backend/v1"
 	"github.com/Exonical/sigil/backend/internal/attestation"
+	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/Exonical/sigil/backend/internal/ca"
 	"github.com/Exonical/sigil/backend/internal/config"
 	"github.com/Exonical/sigil/backend/internal/db"
@@ -54,7 +55,7 @@ func (s *Server) ListProfiles(
 	if request.TokenSerial != "" {
 		found, err := s.inventory.FindToken(ctx, request.TokenVendor, request.TokenSerial)
 		if errors.Is(err, pgx.ErrNoRows) {
-			if auditErr := s.auditEvent(ctx, "user", principal.UserID, "ListProfiles", "token", request.TokenSerial, "denied", "token is not in inventory"); auditErr != nil {
+			if auditErr := s.auditEvent(ctx, "user", principal.UserID, "ListProfiles", "token", request.TokenSerial, audit.OutcomeDenied, "token is not in inventory"); auditErr != nil {
 				s.logger.Error("audit unknown token decision failed", "error", auditErr)
 				return nil, status.Error(codes.Internal, "could not record profile listing")
 			}
@@ -91,7 +92,7 @@ func (s *Server) ListProfiles(
 		profiles = append(profiles, entry)
 	}
 	outcome := fmt.Sprintf("%d profiles", len(profiles))
-	if err := s.auditEvent(ctx, "user", principal.UserID, "ListProfiles", "token", request.TokenSerial, "success", outcome); err != nil {
+	if err := s.auditEvent(ctx, "user", principal.UserID, "ListProfiles", "token", request.TokenSerial, audit.OutcomeSuccess, outcome); err != nil {
 		return nil, status.Error(codes.Internal, "could not record profile listing")
 	}
 	return &backendv1.ListProfilesResponse{Profiles: profiles}, nil
@@ -128,15 +129,15 @@ func (s *Server) IssueCertificate(
 	}
 
 	if !ok {
-		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", "profile is not defined", nil)
+		return nil, decision.deny(ctx, codes.PermissionDenied, "profile is not defined", nil)
 	}
 	if _, ok := s.issuers.cas[profile.CA]; !ok {
-		return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", "certificate authority is not configured", nil)
+		return nil, decision.deny(ctx, codes.FailedPrecondition, "certificate authority is not configured", nil)
 	}
 
 	token, err := db.LockToken(ctx, tx, request.TokenVendor, request.TokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", "token is not in inventory", nil)
+		return nil, decision.deny(ctx, codes.PermissionDenied, "token is not in inventory", nil)
 	}
 	if err != nil {
 		s.logger.Error("lock certificate token failed", "error", err)
@@ -151,7 +152,7 @@ func (s *Server) IssueCertificate(
 		ProfileRoles: profile.Roles,
 	})
 	if !issuance.Allowed {
-		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", issuance.Reason, map[string]any{"station": station.ID})
+		return nil, decision.deny(ctx, codes.PermissionDenied, issuance.Reason, map[string]any{"station": station.ID})
 	}
 	assigned, err := s.store.UserByID(ctx, tx, *token.AssignedUserID)
 	if err != nil {
@@ -161,30 +162,30 @@ func (s *Server) IssueCertificate(
 
 	csr, err := x509.ParseCertificateRequest(request.CsrDer)
 	if err != nil {
-		return nil, decision.deny(ctx, codes.InvalidArgument, "denied", "certificate request is not valid DER", nil)
+		return nil, decision.deny(ctx, codes.InvalidArgument, "certificate request is not valid DER", nil)
 	}
 	if err := csr.CheckSignature(); err != nil {
-		return nil, decision.deny(ctx, codes.InvalidArgument, "denied", "certificate request signature is invalid", nil)
+		return nil, decision.deny(ctx, codes.InvalidArgument, "certificate request signature is invalid", nil)
 	}
 	if reason := keyAlgorithmMismatch(csr, profile.Algorithm); reason != "" {
-		return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", reason, nil)
+		return nil, decision.deny(ctx, codes.FailedPrecondition, reason, nil)
 	}
 
 	now := s.now()
 	attested, err := s.issuers.attest(request.AttestationDer, request.AttestationIntermediateDer, now)
 	if err != nil {
-		return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", err.Error(), nil)
+		return nil, decision.deny(ctx, codes.FailedPrecondition, err.Error(), nil)
 	}
 	if reason := attestationMismatch(attested, token.Serial, profile, csr.RawSubjectPublicKeyInfo); reason != "" {
-		return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", reason, map[string]any{"attested_serial": attested.Serial})
+		return nil, decision.deny(ctx, codes.FailedPrecondition, reason, map[string]any{"attested_serial": attested.Serial})
 	}
 
 	commonName, err := subjectCommonName(profile.Subject, assigned)
 	if err != nil {
-		return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", err.Error(), nil)
+		return nil, decision.deny(ctx, codes.FailedPrecondition, err.Error(), nil)
 	}
 	if csr.Subject.CommonName != commonName {
-		return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", "certificate request subject does not match the assigned user", map[string]any{"expected_subject": commonName})
+		return nil, decision.deny(ctx, codes.FailedPrecondition, "certificate request subject does not match the assigned user", map[string]any{"expected_subject": commonName})
 	}
 	signRequest := ca.SignRequest{
 		Subject:   commonName,
@@ -197,18 +198,18 @@ func (s *Server) IssueCertificate(
 	chain, err := s.issuers.cas[profile.CA].Sign(ctx, request.CsrDer, signRequest)
 	if err != nil {
 		s.logger.Error("certificate authority failed", "profile", profile.Name, "error", err)
-		return nil, decision.deny(ctx, codes.Unavailable, "denied", "certificate authority did not issue the certificate", nil)
+		return nil, decision.fail(ctx, codes.Unavailable, "certificate authority did not issue the certificate", nil)
 	}
 	leaf, err := x509.ParseCertificate(chain[0])
 	if err != nil {
-		return nil, decision.deny(ctx, codes.Internal, "denied", "certificate authority returned an invalid certificate", nil)
+		return nil, decision.fail(ctx, codes.Internal, "certificate authority returned an invalid certificate", nil)
 	}
 	serialHex := hex.EncodeToString(leaf.SerialNumber.Bytes())
 	subject := leaf.Subject.String()
 
 	if mismatch := issuedCertificateMismatch(leaf, chain, csr, signRequest, s.issuers.cas[profile.CA].Roots(), now); mismatch != "" {
 		s.revokeMismatched(ctx, profile.CA, serialHex, mismatch)
-		if err := tx.auditAndCommit(ctx, decision.event("error", map[string]any{
+		if err := tx.auditAndCommit(ctx, decision.event(audit.OutcomeError, map[string]any{
 			"reason":             mismatch,
 			"certificate_serial": serialHex,
 		})); err != nil {
@@ -237,7 +238,7 @@ func (s *Server) IssueCertificate(
 		s.logger.Error("record certificate failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not record the issued certificate")
 	}
-	if err := tx.auditAndCommit(ctx, decision.event("success", map[string]any{
+	if err := tx.auditAndCommit(ctx, decision.event(audit.OutcomeSuccess, map[string]any{
 		"slot":               profile.Slot,
 		"certificate_serial": serialHex,
 		"not_after":          leaf.NotAfter.UTC().Format(time.RFC3339),

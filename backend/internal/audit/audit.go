@@ -24,6 +24,16 @@ const (
 	ActionSetStationStatus = "SetStationStatus"
 )
 
+// Outcome is an audit event's result. Only policy or validation rejections are Denied; failures of the
+// backend or an upstream dependency are Error.
+type Outcome string
+
+const (
+	OutcomeSuccess Outcome = "success"
+	OutcomeDenied  Outcome = "denied"
+	OutcomeError   Outcome = "error"
+)
+
 type Event struct {
 	OccurredAt time.Time
 	ActorType  string

@@ -65,26 +65,35 @@ type auditDecision struct {
 }
 
 // event builds the decision's audit event from the handler keys plus detail.
-func (d auditDecision) event(outcome string, detail map[string]any) audit.Event {
+func (d auditDecision) event(outcome audit.Outcome, detail map[string]any) audit.Event {
 	merged := make(map[string]any, len(detail)+len(d.detail))
 	maps.Copy(merged, detail)
 	maps.Copy(merged, d.detail)
 	return audit.Event{
 		ActorType: d.actorType, ActorID: d.actorID, Action: d.action,
-		TargetType: d.targetType, TargetID: d.targetID, Outcome: outcome, Detail: merged,
+		TargetType: d.targetType, TargetID: d.targetID, Outcome: string(outcome), Detail: merged,
 	}
 }
 
 // record audits the decision and commits it, returning an Internal status if either step fails.
-func (d auditDecision) record(ctx context.Context, outcome string, detail map[string]any) error {
+func (d auditDecision) record(ctx context.Context, outcome audit.Outcome, detail map[string]any) error {
 	if err := d.tx.auditAndCommit(ctx, d.event(outcome, detail)); err != nil {
 		return status.Error(codes.Internal, d.failure)
 	}
 	return nil
 }
 
-// deny records a rejection with its reason, commits it, and returns the rejection as a status with code.
-func (d auditDecision) deny(ctx context.Context, code codes.Code, outcome, reason string, detail map[string]any) error {
+// deny records a policy or validation rejection with its reason, commits it, and returns it as a status with code.
+func (d auditDecision) deny(ctx context.Context, code codes.Code, reason string, detail map[string]any) error {
+	return d.conclude(ctx, code, audit.OutcomeDenied, reason, detail)
+}
+
+// fail records a backend or upstream failure with its reason, commits it, and returns it as a status with code.
+func (d auditDecision) fail(ctx context.Context, code codes.Code, reason string, detail map[string]any) error {
+	return d.conclude(ctx, code, audit.OutcomeError, reason, detail)
+}
+
+func (d auditDecision) conclude(ctx context.Context, code codes.Code, outcome audit.Outcome, reason string, detail map[string]any) error {
 	withReason := make(map[string]any, len(detail)+1)
 	maps.Copy(withReason, detail)
 	withReason["reason"] = reason
