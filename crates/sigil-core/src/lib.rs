@@ -14,7 +14,9 @@ pub use piv::{
     PivKeyAlgorithm, PivKeyConfiguration, PivKeyMetadata, PivSlot, PivSlotInfo, RetryStatus,
     TouchPolicy,
 };
-pub use secrets::{ManagementKey, ManagementKeyAlgorithm, PivPin, PivPuk, Secret};
+pub use secrets::{
+    HexError, ManagementKey, ManagementKeyAlgorithm, PivPin, PivPuk, Secret, encode_hex, parse_hex,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

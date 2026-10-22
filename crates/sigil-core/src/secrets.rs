@@ -1,6 +1,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::{CredentialError, PivAlgorithm, Result};
@@ -152,6 +153,38 @@ impl ManagementKey {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum HexError {
+    #[error("value must be non-empty, even-length hexadecimal")]
+    InvalidLength,
+    #[error("value must contain only ASCII hexadecimal digits")]
+    NonAscii,
+    #[error("value contains a non-hexadecimal digit")]
+    InvalidDigit,
+}
+
+/// Parses trimmed hexadecimal secret input, such as a management key, into zeroizing bytes.
+pub fn parse_hex(value: &str) -> std::result::Result<Zeroizing<Vec<u8>>, HexError> {
+    let value = value.trim();
+    if value.is_empty() || !value.len().is_multiple_of(2) {
+        return Err(HexError::InvalidLength);
+    }
+    if !value.is_ascii() {
+        return Err(HexError::NonAscii);
+    }
+    let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() / 2));
+    let (pairs, _) = value.as_bytes().as_chunks::<2>();
+    for pair in pairs {
+        let digits = std::str::from_utf8(pair).map_err(|_| HexError::NonAscii)?;
+        bytes.push(u8::from_str_radix(digits, 16).map_err(|_| HexError::InvalidDigit)?);
+    }
+    Ok(bytes)
+}
+
+pub fn encode_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn valid_piv_code(bytes: &[u8]) -> bool {
     (6..=8).contains(&bytes.len()) && bytes.is_ascii()
 }
@@ -206,5 +239,25 @@ mod tests {
             ManagementKeyAlgorithm::from_piv_algorithm(PivAlgorithm::Tdes),
             Err(CredentialError::UnsupportedOperation(_))
         ));
+    }
+
+    #[test]
+    fn parses_trimmed_hex_and_round_trips_through_encode() {
+        let bytes = parse_hex("  00aBff10\n").unwrap();
+        assert_eq!(bytes.as_slice(), [0x00, 0xab, 0xff, 0x10]);
+        assert_eq!(encode_hex(&bytes), "00abff10");
+    }
+
+    #[test]
+    fn rejects_malformed_hex_with_typed_errors() {
+        for value in ["", "   ", "abc", "é0"] {
+            assert_eq!(parse_hex(value), Err(HexError::InvalidLength), "{value:?}");
+        }
+        for value in ["é", "00é"] {
+            assert_eq!(parse_hex(value), Err(HexError::NonAscii), "{value:?}");
+        }
+        for value in ["zz", "0g", "00 1"] {
+            assert_eq!(parse_hex(value), Err(HexError::InvalidDigit), "{value:?}");
+        }
     }
 }

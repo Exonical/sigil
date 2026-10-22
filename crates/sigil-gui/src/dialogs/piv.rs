@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use dioxus::prelude::*;
 use sigil_app::CredentialService;
 use sigil_core::{
-    CertificateFormat, DeviceInfo, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
-    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, TouchPolicy,
+    CertificateFormat, DeviceInfo, HexError, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
+    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, TouchPolicy, encode_hex,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -1023,22 +1023,13 @@ fn generated_aes256_key() -> Result<Zeroizing<String>, String> {
     Ok(Zeroizing::new(encode_hex(key.as_bytes())))
 }
 
-fn encode_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn parse_hex(value: &str) -> Result<Zeroizing<Vec<u8>>, String> {
-    let value = value.trim();
-    if value.is_empty() || !value.len().is_multiple_of(2) || !value.is_ascii() {
-        return Err("Enter an even-length hexadecimal value.".into());
-    }
-    let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() / 2));
-    let (pairs, _) = value.as_bytes().as_chunks::<2>();
-    for pair in pairs {
-        let pair = std::str::from_utf8(pair).map_err(|_| "Invalid hexadecimal value")?;
-        bytes.push(u8::from_str_radix(pair, 16).map_err(|_| "Invalid hexadecimal value")?);
-    }
-    Ok(bytes)
+    sigil_core::parse_hex(value).map_err(|error| match error {
+        HexError::InvalidLength | HexError::NonAscii => {
+            "Enter an even-length hexadecimal value.".into()
+        }
+        HexError::InvalidDigit => "Invalid hexadecimal value".into(),
+    })
 }
 
 fn current_management_key(
