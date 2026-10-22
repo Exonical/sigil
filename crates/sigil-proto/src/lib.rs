@@ -696,93 +696,141 @@ impl TryFrom<v1::DeviceEvent> for core::DeviceEvent {
 }
 
 fn agent_error(value: &core::CredentialError) -> v1::AgentError {
+    use v1::ErrorKind as Kind;
     let (kind, detail) = match value {
-        core::CredentialError::DeviceNotFound(detail) => (1, detail.clone()),
-        core::CredentialError::DeviceRemoved => (2, String::new()),
-        core::CredentialError::UnsupportedOperation(detail) => (3, detail.clone()),
-        core::CredentialError::BackendUnavailable(detail) => (4, detail.clone()),
-        core::CredentialError::PcscUnavailable(detail) => (5, detail.clone()),
-        core::CredentialError::InventoryUnavailable => (6, String::new()),
-        core::CredentialError::FidoAccessRestricted => (7, String::new()),
-        core::CredentialError::FidoPinNotSet => (20, String::new()),
-        core::CredentialError::FidoOperation(detail) => (8, detail.clone()),
-        core::CredentialError::InvalidSlot(detail) => (9, detail.clone()),
-        core::CredentialError::PivUnavailable => (10, String::new()),
-        core::CredentialError::SmartCardOperation(detail) => (11, detail.clone()),
-        core::CredentialError::CardStatus(status) => (12, format!("{status:04X}")),
-        core::CredentialError::CertificateParse(detail) => (13, detail.clone()),
-        core::CredentialError::CertificateNotFound(detail) => (14, detail.clone()),
-        core::CredentialError::OperationUnauthorized(detail) => (15, detail.clone()),
-        core::CredentialError::CallerRejected(detail) => (16, detail.clone()),
-        core::CredentialError::AgentUnavailable(detail) => (17, detail.clone()),
-        core::CredentialError::ProtocolMismatch { agent, client } => {
-            (18, format!("{agent}:{client}"))
+        core::CredentialError::DeviceNotFound(detail) => {
+            (Kind::ErrorDeviceNotFound, detail.clone())
         }
-        core::CredentialError::AgentUntrusted(detail) => (19, detail.clone()),
-        core::CredentialError::PinIncorrect { remaining } => (21, remaining.to_string()),
-        core::CredentialError::PukIncorrect { remaining } => (22, remaining.to_string()),
-        core::CredentialError::PinBlocked => (23, String::new()),
-        core::CredentialError::PukBlocked => (24, String::new()),
-        core::CredentialError::ManagementKeyIncorrect => (25, String::new()),
-        core::CredentialError::DeviceMismatch => (26, String::new()),
-        core::CredentialError::PivFipsNotApproved => (27, String::new()),
-        core::CredentialError::PivNotFactoryDefault => (28, String::new()),
-        core::CredentialError::ManagedRotationIncomplete(detail) => (29, detail.clone()),
-        core::CredentialError::BackendRejected(detail) => (30, detail.clone()),
-        core::CredentialError::PinComplexity => (31, "pin".into()),
-        core::CredentialError::PukComplexity => (31, "puk".into()),
+        core::CredentialError::DeviceRemoved => (Kind::ErrorDeviceRemoved, String::new()),
+        core::CredentialError::UnsupportedOperation(detail) => {
+            (Kind::ErrorUnsupportedOperation, detail.clone())
+        }
+        core::CredentialError::BackendUnavailable(detail) => {
+            (Kind::ErrorBackendUnavailable, detail.clone())
+        }
+        core::CredentialError::PcscUnavailable(detail) => {
+            (Kind::ErrorPcscUnavailable, detail.clone())
+        }
+        core::CredentialError::InventoryUnavailable => {
+            (Kind::ErrorInventoryUnavailable, String::new())
+        }
+        core::CredentialError::FidoAccessRestricted => {
+            (Kind::ErrorFidoAccessRestricted, String::new())
+        }
+        core::CredentialError::FidoOperation(detail) => (Kind::ErrorFidoOperation, detail.clone()),
+        core::CredentialError::InvalidSlot(detail) => (Kind::ErrorInvalidSlot, detail.clone()),
+        core::CredentialError::PivUnavailable => (Kind::ErrorPivUnavailable, String::new()),
+        core::CredentialError::SmartCardOperation(detail) => {
+            (Kind::ErrorSmartCardOperation, detail.clone())
+        }
+        core::CredentialError::CardStatus(status) => {
+            (Kind::ErrorCardStatus, format!("{status:04X}"))
+        }
+        core::CredentialError::CertificateParse(detail) => {
+            (Kind::ErrorCertificateParse, detail.clone())
+        }
+        core::CredentialError::CertificateNotFound(detail) => {
+            (Kind::ErrorCertificateNotFound, detail.clone())
+        }
+        core::CredentialError::OperationUnauthorized(detail) => {
+            (Kind::OperationUnauthorized, detail.clone())
+        }
+        core::CredentialError::CallerRejected(detail) => (Kind::CallerRejected, detail.clone()),
+        core::CredentialError::AgentUnavailable(detail) => (Kind::AgentUnavailable, detail.clone()),
+        core::CredentialError::ProtocolMismatch { agent, client } => {
+            (Kind::ProtocolMismatch, format!("{agent}:{client}"))
+        }
+        core::CredentialError::AgentUntrusted(detail) => (Kind::AgentUntrusted, detail.clone()),
+        core::CredentialError::FidoPinNotSet => (Kind::FidoPinNotSet, String::new()),
+        core::CredentialError::PinIncorrect { remaining } => {
+            (Kind::PinIncorrect, remaining.to_string())
+        }
+        core::CredentialError::PukIncorrect { remaining } => {
+            (Kind::PukIncorrect, remaining.to_string())
+        }
+        core::CredentialError::PinBlocked => (Kind::PinBlocked, String::new()),
+        core::CredentialError::PukBlocked => (Kind::PukBlocked, String::new()),
+        core::CredentialError::ManagementKeyIncorrect => {
+            (Kind::ManagementKeyIncorrect, String::new())
+        }
+        core::CredentialError::DeviceMismatch => (Kind::DeviceMismatch, String::new()),
+        core::CredentialError::PivFipsNotApproved => (Kind::PivFipsNotApproved, String::new()),
+        core::CredentialError::PivNotFactoryDefault => (Kind::PivNotFactoryDefault, String::new()),
+        core::CredentialError::ManagedRotationIncomplete(detail) => {
+            (Kind::ManagedRotationIncomplete, detail.clone())
+        }
+        core::CredentialError::BackendRejected(detail) => (Kind::BackendRejected, detail.clone()),
+        core::CredentialError::PinComplexity => (Kind::PinComplexityViolation, "pin".into()),
+        core::CredentialError::PukComplexity => (Kind::PinComplexityViolation, "puk".into()),
     };
-    v1::AgentError { kind, detail }
+    v1::AgentError {
+        kind: kind as i32,
+        detail,
+    }
 }
 
 fn credential_error(value: v1::AgentError) -> core::CredentialError {
-    match value.kind {
-        1 => core::CredentialError::DeviceNotFound(value.detail),
-        2 => core::CredentialError::DeviceRemoved,
-        3 => core::CredentialError::UnsupportedOperation(value.detail),
-        4 => core::CredentialError::BackendUnavailable(value.detail),
-        5 => core::CredentialError::PcscUnavailable(value.detail),
-        6 => core::CredentialError::InventoryUnavailable,
-        7 => core::CredentialError::FidoAccessRestricted,
-        20 => core::CredentialError::FidoPinNotSet,
-        8 => core::CredentialError::FidoOperation(value.detail),
-        9 => core::CredentialError::InvalidSlot(value.detail),
-        10 => core::CredentialError::PivUnavailable,
-        11 => core::CredentialError::SmartCardOperation(value.detail),
-        12 => core::CredentialError::CardStatus(
+    use v1::ErrorKind as Kind;
+    let Ok(kind) = Kind::try_from(value.kind) else {
+        return unknown_agent_error();
+    };
+    match kind {
+        Kind::Unspecified => unknown_agent_error(),
+        Kind::ErrorDeviceNotFound => core::CredentialError::DeviceNotFound(value.detail),
+        Kind::ErrorDeviceRemoved => core::CredentialError::DeviceRemoved,
+        Kind::ErrorUnsupportedOperation => {
+            core::CredentialError::UnsupportedOperation(value.detail)
+        }
+        Kind::ErrorBackendUnavailable => core::CredentialError::BackendUnavailable(value.detail),
+        Kind::ErrorPcscUnavailable => core::CredentialError::PcscUnavailable(value.detail),
+        Kind::ErrorInventoryUnavailable => core::CredentialError::InventoryUnavailable,
+        Kind::ErrorFidoAccessRestricted => core::CredentialError::FidoAccessRestricted,
+        Kind::ErrorFidoOperation => core::CredentialError::FidoOperation(value.detail),
+        Kind::ErrorInvalidSlot => core::CredentialError::InvalidSlot(value.detail),
+        Kind::ErrorPivUnavailable => core::CredentialError::PivUnavailable,
+        Kind::ErrorSmartCardOperation => core::CredentialError::SmartCardOperation(value.detail),
+        Kind::ErrorCardStatus => core::CredentialError::CardStatus(
             u16::from_str_radix(&value.detail, 16).unwrap_or_default(),
         ),
-        13 => core::CredentialError::CertificateParse(value.detail),
-        14 => core::CredentialError::CertificateNotFound(value.detail),
-        15 => core::CredentialError::OperationUnauthorized(value.detail),
-        16 => core::CredentialError::CallerRejected(value.detail),
-        17 => core::CredentialError::AgentUnavailable(value.detail),
-        18 => {
+        Kind::ErrorCertificateParse => core::CredentialError::CertificateParse(value.detail),
+        Kind::ErrorCertificateNotFound => core::CredentialError::CertificateNotFound(value.detail),
+        Kind::OperationUnauthorized => core::CredentialError::OperationUnauthorized(value.detail),
+        Kind::CallerRejected => core::CredentialError::CallerRejected(value.detail),
+        Kind::AgentUnavailable => core::CredentialError::AgentUnavailable(value.detail),
+        Kind::ProtocolMismatch => {
             let (agent, client) = value.detail.split_once(':').unwrap_or(("0", "0"));
             core::CredentialError::ProtocolMismatch {
                 agent: agent.parse().unwrap_or_default(),
                 client: client.parse().unwrap_or_default(),
             }
         }
-        19 => core::CredentialError::AgentUntrusted(value.detail),
-        21 => core::CredentialError::PinIncorrect {
+        Kind::AgentUntrusted => core::CredentialError::AgentUntrusted(value.detail),
+        Kind::FidoPinNotSet => core::CredentialError::FidoPinNotSet,
+        Kind::PinIncorrect => core::CredentialError::PinIncorrect {
             remaining: value.detail.parse().unwrap_or_default(),
         },
-        22 => core::CredentialError::PukIncorrect {
+        Kind::PukIncorrect => core::CredentialError::PukIncorrect {
             remaining: value.detail.parse().unwrap_or_default(),
         },
-        23 => core::CredentialError::PinBlocked,
-        24 => core::CredentialError::PukBlocked,
-        25 => core::CredentialError::ManagementKeyIncorrect,
-        26 => core::CredentialError::DeviceMismatch,
-        27 => core::CredentialError::PivFipsNotApproved,
-        28 => core::CredentialError::PivNotFactoryDefault,
-        29 => core::CredentialError::ManagedRotationIncomplete(value.detail),
-        30 => core::CredentialError::BackendRejected(value.detail),
-        31 if value.detail == "puk" => core::CredentialError::PukComplexity,
-        31 => core::CredentialError::PinComplexity,
-        _ => core::CredentialError::AgentUnavailable("agent returned an unknown error".into()),
+        Kind::PinBlocked => core::CredentialError::PinBlocked,
+        Kind::PukBlocked => core::CredentialError::PukBlocked,
+        Kind::ManagementKeyIncorrect => core::CredentialError::ManagementKeyIncorrect,
+        Kind::DeviceMismatch => core::CredentialError::DeviceMismatch,
+        Kind::PivFipsNotApproved => core::CredentialError::PivFipsNotApproved,
+        Kind::PivNotFactoryDefault => core::CredentialError::PivNotFactoryDefault,
+        Kind::ManagedRotationIncomplete => {
+            core::CredentialError::ManagedRotationIncomplete(value.detail)
+        }
+        Kind::BackendRejected => core::CredentialError::BackendRejected(value.detail),
+        Kind::PinComplexityViolation if value.detail == "puk" => {
+            core::CredentialError::PukComplexity
+        }
+        Kind::PinComplexityViolation => core::CredentialError::PinComplexity,
     }
+}
+
+fn unknown_agent_error() -> core::CredentialError {
+    core::CredentialError::AgentUnavailable("agent returned an unknown error".into())
 }
 
 fn status_code(value: &core::CredentialError) -> Code {
@@ -1015,6 +1063,65 @@ mod tests {
             fingerprint_enrollment: true,
         };
         assert_eq!(core::FidoStatus::from(v1::FidoStatus::from(&fido)), fido);
+    }
+
+    #[test]
+    fn agent_error_wire_kinds_match_agent_proto() {
+        let cases = [
+            (core::CredentialError::DeviceNotFound("id".into()), 1, "id"),
+            (core::CredentialError::FidoAccessRestricted, 7, ""),
+            (
+                core::CredentialError::FidoOperation("fido".into()),
+                8,
+                "fido",
+            ),
+            (core::CredentialError::CardStatus(0x6a82), 12, "6A82"),
+            (
+                core::CredentialError::ProtocolMismatch {
+                    agent: 2,
+                    client: 1,
+                },
+                18,
+                "2:1",
+            ),
+            (core::CredentialError::FidoPinNotSet, 20, ""),
+            (
+                core::CredentialError::PinIncorrect { remaining: 2 },
+                21,
+                "2",
+            ),
+            (core::CredentialError::PinBlocked, 23, ""),
+            (core::CredentialError::PukBlocked, 24, ""),
+            (
+                core::CredentialError::BackendRejected("no".into()),
+                30,
+                "no",
+            ),
+            (core::CredentialError::PinComplexity, 31, "pin"),
+            (core::CredentialError::PukComplexity, 31, "puk"),
+        ];
+        for (error, kind, detail) in cases {
+            let encoded = agent_error(&error);
+            assert_eq!(
+                (encoded.kind, encoded.detail.as_str()),
+                (kind, detail),
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_or_unspecified_agent_error_kind_decodes_as_agent_unavailable() {
+        for kind in [0, 32, -1] {
+            let error = credential_error(v1::AgentError {
+                kind,
+                detail: "detail".into(),
+            });
+            assert_eq!(
+                error,
+                core::CredentialError::AgentUnavailable("agent returned an unknown error".into())
+            );
+        }
     }
 
     #[test]
