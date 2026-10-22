@@ -1,17 +1,4 @@
 use crate::attestation::{self, AttestationTrust};
-use p256::ecdsa::{
-    Signature as P256Signature, VerifyingKey as P256VerifyingKey,
-    signature::hazmat::PrehashVerifier,
-};
-use p256::pkcs8::DecodePublicKey;
-use p384::ecdsa::{Signature as P384Signature, VerifyingKey as P384VerifyingKey};
-use rsa::{
-    pkcs1v15::{Signature as RsaSignature, VerifyingKey as RsaVerifyingKey},
-    pkcs8::DecodePublicKey as RsaDecodePublicKey,
-    signature::hazmat::PrehashVerifier as RsaPrehashVerifier,
-};
-use sha2::{Digest, Sha256, Sha384};
-use sha2_legacy::Digest as LegacyDigest;
 use sigil_core::AttestationInspection;
 use sigil_core::{
     CredentialError, FirmwareVersion, KeyOrigin, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
@@ -19,23 +6,6 @@ use sigil_core::{
     PivPuk, PivSlot, Result, RetryStatus, TouchPolicy,
 };
 use sigil_piv::{CardTransport, management, pin_retries, select, transceive};
-use x509_cert::{
-    Certificate,
-    der::{Decode, Encode},
-};
-
-const YUBICO_SERIAL_OID: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.7");
-const YUBICO_POLICY_OID: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
-const OID_ECDSA_WITH_SHA256: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
-const OID_ECDSA_WITH_SHA384: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
-const OID_RSA_WITH_SHA256: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
-const OID_RSA_WITH_SHA384: const_oid::ObjectIdentifier =
-    const_oid::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.12");
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct YubiKeyMetadata {
@@ -531,110 +501,6 @@ pub fn slot_public_key_spki<T: CardTransport + ?Sized>(
     management::public_key_spki_from_metadata(algorithm, public)
 }
 
-/// Verifies an attestation against the Yubico roots embedded in this build.
-pub fn verify_attestation(
-    attestation_der: &[u8],
-    intermediate_der: &[u8],
-    expected_spki: &[u8],
-    expected_serial: &str,
-    slot: PivSlot,
-    pin_policy: PinPolicy,
-    touch_policy: TouchPolicy,
-) -> Result<()> {
-    verify_attestation_with(
-        &AttestationTrust::embedded()?,
-        attestation::now_unix(),
-        attestation_der,
-        intermediate_der,
-        expected_spki,
-        expected_serial,
-        slot,
-        pin_policy,
-        touch_policy,
-    )
-}
-
-/// Verifies an attestation chain against `trust` at `now_unix`, then the key, serial, slot and policies.
-/// The chain is attestation → slot F9 → intermediates → root, and must end at a root in `trust`.
-#[allow(clippy::too_many_arguments)]
-pub fn verify_attestation_with(
-    trust: &AttestationTrust,
-    now_unix: u64,
-    attestation_der: &[u8],
-    intermediate_der: &[u8],
-    expected_spki: &[u8],
-    expected_serial: &str,
-    slot: PivSlot,
-    pin_policy: PinPolicy,
-    touch_policy: TouchPolicy,
-) -> Result<()> {
-    let attestation = Certificate::from_der(attestation_der)
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    let intermediate = Certificate::from_der(intermediate_der)
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    attestation::verify_path(
-        &attestation,
-        std::slice::from_ref(&intermediate),
-        trust,
-        now_unix,
-    )
-    .map_err(|error| {
-        CredentialError::CertificateParse(format!(
-            "attestation does not verify to a Yubico root: {error}"
-        ))
-    })?;
-    let attested_spki = attestation
-        .tbs_certificate()
-        .subject_public_key_info()
-        .to_der()
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    if attested_spki != expected_spki {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    let extensions = attestation.tbs_certificate().extensions().ok_or_else(|| {
-        CredentialError::CertificateParse("attestation extensions are missing".into())
-    })?;
-    let serial_extension = extensions
-        .iter()
-        .find(|extension| extension.extn_id == YUBICO_SERIAL_OID)
-        .ok_or_else(|| {
-            CredentialError::CertificateParse("YubiKey serial extension is missing".into())
-        })?;
-    let serial_integer =
-        x509_cert::der::asn1::Uint::from_der(serial_extension.extn_value.as_bytes())
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    let expected_serial_number = expected_serial
-        .parse::<u64>()
-        .map_err(|_| CredentialError::DeviceMismatch)?;
-    if unsigned_integer_to_u64(serial_integer.as_bytes())? != expected_serial_number {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    let policy_extension = extensions
-        .iter()
-        .find(|extension| extension.extn_id == YUBICO_POLICY_OID)
-        .ok_or_else(|| {
-            CredentialError::CertificateParse("YubiKey policy extension is missing".into())
-        })?;
-    let policy = policy_extension.extn_value.as_bytes();
-    let expected_policy = [
-        attested_pin_policy(slot, pin_policy)?,
-        attested_touch_policy(touch_policy),
-    ];
-    if policy != expected_policy {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    verify_attestation_signature(&attestation, &intermediate)
-}
-
-fn unsigned_integer_to_u64(bytes: &[u8]) -> Result<u64> {
-    bytes.iter().try_fold(0u64, |value, byte| {
-        value
-            .checked_mul(256)
-            .and_then(|value| value.checked_add(u64::from(*byte)))
-            .ok_or_else(|| CredentialError::CertificateParse("YubiKey serial is too large".into()))
-    })
-}
-
 pub(crate) fn attested_pin_policy(slot: PivSlot, policy: PinPolicy) -> Result<u8> {
     match policy {
         PinPolicy::Never => Ok(0x01),
@@ -660,65 +526,6 @@ pub(crate) fn attested_touch_policy(policy: TouchPolicy) -> u8 {
     }
 }
 
-fn verify_attestation_signature(attestation: &Certificate, issuer: &Certificate) -> Result<()> {
-    let spki = issuer
-        .tbs_certificate()
-        .subject_public_key_info()
-        .to_der()
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    let tbs = attestation
-        .tbs_certificate()
-        .to_der()
-        .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-    let signature = attestation.signature().as_bytes().ok_or_else(|| {
-        CredentialError::CertificateParse("attestation signature is invalid".into())
-    })?;
-    let algorithm = attestation.signature_algorithm().oid;
-    if algorithm == OID_ECDSA_WITH_SHA256 {
-        let key = P256VerifyingKey::from_public_key_der(&spki)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let signature = P256Signature::from_der(signature)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let digest = Sha256::digest(&tbs);
-        key.verify_prehash(&digest, &signature).map_err(|_| {
-            CredentialError::CertificateParse("attestation signature is invalid".into())
-        })
-    } else if algorithm == OID_ECDSA_WITH_SHA384 {
-        let key = P384VerifyingKey::from_public_key_der(&spki)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let signature = P384Signature::from_der(signature)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let digest = Sha384::digest(&tbs);
-        key.verify_prehash(&digest, &signature).map_err(|_| {
-            CredentialError::CertificateParse("attestation signature is invalid".into())
-        })
-    } else if algorithm == OID_RSA_WITH_SHA256 {
-        let key = rsa::RsaPublicKey::from_public_key_der(&spki)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let key = RsaVerifyingKey::<sha2_legacy::Sha256>::new(key);
-        let signature = RsaSignature::try_from(signature)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let digest = <sha2_legacy::Sha256 as LegacyDigest>::digest(&tbs);
-        key.verify_prehash(&digest, &signature).map_err(|_| {
-            CredentialError::CertificateParse("attestation signature is invalid".into())
-        })
-    } else if algorithm == OID_RSA_WITH_SHA384 {
-        let key = rsa::RsaPublicKey::from_public_key_der(&spki)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let key = RsaVerifyingKey::<sha2_legacy::Sha384>::new(key);
-        let signature = RsaSignature::try_from(signature)
-            .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
-        let digest = <sha2_legacy::Sha384 as LegacyDigest>::digest(&tbs);
-        key.verify_prehash(&digest, &signature).map_err(|_| {
-            CredentialError::CertificateParse("attestation signature is invalid".into())
-        })
-    } else {
-        Err(CredentialError::UnsupportedOperation(
-            "unsupported YubiKey attestation signature algorithm".into(),
-        ))
-    }
-}
-
 fn certificate_from_object(object: &[u8]) -> Result<Vec<u8>> {
     let fields = sigil_piv::tlv::parse(object)
         .map_err(|error| CredentialError::CertificateParse(error.to_string()))?;
@@ -734,22 +541,15 @@ fn certificate_from_object(object: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::VecDeque, str::FromStr};
+    use std::collections::VecDeque;
+
+    use x509_cert::{
+        Certificate,
+        der::{Decode, Encode},
+    };
 
     const P256_CERT: &[u8] = include_bytes!("../../sigil-mock/fixtures/piv-9a-p256.der");
     const RSA_CERT: &[u8] = include_bytes!("../../sigil-mock/fixtures/piv-9d-rsa2048.der");
-
-    use p256::{ecdsa::SigningKey, pkcs8::EncodePublicKey};
-    use x509_cert::{
-        builder::{Builder, CertificateBuilder, profile::BuilderProfile},
-        certificate::TbsCertificate,
-        der::{Encode, asn1::OctetString},
-        ext::Extension,
-        name::Name,
-        serial_number::SerialNumber,
-        spki::{SubjectPublicKeyInfo, SubjectPublicKeyInfoRef},
-        time::Validity,
-    };
 
     use super::*;
 
@@ -1137,155 +937,6 @@ mod tests {
         sigil_piv::ops::verify_certificate_matches_key(P256_CERT, &actual).unwrap();
         assert_eq!(
             sigil_piv::ops::verify_certificate_matches_key(RSA_CERT, &actual),
-            Err(CredentialError::DeviceMismatch)
-        );
-    }
-
-    #[derive(Clone)]
-    struct TestProfile {
-        subject: Name,
-        issuer: Name,
-    }
-
-    impl BuilderProfile for TestProfile {
-        fn get_issuer(&self, _subject: &Name) -> Name {
-            self.issuer.clone()
-        }
-
-        fn get_subject(&self) -> Name {
-            self.subject.clone()
-        }
-
-        fn build_extensions(
-            &self,
-            _spk: SubjectPublicKeyInfoRef<'_>,
-            _issuer_spk: SubjectPublicKeyInfoRef<'_>,
-            _tbs: &TbsCertificate,
-        ) -> x509_cert::builder::Result<Vec<Extension>> {
-            Ok(Vec::new())
-        }
-    }
-
-    fn issue_test_certificate(
-        subject_name: &str,
-        issuer_name: &str,
-        spki_der: &[u8],
-        serial: u32,
-        signer: &SigningKey,
-        extensions: Vec<Extension>,
-    ) -> Vec<u8> {
-        let subject = Name::from_str(subject_name).expect("subject name");
-        let issuer = Name::from_str(issuer_name).expect("issuer name");
-        let builder = CertificateBuilder::new(
-            TestProfile { subject, issuer },
-            SerialNumber::from(serial),
-            Validity::from_now(std::time::Duration::from_secs(3600)).expect("validity"),
-            SubjectPublicKeyInfo::from_der(spki_der).expect("subject public key"),
-        )
-        .expect("certificate builder");
-        let mut builder = builder;
-        for extension in extensions {
-            builder
-                .add_extension(extension)
-                .expect("add test extension");
-        }
-        builder
-            .build::<_, p256::ecdsa::DerSignature>(signer)
-            .expect("sign test certificate")
-            .to_der()
-            .expect("certificate DER")
-    }
-
-    fn test_extension(oid: const_oid::ObjectIdentifier, value: &[u8]) -> Extension {
-        Extension {
-            extn_id: oid,
-            critical: false,
-            extn_value: OctetString::new(value).expect("extension value"),
-        }
-    }
-
-    #[test]
-    fn attestation_helper_checks_signature_spki_serial_and_policies() {
-        let attestation_signer =
-            SigningKey::from_bytes((&[11u8; 32]).into()).expect("attestation signer");
-        let attested_signer = SigningKey::from_bytes((&[7u8; 32]).into()).expect("attested signer");
-        let attestation_spki = attestation_signer
-            .verifying_key()
-            .to_public_key_der()
-            .expect("F9 public key");
-        let attested_spki = attested_signer
-            .verifying_key()
-            .to_public_key_der()
-            .expect("slot public key");
-        let f9 = issue_test_certificate(
-            "CN=F9 test attestation",
-            "CN=F9 test attestation",
-            attestation_spki.as_bytes(),
-            1,
-            &attestation_signer,
-            vec![test_extension(
-                const_oid::ObjectIdentifier::new_unwrap("2.5.29.19"),
-                &[0x30, 0x03, 0x01, 0x01, 0xff],
-            )],
-        );
-        let serial_value = x509_cert::der::asn1::Uint::new(&39192733u32.to_be_bytes())
-            .unwrap()
-            .to_der()
-            .unwrap();
-        let attestation = issue_test_certificate(
-            "CN=Attested key",
-            "CN=F9 test attestation",
-            attested_spki.as_bytes(),
-            2,
-            &attestation_signer,
-            vec![
-                test_extension(YUBICO_SERIAL_OID, &serial_value),
-                test_extension(YUBICO_POLICY_OID, &[0x02, 0x01]),
-            ],
-        );
-        let trust = AttestationTrust::from_parts(
-            vec![x509_cert::Certificate::from_der(&f9).expect("F9 as trust anchor")],
-            Vec::new(),
-        );
-        let now = attestation::now_unix();
-        verify_attestation_with(
-            &trust,
-            now,
-            &attestation,
-            &f9,
-            attested_spki.as_bytes(),
-            "39192733",
-            PivSlot::AUTHENTICATION,
-            PinPolicy::Once,
-            TouchPolicy::Never,
-        )
-        .expect("valid attestation");
-        assert_eq!(
-            verify_attestation_with(
-                &trust,
-                now,
-                &attestation,
-                &f9,
-                attested_spki.as_bytes(),
-                "wrong-serial",
-                PivSlot::AUTHENTICATION,
-                PinPolicy::Once,
-                TouchPolicy::Never,
-            ),
-            Err(CredentialError::DeviceMismatch)
-        );
-        assert_eq!(
-            verify_attestation_with(
-                &trust,
-                now,
-                &attestation,
-                &f9,
-                attested_spki.as_bytes(),
-                "39192733",
-                PivSlot::AUTHENTICATION,
-                PinPolicy::Always,
-                TouchPolicy::Never,
-            ),
             Err(CredentialError::DeviceMismatch)
         );
     }
