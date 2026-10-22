@@ -24,7 +24,9 @@ pub const TAG_FIPS_APPROVED: u8 = 0x15;
 // https://github.com/Yubico/yubikey-manager/blob/main/yubikit/management.py.
 pub const TAG_PIN_COMPLEXITY: u8 = 0x16;
 const INS_WRITE_CONFIG: u8 = 0x1c;
+const INS_READ_CONFIG: u8 = 0x1d;
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
+/// The most device-info pages read before giving up on a `TAG_MORE_DATA` chain.
 pub const MAX_INFO_PAGES: u8 = 4;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -35,6 +37,11 @@ pub enum ParseError {
 }
 
 pub type Tags = BTreeMap<u8, Vec<u8>>;
+
+/// The read-only management READ CONFIG (GET DEVICE INFO) APDU for one info page.
+pub fn read_config_command(page: u8) -> [u8; 5] {
+    [0x00, INS_READ_CONFIG, page, 0x00, 0x00]
+}
 
 /// The first byte is the byte count of the BER-TLV payload. No write commands
 /// are exposed through this parser.
@@ -231,7 +238,7 @@ pub fn read_info<T: CardTransport + ?Sized>(transport: &mut T) -> Result<Managem
     let select_version = parse_select_version(&select_data);
     let mut all_tags = Tags::new();
     for page in 0..MAX_INFO_PAGES {
-        let (encoded, status) = transceive(transport, &[0x00, 0x1d, page, 0x00, 0x00])?;
+        let (encoded, status) = transceive(transport, &read_config_command(page))?;
         if status != 0x9000 {
             return Err(CredentialError::CardStatus(status));
         }
