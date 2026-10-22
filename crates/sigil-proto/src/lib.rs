@@ -411,7 +411,7 @@ fn pin_policy_to_proto(value: core::PinPolicy) -> i32 {
     }
 }
 
-fn pin_policy_from_proto(value: i32) -> core::Result<core::PinPolicy> {
+pub fn pin_policy_from_proto(value: i32) -> core::Result<core::PinPolicy> {
     use core::PinPolicy as P;
     Ok(
         match v1::PinPolicy::try_from(value).map_err(|_| invalid_proto(value))? {
@@ -436,7 +436,7 @@ fn touch_policy_to_proto(value: core::TouchPolicy) -> i32 {
     }
 }
 
-fn touch_policy_from_proto(value: i32) -> core::Result<core::TouchPolicy> {
+pub fn touch_policy_from_proto(value: i32) -> core::Result<core::TouchPolicy> {
     use core::TouchPolicy as P;
     Ok(
         match v1::TouchPolicy::try_from(value).map_err(|_| invalid_proto(value))? {
@@ -447,6 +447,29 @@ fn touch_policy_from_proto(value: i32) -> core::Result<core::TouchPolicy> {
             v1::TouchPolicy::Unspecified => return Err(invalid_proto("unspecified touch policy")),
         },
     )
+}
+
+pub fn management_key_algorithm_from_proto(
+    value: i32,
+) -> core::Result<core::ManagementKeyAlgorithm> {
+    use core::ManagementKeyAlgorithm as A;
+    match v1::ManagementKeyAlgorithm::try_from(value).map_err(|_| invalid_proto(value))? {
+        v1::ManagementKeyAlgorithm::Aes128 => Ok(A::Aes128),
+        v1::ManagementKeyAlgorithm::Aes192 => Ok(A::Aes192),
+        v1::ManagementKeyAlgorithm::Aes256 => Ok(A::Aes256),
+        v1::ManagementKeyAlgorithm::Unspecified => {
+            Err(invalid_proto("unspecified management key algorithm"))
+        }
+    }
+}
+
+pub fn piv_key_generation_algorithm_from_proto(value: i32) -> core::Result<core::PivKeyAlgorithm> {
+    use v1::PivKeyGenerationAlgorithm as A;
+    match A::try_from(value).map_err(|_| invalid_proto(value))? {
+        A::PivKeyGenerationEccP256 => Ok(core::PivKeyAlgorithm::EccP256),
+        A::PivKeyGenerationEccP384 => Ok(core::PivKeyAlgorithm::EccP384),
+        A::Unspecified => Err(invalid_proto("unspecified PIV key generation algorithm")),
+    }
 }
 
 fn key_origin_to_proto(value: core::KeyOrigin) -> i32 {
@@ -1003,6 +1026,84 @@ mod tests {
                 application_from_proto(value),
                 Err(core::CredentialError::SmartCardOperation(_))
             ));
+        }
+    }
+
+    #[test]
+    fn piv_request_enums_decode_and_reject_invalid_values() {
+        use core::{ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm, TouchPolicy};
+
+        for policy in [
+            PinPolicy::Default,
+            PinPolicy::Never,
+            PinPolicy::Once,
+            PinPolicy::Always,
+            PinPolicy::MatchOnce,
+            PinPolicy::MatchAlways,
+        ] {
+            assert_eq!(
+                pin_policy_from_proto(pin_policy_to_proto(policy)).unwrap(),
+                policy
+            );
+        }
+        for policy in [
+            TouchPolicy::Default,
+            TouchPolicy::Never,
+            TouchPolicy::Always,
+            TouchPolicy::Cached,
+        ] {
+            assert_eq!(
+                touch_policy_from_proto(touch_policy_to_proto(policy)).unwrap(),
+                policy
+            );
+        }
+        for (value, expected) in [
+            (
+                v1::ManagementKeyAlgorithm::Aes128,
+                ManagementKeyAlgorithm::Aes128,
+            ),
+            (
+                v1::ManagementKeyAlgorithm::Aes192,
+                ManagementKeyAlgorithm::Aes192,
+            ),
+            (
+                v1::ManagementKeyAlgorithm::Aes256,
+                ManagementKeyAlgorithm::Aes256,
+            ),
+        ] {
+            assert_eq!(
+                management_key_algorithm_from_proto(value as i32).unwrap(),
+                expected
+            );
+        }
+        for (value, expected) in [
+            (
+                v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP256,
+                PivKeyAlgorithm::EccP256,
+            ),
+            (
+                v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP384,
+                PivKeyAlgorithm::EccP384,
+            ),
+        ] {
+            assert_eq!(
+                piv_key_generation_algorithm_from_proto(value as i32).unwrap(),
+                expected
+            );
+        }
+
+        for value in [0, 99] {
+            for result in [
+                pin_policy_from_proto(value).map(drop),
+                touch_policy_from_proto(value).map(drop),
+                management_key_algorithm_from_proto(value).map(drop),
+                piv_key_generation_algorithm_from_proto(value).map(drop),
+            ] {
+                assert!(matches!(
+                    result,
+                    Err(core::CredentialError::SmartCardOperation(_))
+                ));
+            }
         }
     }
 
