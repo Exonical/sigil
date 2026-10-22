@@ -20,6 +20,14 @@ mod windows;
 
 pub struct NativeDiscovery;
 
+/// Error every `NativeDiscovery` method returns on platforms without a native backend.
+#[cfg(not(target_os = "windows"))]
+fn unsupported(feature: &str) -> CredentialError {
+    CredentialError::UnsupportedOperation(format!(
+        "native {feature} is not implemented on this platform"
+    ))
+}
+
 #[cfg(target_os = "windows")]
 #[doc(hidden)]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,9 +89,7 @@ impl DeviceDiscovery for NativeDiscovery {
         return windows::list();
 
         #[cfg(not(target_os = "windows"))]
-        Err(CredentialError::BackendUnavailable(
-            "native device discovery is not implemented for this platform".into(),
-        ))
+        Err(unsupported("device discovery"))
     }
 
     fn subscribe(&self) -> Result<Receiver<DeviceEvent>> {
@@ -91,9 +97,7 @@ impl DeviceDiscovery for NativeDiscovery {
         return windows::subscribe();
 
         #[cfg(not(target_os = "windows"))]
-        Err(CredentialError::BackendUnavailable(
-            "native device events are not implemented for this platform".into(),
-        ))
+        Err(unsupported("device events"))
     }
 }
 
@@ -104,9 +108,7 @@ impl FidoInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, pin);
-            Err(CredentialError::BackendUnavailable(
-                "native fingerprint management is not implemented for this platform".into(),
-            ))
+            Err(unsupported("fingerprint management"))
         }
     }
 
@@ -121,9 +123,7 @@ impl FidoInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, pin, on_progress);
-            Err(CredentialError::BackendUnavailable(
-                "native fingerprint management is not implemented for this platform".into(),
-            ))
+            Err(unsupported("fingerprint management"))
         }
     }
 
@@ -133,9 +133,7 @@ impl FidoInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, pin, fingerprint_id);
-            Err(CredentialError::BackendUnavailable(
-                "native fingerprint management is not implemented for this platform".into(),
-            ))
+            Err(unsupported("fingerprint management"))
         }
     }
 
@@ -146,9 +144,7 @@ impl FidoInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = id;
-            Err(CredentialError::BackendUnavailable(
-                "native FIDO inspection is not implemented for this platform".into(),
-            ))
+            Err(unsupported("FIDO inspection"))
         }
     }
 
@@ -163,9 +159,7 @@ impl FidoInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, pin);
-            Err(CredentialError::BackendUnavailable(
-                "native FIDO inspection is not implemented for this platform".into(),
-            ))
+            Err(unsupported("FIDO inspection"))
         }
     }
 }
@@ -177,9 +171,7 @@ impl PivInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = id;
-            Err(CredentialError::BackendUnavailable(
-                "native PIV inspection is not implemented for this platform".into(),
-            ))
+            Err(unsupported("PIV inspection"))
         }
     }
 
@@ -189,9 +181,7 @@ impl PivInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = id;
-            Err(CredentialError::BackendUnavailable(
-                "native PIV inspection is not implemented for this platform".into(),
-            ))
+            Err(unsupported("PIV inspection"))
         }
     }
 
@@ -201,9 +191,7 @@ impl PivInspection for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, slot);
-            Err(CredentialError::BackendUnavailable(
-                "native PIV inspection is not implemented for this platform".into(),
-            ))
+            Err(unsupported("PIV inspection"))
         }
     }
 }
@@ -221,9 +209,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, old_pin, new_pin);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -239,9 +225,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, old_puk, new_puk);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -257,9 +241,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, puk, new_pin);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -275,9 +257,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, current, new);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -293,9 +273,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, new_management_key, new_puk);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -311,9 +289,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, management_key, configuration);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -328,9 +304,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, slot);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV attestation is not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV attestation"))
         }
     }
 
@@ -362,9 +336,7 @@ impl PivManagement for NativeDiscovery {
                 subject_dn,
                 expected_public_key,
             );
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV CSR signing is not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV CSR signing"))
         }
     }
 
@@ -396,9 +368,7 @@ impl PivManagement for NativeDiscovery {
                 certificate_der,
                 expected_public_key,
             );
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -414,9 +384,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, management_key, slot);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -432,9 +400,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, management_key, slot);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV mutations are not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV mutations"))
         }
     }
 
@@ -444,9 +410,7 @@ impl PivManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial);
-            Err(CredentialError::UnsupportedOperation(
-                "native PIV reset is not implemented on this platform".into(),
-            ))
+            Err(unsupported("PIV reset"))
         }
     }
 }
@@ -465,9 +429,7 @@ impl DeviceManagement for NativeDiscovery {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (id, expected_serial, usb, nfc, lock_code);
-            Err(CredentialError::UnsupportedOperation(
-                "native application configuration is not implemented on this platform".into(),
-            ))
+            Err(unsupported("application configuration"))
         }
     }
 }
@@ -543,5 +505,35 @@ mod tests {
         assert_eq!(receiver.try_recv(), Ok(DeviceEvent::Updated(changed)));
         assert!(matches!(receiver.try_recv(), Ok(DeviceEvent::Connected(_))));
         assert!(receiver.try_recv().is_err());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn stubs_report_unsupported_operation() {
+        fn assert_unsupported<T: std::fmt::Debug>(result: Result<T>) {
+            assert!(
+                matches!(
+                    &result,
+                    Err(CredentialError::UnsupportedOperation(message))
+                        if message.starts_with("native ")
+                            && message.ends_with(" is not implemented on this platform")
+                ),
+                "expected UnsupportedOperation, got {result:?}"
+            );
+        }
+
+        let native = NativeDiscovery;
+        let id = DeviceId("device".into());
+        assert_unsupported(native.list());
+        assert_unsupported(native.subscribe());
+        assert_unsupported(native.fingerprints(&id, ""));
+        assert_unsupported(native.fido_status(&id));
+        assert_unsupported(native.discoverable_credentials(&id, ""));
+        assert_unsupported(native.piv_info(&id));
+        assert_unsupported(native.piv_slots(&id));
+        assert_unsupported(native.piv_certificate(&id, PivSlot::AUTHENTICATION));
+        assert_unsupported(native.attest(&id, "", PivSlot::AUTHENTICATION));
+        assert_unsupported(native.reset(&id, ""));
+        assert_unsupported(native.set_enabled_applications(&id, "", &[], None, None));
     }
 }
