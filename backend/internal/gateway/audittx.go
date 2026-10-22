@@ -7,6 +7,7 @@ import (
 
 	"github.com/Exonical/sigil/backend/internal/audit"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -55,8 +56,9 @@ func (t *auditTx) auditAndCommit(ctx context.Context, event audit.Event) error {
 	return nil
 }
 
-// auditDecision records one handler's decision about its target inside tx. detail holds the keys every
-// decision of the handler carries; failure is the Internal message returned when a decision cannot be recorded.
+// auditDecision records one handler's decision about its target inside tx, or in a standalone transaction for
+// decisions made before tx begins. detail holds the keys every decision of the handler carries; failure is the
+// Internal message returned when a decision cannot be recorded.
 type auditDecision struct {
 	tx                                               *auditTx
 	actorType, actorID, action, targetType, targetID string
@@ -101,4 +103,23 @@ func (d auditDecision) conclude(ctx context.Context, code codes.Code, outcome au
 		return err
 	}
 	return status.Error(code, reason)
+}
+
+// denyStandalone records a rejection made before the handler's transaction begins in its own transaction and
+// returns it as a status with code.
+func (d auditDecision) denyStandalone(ctx context.Context, pool *pgxpool.Pool, code codes.Code, reason string) error {
+	return d.concludeStandalone(ctx, pool, audit.OutcomeDenied, reason, status.Error(code, reason))
+}
+
+// failStandalone records a backend failure made before the handler's transaction begins in its own transaction
+// and returns result, so the caller-facing status need not reveal reason.
+func (d auditDecision) failStandalone(ctx context.Context, pool *pgxpool.Pool, reason string, result error) error {
+	return d.concludeStandalone(ctx, pool, audit.OutcomeError, reason, result)
+}
+
+func (d auditDecision) concludeStandalone(ctx context.Context, pool *pgxpool.Pool, outcome audit.Outcome, reason string, result error) error {
+	if err := audit.AppendStandalone(ctx, pool, d.event(outcome, map[string]any{"reason": reason})); err != nil {
+		return status.Error(codes.Internal, d.failure)
+	}
+	return result
 }

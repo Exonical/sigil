@@ -1,10 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"reflect"
 	"testing"
 
 	"github.com/Exonical/sigil/backend/internal/audit"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestAuditDecisionEventAddsHandlerDetail(t *testing.T) {
@@ -29,5 +33,30 @@ func TestAuditDecisionEventAddsHandlerDetail(t *testing.T) {
 	}
 	if got := decision.event(audit.OutcomeSuccess, nil).Detail; !reflect.DeepEqual(got, map[string]any{"profile": "piv-auth"}) {
 		t.Fatalf("event without detail = %v", got)
+	}
+}
+
+func TestAuditDecisionStandaloneReturnsTheFailureWhenTheAuditCannotBeRecorded(t *testing.T) {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, "postgres://sigil@localhost:1/sigil")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+	decision := auditDecision{
+		actorType: "user", actorID: "user-1", action: "AuthorizeManagedOperation",
+		targetType: "token", targetID: "12345678",
+		detail:  map[string]any{"operation": "PIV_SET_RETRIES"},
+		failure: "could not record managed-operation decision",
+	}
+
+	for name, err := range map[string]error{
+		"deny": decision.denyStandalone(ctx, pool, codes.InvalidArgument, "not supported"),
+		"fail": decision.failStandalone(ctx, pool, "escrow is not configured",
+			status.Error(codes.FailedPrecondition, "managed escrow is not configured")),
+	} {
+		if status.Code(err) != codes.Internal || status.Convert(err).Message() != decision.failure {
+			t.Fatalf("%s with unrecordable audit = %v, want Internal %q", name, err, decision.failure)
+		}
 	}
 }
