@@ -59,11 +59,11 @@ func tokenAssign(args []string) error {
 	if _, err := audit.Append(ctx, tx, audit.Event{
 		ActorType:  "system",
 		ActorID:    "sigil-server-cli",
-		Action:     "TokenAssign",
+		Action:     audit.ActionAssignToken,
 		TargetType: "token",
-		TargetID:   tokenID,
+		TargetID:   *serial,
 		Outcome:    "success",
-		Detail:     map[string]any{"vendor": *vendor, "serial": *serial, "user": *user, "user_id": userID},
+		Detail:     map[string]any{"vendor": *vendor, "serial": *serial, "token_id": tokenID, "user": *user, "user_id": userID},
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		return err
@@ -104,11 +104,11 @@ func tokenUnassign(args []string) error {
 	if _, err := audit.Append(ctx, tx, audit.Event{
 		ActorType:  "system",
 		ActorID:    "sigil-server-cli",
-		Action:     "TokenUnassign",
+		Action:     audit.ActionUnassignToken,
 		TargetType: "token",
-		TargetID:   tokenID,
+		TargetID:   *serial,
 		Outcome:    "success",
-		Detail:     map[string]any{"vendor": *vendor, "serial": *serial},
+		Detail:     map[string]any{"vendor": *vendor, "serial": *serial, "token_id": tokenID},
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		return err

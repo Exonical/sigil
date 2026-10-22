@@ -271,6 +271,7 @@ func (s *Service) escrowFor(ctx context.Context, tokenID string) ([]*adminv1.Esc
 	return out, nil
 }
 
+// auditFor matches both the serial and the token UUID: older CLI records used the UUID as target_id.
 func (s *Service) auditFor(ctx context.Context, serial, tokenID string) ([]*adminv1.AuditEvent, error) {
 	rows, err := s.store.Pool.Query(ctx, `
 		SELECT seq, EXTRACT(EPOCH FROM occurred_at)::bigint, actor_type, actor_id, action, target_type, target_id,
