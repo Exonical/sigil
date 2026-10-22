@@ -15,6 +15,8 @@ use crate::{
     state::{AppState, PivAction},
 };
 
+use super::managed_dialog::pin_length_hint;
+
 const DEFAULT_PIN: &[u8] = b"123456";
 const DEFAULT_PUK: &[u8] = b"12345678";
 const DEFAULT_MANAGEMENT_KEY: [u8; 24] = [
@@ -111,7 +113,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             } else {
                 {secret_field("Current PIV PIN", "Current PIN", current)}
             }
-            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", if fips { "8 characters" } else { "6-8 characters" }, new_secret, confirmation)}
+            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", pin_length_hint(fips), new_secret, confirmation)}
             {fips_code_note(fips, "PIN")}
         },
         PivAction::ChangePuk => rsx! {
@@ -120,7 +122,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             } else {
                 {secret_field("Current PIV PUK", "Current PUK", current)}
             }
-            {new_code_fields("New PIV PUK", "Confirm new PIV PUK", if fips { "8 characters" } else { "6-8 characters" }, new_secret, confirmation)}
+            {new_code_fields("New PIV PUK", "Confirm new PIV PUK", pin_length_hint(fips), new_secret, confirmation)}
             {fips_code_note(fips, "PUK")}
         },
         PivAction::UnblockPin => rsx! {
@@ -129,7 +131,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             } else {
                 {secret_field("PIV PUK", "Current PUK", current)}
             }
-            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", if fips { "8 characters" } else { "6-8 characters" }, new_secret, confirmation)}
+            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", pin_length_hint(fips), new_secret, confirmation)}
             {fips_code_note(fips, "PIN")}
         },
         PivAction::ChangeManagementKey => rsx! {
@@ -706,8 +708,8 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                     if !pin_default { {secret_field("Current PIV PIN", "Current PIN", current_pin)} }
                     if !puk_default { {secret_field("Current PIV PUK", "Current PUK", current_puk)} }
                     if !management_key_default { {secret_field("Current management key (hex)", "Current key in hex", current_management_input)} }
-                    {new_code_fields("New 8-character PIN", "Confirm new PIN", "8 characters", pin, pin_confirmation)}
-                    {new_code_fields("New 8-character PUK", "Confirm new PUK", "8 characters", puk, puk_confirmation)}
+                    {new_code_fields("New 8-character PIN", "Confirm new PIN", pin_length_hint(true), pin, pin_confirmation)}
+                    {new_code_fields("New 8-character PUK", "Confirm new PUK", pin_length_hint(true), puk, puk_confirmation)}
                     {generated_key_view(management_key, have_stored_key, generation_error, toast_signal)}
                     if let Some(message) = current_pin_error { div { class: "modal-error", "{message}" } }
                     if let Some(message) = current_puk_error { div { class: "modal-error", "{message}" } }

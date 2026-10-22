@@ -127,23 +127,9 @@ func (s *Server) authorize(
 	if err != nil {
 		return authorization{}, err
 	}
-	principal, err := s.auth.Authenticate(ctx, accessToken)
+	principal, err := s.authenticatePrincipal(ctx, actorID, rpcName, tokenSerial, accessToken)
 	if err != nil {
-		outcome := "denied"
-		reason := "OIDC access token rejected"
-		if errors.Is(err, authn.ErrUserStore) {
-			outcome = "error"
-			reason = "OIDC user persistence failed"
-		}
-		if auditErr := s.auditEvent(ctx, "station", actorID, rpcName, "token", tokenSerial, outcome, reason); auditErr != nil {
-			s.logger.Error("audit OIDC rejection failed", "error", auditErr)
-			return authorization{}, status.Error(codes.Internal, "could not record authorization decision")
-		}
-		if errors.Is(err, authn.ErrUserStore) {
-			s.logger.Error("OIDC user upsert failed", "error", err)
-			return authorization{}, status.Error(codes.Internal, "could not record authenticated user")
-		}
-		return authorization{}, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
+		return authorization{}, err
 	}
 	token, err := s.inventory.FindToken(ctx, tokenVendor, tokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -194,6 +180,31 @@ func (s *Server) authorize(
 	return authorization{
 		station: station, principal: principal, token: token, decision: decision,
 	}, nil
+}
+
+// authenticatePrincipal verifies the caller's OIDC access token. A rejection is audited against the station
+// that relayed it; a user store failure is audited and logged as an error rather than a denial.
+func (s *Server) authenticatePrincipal(ctx context.Context, actorID, rpcName, tokenSerial, accessToken string) (authn.Principal, error) {
+	principal, err := s.auth.Authenticate(ctx, accessToken)
+	if err == nil {
+		return principal, nil
+	}
+	storeFailure := errors.Is(err, authn.ErrUserStore)
+	outcome := "denied"
+	reason := "OIDC access token rejected"
+	if storeFailure {
+		outcome = "error"
+		reason = "OIDC user persistence failed"
+	}
+	if auditErr := s.auditEvent(ctx, "station", actorID, rpcName, "token", tokenSerial, outcome, reason); auditErr != nil {
+		s.logger.Error("audit OIDC rejection failed", "error", auditErr)
+		return authn.Principal{}, status.Error(codes.Internal, "could not record authorization decision")
+	}
+	if storeFailure {
+		s.logger.Error("OIDC user upsert failed", "error", err)
+		return authn.Principal{}, status.Error(codes.Internal, "could not record authenticated user")
+	}
+	return authn.Principal{}, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
 }
 
 func timeSeconds(seconds int64) time.Duration {

@@ -23,16 +23,9 @@ pub fn ManagedDialog(device: DeviceInfo, action: ManagedAction) -> Element {
     let matches = new_pin.read().as_str() == confirmation.read().as_str();
     let can_submit = !busy() && (!needs_pin || (length_ok && matches));
     let live_message = needs_pin
-        .then(|| {
-            if new_pin.read().is_empty() || length_ok {
-                None
-            } else if fips {
-                Some("This FIPS key requires an 8-character PIN.".to_owned())
-            } else {
-                Some("The PIN must be 6-8 characters.".to_owned())
-            }
-        })
+        .then(|| pin_length_message(new_pin.read().as_str(), fips))
         .flatten();
+    let length_hint = pin_length_hint(fips);
 
     rsx! {
         div { class: "modal-backdrop", tabindex: "-1", autofocus: true,
@@ -53,7 +46,7 @@ pub fn ManagedDialog(device: DeviceInfo, action: ManagedAction) -> Element {
                 div { class: "modal-content",
                     if needs_pin {
                         div { class: "modal-field",
-                            label { r#for: "managed-new-pin", if fips { "New PIV PIN (8 characters)" } else { "New PIV PIN (6-8 characters)" } }
+                            label { r#for: "managed-new-pin", "New PIV PIN ({length_hint})" }
                             input {
                                 id: "managed-new-pin",
                                 r#type: "password",
@@ -231,9 +224,27 @@ pub(super) fn pin_length_ok(value: &str, fips: bool) -> bool {
         }
 }
 
+pub(super) fn pin_length_hint(fips: bool) -> &'static str {
+    if fips {
+        "8 characters"
+    } else {
+        "6-8 characters"
+    }
+}
+
+pub(super) fn pin_length_message(value: &str, fips: bool) -> Option<String> {
+    if value.is_empty() || pin_length_ok(value, fips) {
+        None
+    } else if fips {
+        Some("This FIPS key requires an 8-character PIN.".to_owned())
+    } else {
+        Some("The PIN must be 6-8 characters.".to_owned())
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::pin_length_ok;
+    use super::{pin_length_hint, pin_length_message, pin_length_ok};
 
     #[test]
     fn fips_pins_are_exactly_eight_characters_and_others_six_to_eight() {
@@ -243,5 +254,27 @@ mod tests {
         assert!(pin_length_ok("12345678", false));
         assert!(!pin_length_ok("12345", false));
         assert!(!pin_length_ok("1234567é", false));
+    }
+
+    #[test]
+    fn pin_length_hint_describes_the_rule() {
+        assert_eq!(pin_length_hint(true), "8 characters");
+        assert_eq!(pin_length_hint(false), "6-8 characters");
+    }
+
+    #[test]
+    fn pin_length_message_explains_invalid_non_empty_pins() {
+        assert_eq!(pin_length_message("", true), None);
+        assert_eq!(pin_length_message("", false), None);
+        assert_eq!(pin_length_message("12345678", true), None);
+        assert_eq!(pin_length_message("123456", false), None);
+        assert_eq!(
+            pin_length_message("123456", true).as_deref(),
+            Some("This FIPS key requires an 8-character PIN.")
+        );
+        assert_eq!(
+            pin_length_message("12345", false).as_deref(),
+            Some("The PIN must be 6-8 characters.")
+        );
     }
 }

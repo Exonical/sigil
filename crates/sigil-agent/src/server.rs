@@ -3,7 +3,7 @@ use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 use futures_util::Stream;
 use sigil_app::CredentialService;
 use sigil_core::{
-    Application, CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
+    CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
     ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk,
     PivSlot, Result as CoreResult, Secret, TouchPolicy,
 };
@@ -14,10 +14,13 @@ use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
 use crate::enrollment;
-use crate::grant::{GrantExpectation, GrantProvider, GrantRequest, GrantVerifier, Unconfigured};
+use crate::grant::{GrantExpectation, GrantProvider, GrantVerifier, Unconfigured};
 use crate::{
     audit_outbox::{AuditOutbox, PendingCompletion},
-    backend::{ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret, token_identity},
+    backend::{
+        MAX_ACCESS_TOKEN_BYTES, ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret,
+        token_identity,
+    },
     caller::{self, CallerIdentity, CallerPolicy},
 };
 
@@ -39,7 +42,31 @@ struct ManagedCall<'a> {
     slot: Option<u8>,
     serial: &'a str,
     rotation_missing_detail: Option<&'static str>,
-    completion_error_overrides: bool,
+    abandon_failure: AbandonFailure,
+}
+
+/// What the caller sees when the backend cannot record an abandoned rotation.
+#[derive(Clone, Copy)]
+enum AbandonFailure {
+    /// Return the completion error instead of the card or argument status.
+    ReportToCaller,
+    /// Return the card or argument status and log the completion error.
+    KeepCallerStatus,
+}
+
+impl<'a> ManagedCall<'a> {
+    fn audit(self, grant_id: Option<&'a str>, rotation_id: Option<&'a str>) -> PivAudit<'a> {
+        PivAudit {
+            caller: self.caller,
+            rpc: self.rpc,
+            device_id: self.device_id,
+            operation: self.operation_name,
+            slot: self.slot,
+            serial: self.serial,
+            grant_id,
+            rotation_id,
+        }
+    }
 }
 
 enum ManagedCardOutcome<T> {
@@ -117,11 +144,10 @@ impl AgentService {
         self
     }
 
-    fn caller<T>(
+    fn authorized_identity<T>(
         &self,
         request: &Request<T>,
-        rpc: &'static str,
-        device_id: &str,
+        on_reject: impl FnOnce(&CallerIdentity, &Status),
     ) -> std::result::Result<CallerIdentity, Status> {
         let identity = request
             .extensions()
@@ -130,23 +156,21 @@ impl AgentService {
             .unwrap_or_else(CallerIdentity::rejected);
         if let Err(error) = caller::authorize(&identity, self.policy) {
             let status = status_from_error(&error);
-            audit_static(&identity, rpc, device_id, false, Some(&status));
+            on_reject(&identity, &status);
             return Err(status);
         }
         Ok(identity)
     }
 
-    async fn ensure_device_serial(&self, id: &DeviceId) -> std::result::Result<(), Status> {
-        let credentials = self.credentials.clone();
-        let device_id = id.clone();
-        let info = blocking(move || credentials.device(&device_id)).await?;
-        if info.serial.is_some() {
-            Ok(())
-        } else {
-            Err(status_from_error(&CredentialError::OperationUnauthorized(
-                "the device serial number is unavailable".into(),
-            )))
-        }
+    fn caller<T>(
+        &self,
+        request: &Request<T>,
+        rpc: &'static str,
+        device_id: &str,
+    ) -> std::result::Result<CallerIdentity, Status> {
+        self.authorized_identity(request, |identity, status| {
+            audit_static(identity, rpc, device_id, false, Some(status));
+        })
     }
 
     fn caller_piv<T>(
@@ -157,26 +181,19 @@ impl AgentService {
         operation: &'static str,
         slot: Option<u8>,
     ) -> std::result::Result<CallerIdentity, Status> {
-        let identity = request
-            .extensions()
-            .get::<CallerIdentity>()
-            .cloned()
-            .unwrap_or_else(CallerIdentity::rejected);
-        if let Err(error) = caller::authorize(&identity, self.policy) {
-            let status = status_from_error(&error);
-            audit_piv::<()>(
-                &identity,
+        self.authorized_identity(request, |identity, status| {
+            PivAudit {
+                caller: identity,
                 rpc,
                 device_id,
                 operation,
                 slot,
-                "",
-                None,
-                &Err(status.clone()),
-            );
-            return Err(status);
-        }
-        Ok(identity)
+                serial: "",
+                grant_id: None,
+                rotation_id: None,
+            }
+            .record::<()>(&Err(status.clone()));
+        })
     }
 
     fn caller_device<T>(
@@ -186,35 +203,23 @@ impl AgentService {
         device_id: &str,
         operation: &'static str,
     ) -> std::result::Result<CallerIdentity, Status> {
-        let identity = request
-            .extensions()
-            .get::<CallerIdentity>()
-            .cloned()
-            .unwrap_or_else(CallerIdentity::rejected);
-        if let Err(error) = caller::authorize(&identity, self.policy) {
-            let status = status_from_error(&error);
+        self.authorized_identity(request, |identity, status| {
             audit_device::<()>(
-                &identity,
+                identity,
                 rpc,
                 device_id,
                 operation,
                 "",
                 &Err(status.clone()),
             );
-            return Err(status);
-        }
-        Ok(identity)
+        })
     }
 
     async fn device_serial(&self, id: &DeviceId) -> std::result::Result<String, Status> {
         let credentials = self.credentials.clone();
         let device_id = id.clone();
         let device = blocking(move || credentials.device(&device_id)).await?;
-        device.serial.ok_or_else(|| {
-            status_from_error(&CredentialError::OperationUnauthorized(
-                "the device serial number is unavailable".into(),
-            ))
-        })
+        device.serial.ok_or_else(serial_unavailable)
     }
 
     async fn ensure_expected_serial(
@@ -229,6 +234,18 @@ impl AgentService {
         Ok(actual)
     }
 
+    async fn preflight_serial(
+        &self,
+        device_id: &str,
+        expected_serial: &str,
+        on_reject: impl FnOnce(&Status),
+    ) -> std::result::Result<String, Status> {
+        let id = DeviceId(device_id.to_owned());
+        self.ensure_expected_serial(&id, expected_serial)
+            .await
+            .inspect_err(on_reject)
+    }
+
     async fn preflight_device_serial(
         &self,
         caller: &CallerIdentity,
@@ -237,21 +254,17 @@ impl AgentService {
         operation: &'static str,
         expected_serial: &str,
     ) -> std::result::Result<String, Status> {
-        let id = DeviceId(device_id.to_owned());
-        match self.ensure_expected_serial(&id, expected_serial).await {
-            Ok(serial) => Ok(serial),
-            Err(status) => {
-                audit_device::<()>(
-                    caller,
-                    rpc,
-                    device_id,
-                    operation,
-                    expected_serial,
-                    &Err(status.clone()),
-                );
-                Err(status)
-            }
-        }
+        self.preflight_serial(device_id, expected_serial, |status| {
+            audit_device::<()>(
+                caller,
+                rpc,
+                device_id,
+                operation,
+                expected_serial,
+                &Err(status.clone()),
+            );
+        })
+        .await
     }
 
     async fn preflight_piv_serial(
@@ -263,61 +276,20 @@ impl AgentService {
         slot: Option<u8>,
         expected_serial: &str,
     ) -> std::result::Result<String, Status> {
-        let id = DeviceId(device_id.to_owned());
-        match self.ensure_expected_serial(&id, expected_serial).await {
-            Ok(serial) => Ok(serial),
-            Err(status) => {
-                audit_piv::<()>(
-                    caller,
-                    rpc,
-                    device_id,
-                    operation,
-                    slot,
-                    expected_serial,
-                    None,
-                    &Err(status.clone()),
-                );
-                Err(status)
+        self.preflight_serial(device_id, expected_serial, |status| {
+            PivAudit {
+                caller,
+                rpc,
+                device_id,
+                operation,
+                slot,
+                serial: expected_serial,
+                grant_id: None,
+                rotation_id: None,
             }
-        }
-    }
-
-    #[allow(dead_code)] // used by escrow-backed agent operations
-    async fn authorize_piv_grant(
-        &self,
-        caller: &CallerIdentity,
-        id: &DeviceId,
-        expected_serial: &str,
-        operation: v1::Operation,
-        slot: Option<u8>,
-    ) -> std::result::Result<PivGrantContext, Status> {
-        let serial = self.ensure_expected_serial(id, expected_serial).await?;
-        let request = GrantRequest {
-            operation,
-            station_id: self.station_id.clone(),
-            token_serial: serial.clone(),
-            caller_os_user: caller.os_user.clone(),
-            piv_slot: slot,
-        };
-        let signed = self
-            .grant_provider
-            .obtain(caller, &request)
-            .map_err(|error| status_from_error(&error))?;
-        let expectation = GrantExpectation {
-            operation,
-            station_id: self.station_id.clone(),
-            token_serial: serial.clone(),
-            caller_os_user: Some(caller.os_user.clone()),
-            piv_slot: slot,
-        };
-        let grant = self
-            .grant_verifier
-            .verify(&signed, &expectation, crate::grant::now_unix())
-            .map_err(|error| status_from_error(&error))?;
-        Ok(PivGrantContext {
-            serial,
-            grant_id: grant.grant_id,
+            .record::<()>(&Err(status.clone()));
         })
+        .await
     }
 
     async fn authorize_managed(
@@ -330,21 +302,8 @@ impl AgentService {
         mut managed: v1::ManagedAuthorization,
     ) -> std::result::Result<(ManagedGrant, String), Status> {
         let access_token = Zeroizing::new(std::mem::take(&mut managed.access_token));
-        let Some(backend) = &self.backend else {
-            return Err(status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            )));
-        };
-        if access_token.is_empty() {
-            return Err(status_from_error(&CredentialError::BackendRejected(
-                "managed access token is required".into(),
-            )));
-        }
-        if access_token.len() > 16 * 1024 {
-            return Err(Status::invalid_argument(
-                "managed access token exceeds 16 KiB",
-            ));
-        }
+        let backend = self.require_backend()?;
+        validate_managed_token(&access_token)?;
         let id = DeviceId(device_id.to_owned());
         let credentials = self.credentials.clone();
         let device = blocking(move || credentials.device(&id)).await?;
@@ -396,11 +355,13 @@ impl AgentService {
         Ok((authorization, grant_id))
     }
 
+    fn require_backend(&self) -> std::result::Result<&Arc<dyn ManagedAuthority>, Status> {
+        self.backend.as_ref().ok_or_else(backend_unavailable)
+    }
+
     fn missing_managed_authorization_status(&self) -> Status {
         if self.backend.is_none() {
-            status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            ))
+            backend_unavailable()
         } else {
             status_from_error(&CredentialError::BackendRejected(
                 "managed authorization is required".into(),
@@ -413,11 +374,7 @@ impl AgentService {
         rotation_id: &str,
         applied: bool,
     ) -> std::result::Result<(), Status> {
-        let Some(backend) = &self.backend else {
-            return Err(status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            )));
-        };
+        let backend = self.require_backend()?;
         let mut last_error = None;
         for delay in [
             Duration::ZERO,
@@ -465,6 +422,34 @@ impl AgentService {
         }))
     }
 
+    async fn abandon_rotation(
+        &self,
+        call: ManagedCall<'_>,
+        rotation_id: Option<&str>,
+        policy: AbandonFailure,
+        status: Status,
+    ) -> Status {
+        let Some(rotation_id) = rotation_id else {
+            return status;
+        };
+        let Err(completion) = self.complete_rotation(rotation_id, false).await else {
+            return status;
+        };
+        match policy {
+            AbandonFailure::ReportToCaller => completion,
+            AbandonFailure::KeepCallerStatus => {
+                tracing::warn!(
+                    target: "sigil::agent",
+                    rpc = call.rpc,
+                    rotation_id,
+                    code = ?completion.code(),
+                    "could not record an abandoned managed rotation"
+                );
+                status
+            }
+        }
+    }
+
     async fn run_managed<T, S, Extract, CardOperation>(
         &self,
         call: ManagedCall<'_>,
@@ -491,7 +476,7 @@ impl AgentService {
         {
             Ok(authorization) => authorization,
             Err(status) => {
-                audit_managed_call::<()>(call, None, None, &Err(status.clone()));
+                call.audit(None, None).record::<()>(&Err(status.clone()));
                 return Err(status);
             }
         };
@@ -500,7 +485,8 @@ impl AgentService {
                 Some(rotation_id) => Some(rotation_id),
                 None => {
                     let status = Status::internal(detail);
-                    audit_managed_call::<()>(call, Some(&grant_id), None, &Err(status.clone()));
+                    call.audit(Some(&grant_id), None)
+                        .record::<()>(&Err(status.clone()));
                     return Err(status);
                 }
             }
@@ -512,15 +498,16 @@ impl AgentService {
         let arguments = match extracted {
             Ok(arguments) => arguments,
             Err(status) => {
-                if let Some(rotation_id) = rotation_id.as_deref() {
-                    let _ = self.complete_rotation(rotation_id, false).await;
-                }
-                audit_managed_call::<()>(
-                    call,
-                    Some(&grant_id),
-                    rotation_id.as_deref(),
-                    &Err(status.clone()),
-                );
+                let status = self
+                    .abandon_rotation(
+                        call,
+                        rotation_id.as_deref(),
+                        AbandonFailure::KeepCallerStatus,
+                        status,
+                    )
+                    .await;
+                call.audit(Some(&grant_id), rotation_id.as_deref())
+                    .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
         };
@@ -534,98 +521,81 @@ impl AgentService {
                 } else {
                     Ok(value)
                 };
-                audit_managed_call(call, Some(&grant_id), rotation_id.as_deref(), &result);
+                call.audit(Some(&grant_id), rotation_id.as_deref())
+                    .record(&result);
                 result
             }
             Ok(ManagedCardOutcome::NotApplied(status)) => {
-                let status = if call.completion_error_overrides {
-                    if let Some(rotation_id) = rotation_id.as_deref() {
-                        self.complete_rotation(rotation_id, false)
-                            .await
-                            .err()
-                            .unwrap_or(status)
-                    } else {
-                        status
-                    }
-                } else {
-                    if let Some(rotation_id) = rotation_id.as_deref() {
-                        let _ = self.complete_rotation(rotation_id, false).await;
-                    }
-                    status
-                };
-                audit_managed_call::<()>(
-                    call,
-                    Some(&grant_id),
-                    rotation_id.as_deref(),
-                    &Err(status.clone()),
-                );
+                let status = self
+                    .abandon_rotation(call, rotation_id.as_deref(), call.abandon_failure, status)
+                    .await;
+                call.audit(Some(&grant_id), rotation_id.as_deref())
+                    .record::<()>(&Err(status.clone()));
                 Err(status)
             }
             Ok(ManagedCardOutcome::Partial) => {
                 let rotation_id = rotation_id.expect("partial rotation requires a rotation ID");
-                audit_rotation_unknown(
-                    call.caller,
-                    call.rpc,
-                    call.device_id,
-                    call.operation_name,
-                    call.serial,
-                    Some(&grant_id),
-                    &rotation_id,
-                );
+                call.audit(Some(&grant_id), Some(&rotation_id))
+                    .record_rotation_unknown();
                 Err(status_from_error(
                     &CredentialError::ManagedRotationIncomplete(rotation_id),
                 ))
             }
             Err(error) if rotation_id.is_some() && card_failure_is_definite(&error) => {
-                let completion = self
-                    .complete_rotation(
-                        rotation_id.as_deref().expect("rotation ID is present"),
-                        false,
+                let status = self
+                    .abandon_rotation(
+                        call,
+                        rotation_id.as_deref(),
+                        call.abandon_failure,
+                        status_from_error(&error),
                     )
                     .await;
-                let status = if call.completion_error_overrides {
-                    completion
-                        .err()
-                        .unwrap_or_else(|| status_from_error(&error))
-                } else {
-                    status_from_error(&error)
-                };
-                audit_managed_call::<()>(
-                    call,
-                    Some(&grant_id),
-                    rotation_id.as_deref(),
-                    &Err(status.clone()),
-                );
+                call.audit(Some(&grant_id), rotation_id.as_deref())
+                    .record::<()>(&Err(status.clone()));
                 Err(status)
             }
             Err(_) if rotation_id.is_some() => {
                 let rotation_id = rotation_id.expect("rotation ID is present");
-                audit_rotation_unknown(
-                    call.caller,
-                    call.rpc,
-                    call.device_id,
-                    call.operation_name,
-                    call.serial,
-                    Some(&grant_id),
-                    &rotation_id,
-                );
+                call.audit(Some(&grant_id), Some(&rotation_id))
+                    .record_rotation_unknown();
                 Err(status_from_error(
                     &CredentialError::ManagedRotationIncomplete(rotation_id),
                 ))
             }
             Err(error) => {
                 let status = status_from_error(&error);
-                audit_managed_call::<()>(call, Some(&grant_id), None, &Err(status.clone()));
+                call.audit(Some(&grant_id), None)
+                    .record::<()>(&Err(status.clone()));
                 Err(status)
             }
         }
     }
 }
 
-#[allow(dead_code)] // used by escrow-backed agent operations
-struct PivGrantContext {
-    serial: String,
-    grant_id: String,
+fn backend_unavailable() -> Status {
+    status_from_error(&CredentialError::BackendUnavailable(
+        "backend is not configured".into(),
+    ))
+}
+
+fn serial_unavailable() -> Status {
+    status_from_error(&CredentialError::OperationUnauthorized(
+        "the device serial number is unavailable".into(),
+    ))
+}
+
+fn validate_managed_token(access_token: &str) -> std::result::Result<(), Status> {
+    if access_token.is_empty() {
+        return Err(status_from_error(&CredentialError::BackendRejected(
+            "managed access token is required".into(),
+        )));
+    }
+    if access_token.len() > MAX_ACCESS_TOKEN_BYTES {
+        return Err(Status::invalid_argument(
+            "managed access token exceeds 16 KiB",
+        ));
+    }
+    Ok(())
 }
 
 fn map_backend_status(status: Status) -> Status {
@@ -777,24 +747,12 @@ impl AgentService {
         ),
         Status,
     > {
-        let backend = self.backend.clone().ok_or_else(|| {
-            status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            ))
-        })?;
-        if managed.access_token.is_empty() {
-            return Err(status_from_error(&CredentialError::BackendRejected(
-                "managed access token is required".into(),
-            )));
-        }
+        let backend = self.require_backend()?;
+        validate_managed_token(&managed.access_token)?;
         let id = DeviceId(device_id.to_owned());
         let credentials = self.credentials.clone();
         let info = blocking(move || credentials.device(&id)).await?;
-        let (vendor, serial) = token_identity(&info).ok_or_else(|| {
-            status_from_error(&CredentialError::OperationUnauthorized(
-                "the device serial number is unavailable".into(),
-            ))
-        })?;
+        let (vendor, serial) = token_identity(&info).ok_or_else(serial_unavailable)?;
         let profiles = backend
             .list_certificate_profiles(sigil_proto::backend::v1::ListProfilesRequest {
                 access_token: managed.access_token.clone(),
@@ -900,11 +858,7 @@ impl AgentService {
         .into_inner()
         .csr_der;
         drop(pin);
-        let backend = self.backend.clone().ok_or_else(|| {
-            status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            ))
-        })?;
+        let backend = self.require_backend()?;
         let issued = backend
             .issue_certificate(sigil_proto::backend::v1::IssueCertificateRequest {
                 access_token: managed.0.access_token.clone(),
@@ -917,13 +871,15 @@ impl AgentService {
                 attestation_intermediate_der: attested.intermediate_der,
             })
             .await?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or_default();
-        enrollment::verify_issued_chain(&issued.chain_der, &self.issuing_cas, &spki, now).map_err(
-            |reason| status_from_error(&CredentialError::BackendRejected(reason.to_owned())),
-        )?;
+        enrollment::verify_issued_chain(
+            &issued.chain_der,
+            &self.issuing_cas,
+            &spki,
+            crate::grant::now_unix(),
+        )
+        .map_err(|reason| {
+            status_from_error(&CredentialError::BackendRejected(reason.to_owned()))
+        })?;
         let certificate_der = issued.chain_der[0].clone();
         v1::agent_server::Agent::import_piv_certificate(
             self,
@@ -1017,7 +973,12 @@ impl v1::agent_server::Agent for AgentService {
         let mut input = request.into_inner();
         let device_id = input.id.clone();
         let expected_serial = input.expected_serial.clone();
-        let usb = match applications_from_proto(input.usb_enabled) {
+        let usb = match input
+            .usb_enabled
+            .into_iter()
+            .map(sigil_proto::application_from_proto)
+            .collect::<CoreResult<Vec<_>>>()
+        {
             Ok(applications) => applications,
             Err(error) => {
                 return Err(audit_device_error(
@@ -1031,7 +992,12 @@ impl v1::agent_server::Agent for AgentService {
             }
         };
         let nfc = if input.set_nfc {
-            match applications_from_proto(input.nfc_enabled) {
+            match input
+                .nfc_enabled
+                .into_iter()
+                .map(sigil_proto::application_from_proto)
+                .collect::<CoreResult<Vec<_>>>()
+            {
                 Ok(applications) => Some(applications),
                 Err(error) => {
                     return Err(audit_device_error(
@@ -1176,7 +1142,7 @@ impl v1::agent_server::Agent for AgentService {
         let input = request.into_inner();
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
-        self.ensure_device_serial(&id).await.inspect_err(|status| {
+        self.device_serial(&id).await.inspect_err(|status| {
             audit_static(
                 &caller,
                 "EnrollFingerprint",
@@ -1247,7 +1213,7 @@ impl v1::agent_server::Agent for AgentService {
         let input = request.into_inner();
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
-        self.ensure_device_serial(&id).await.inspect_err(|status| {
+        self.device_serial(&id).await.inspect_err(|status| {
             audit_static(
                 &caller,
                 "RemoveFingerprint",
@@ -1357,31 +1323,33 @@ impl v1::agent_server::Agent for AgentService {
         let old_pin = match PivPin::new(std::mem::take(&mut input.old_pin)) {
             Ok(pin) => pin,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivPin",
-                    &device_id,
-                    "PIV_CHANGE_PIN",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivPin",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_PIN",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let new_pin = match PivPin::new(std::mem::take(&mut input.new_pin)) {
             Ok(pin) => pin,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivPin",
-                    &device_id,
-                    "PIV_CHANGE_PIN",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivPin",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_PIN",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let id = DeviceId(device_id.clone());
@@ -1394,16 +1362,17 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        audit_piv(
-            &caller,
-            "ChangePivPin",
-            &device_id,
-            "PIV_CHANGE_PIN",
-            None,
-            &audit_serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "ChangePivPin",
+            device_id: &device_id,
+            operation: "PIV_CHANGE_PIN",
+            slot: None,
+            serial: &audit_serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -1421,17 +1390,17 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "old_puk and new_puk must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "ChangePivPuk",
-                    &device_id,
-                    "PIV_CHANGE_PUK",
-                    None,
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivPuk",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_PUK",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let serial = self
@@ -1458,7 +1427,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: None,
                         serial: &serial,
                         rotation_missing_detail: Some("backend omitted the PUK rotation ID"),
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -1483,31 +1452,33 @@ impl v1::agent_server::Agent for AgentService {
         let old_puk = match PivPuk::new(std::mem::take(&mut input.old_puk)) {
             Ok(puk) => puk,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivPuk",
-                    &device_id,
-                    "PIV_CHANGE_PUK",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivPuk",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_PUK",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let new_puk = match PivPuk::new(std::mem::take(&mut input.new_puk)) {
             Ok(puk) => puk,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivPuk",
-                    &device_id,
-                    "PIV_CHANGE_PUK",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivPuk",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_PUK",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let id = DeviceId(device_id.clone());
@@ -1526,16 +1497,17 @@ impl v1::agent_server::Agent for AgentService {
         let result =
             blocking(move || credentials.change_puk(&id, &expected_serial, &old_puk, &new_puk))
                 .await;
-        audit_piv(
-            &caller,
-            "ChangePivPuk",
-            &device_id,
-            "PIV_CHANGE_PUK",
-            None,
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "ChangePivPuk",
+            device_id: &device_id,
+            operation: "PIV_CHANGE_PUK",
+            slot: None,
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -1558,32 +1530,33 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "puk must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "UnblockPivPin",
-                    &device_id,
-                    "PIV_UNBLOCK_PIN",
-                    None,
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "UnblockPivPin",
+                    device_id: &device_id,
+                    operation: "PIV_UNBLOCK_PIN",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let new_pin = match PivPin::new(std::mem::take(&mut input.new_pin)) {
                 Ok(pin) => pin,
                 Err(error) => {
-                    return Err(audit_piv_error(
-                        &caller,
-                        "UnblockPivPin",
-                        &device_id,
-                        "PIV_UNBLOCK_PIN",
-                        None,
-                        &serial_hint,
-                        None,
-                        error,
-                    ));
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "UnblockPivPin",
+                        device_id: &device_id,
+                        operation: "PIV_UNBLOCK_PIN",
+                        slot: None,
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
             };
             let serial = self
@@ -1610,7 +1583,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: None,
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     move |grant| {
@@ -1632,31 +1605,33 @@ impl v1::agent_server::Agent for AgentService {
         let puk = match PivPuk::new(std::mem::take(&mut input.puk)) {
             Ok(puk) => puk,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "UnblockPivPin",
-                    &device_id,
-                    "PIV_UNBLOCK_PIN",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "UnblockPivPin",
+                    device_id: &device_id,
+                    operation: "PIV_UNBLOCK_PIN",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let new_pin = match PivPin::new(std::mem::take(&mut input.new_pin)) {
             Ok(pin) => pin,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "UnblockPivPin",
-                    &device_id,
-                    "PIV_UNBLOCK_PIN",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "UnblockPivPin",
+                    device_id: &device_id,
+                    operation: "PIV_UNBLOCK_PIN",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let id = DeviceId(device_id.clone());
@@ -1674,16 +1649,17 @@ impl v1::agent_server::Agent for AgentService {
         let expected_serial = serial.clone();
         let result =
             blocking(move || credentials.unblock_pin(&id, &expected_serial, &puk, &new_pin)).await;
-        audit_piv(
-            &caller,
-            "UnblockPivPin",
-            &device_id,
-            "PIV_UNBLOCK_PIN",
-            None,
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "UnblockPivPin",
+            device_id: &device_id,
+            operation: "PIV_UNBLOCK_PIN",
+            slot: None,
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -1710,17 +1686,17 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "management-key fields and algorithms must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "ChangePivManagementKey",
-                    &device_id,
-                    "PIV_CHANGE_MANAGEMENT_KEY",
-                    None,
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivManagementKey",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let serial = self
@@ -1749,7 +1725,7 @@ impl v1::agent_server::Agent for AgentService {
                         rotation_missing_detail: Some(
                             "backend omitted the management-key rotation ID",
                         ),
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -1776,31 +1752,33 @@ impl v1::agent_server::Agent for AgentService {
         let current_algorithm = match management_key_algorithm(input.current_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivManagementKey",
-                    &device_id,
-                    "PIV_CHANGE_MANAGEMENT_KEY",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivManagementKey",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let new_algorithm = match management_key_algorithm(input.new_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivManagementKey",
-                    &device_id,
-                    "PIV_CHANGE_MANAGEMENT_KEY",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivManagementKey",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let current = match ManagementKey::new(
@@ -1809,16 +1787,17 @@ impl v1::agent_server::Agent for AgentService {
         ) {
             Ok(key) => key,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivManagementKey",
-                    &device_id,
-                    "PIV_CHANGE_MANAGEMENT_KEY",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivManagementKey",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let new_key = match ManagementKey::new(
@@ -1827,16 +1806,17 @@ impl v1::agent_server::Agent for AgentService {
         ) {
             Ok(key) => key,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ChangePivManagementKey",
-                    &device_id,
-                    "PIV_CHANGE_MANAGEMENT_KEY",
-                    None,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ChangePivManagementKey",
+                    device_id: &device_id,
+                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                    slot: None,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let id = DeviceId(device_id.clone());
@@ -1856,16 +1836,17 @@ impl v1::agent_server::Agent for AgentService {
             credentials.change_management_key(&id, &expected_serial, &current, &new_key)
         })
         .await;
-        audit_piv(
-            &caller,
-            "ChangePivManagementKey",
-            &device_id,
-            "PIV_CHANGE_MANAGEMENT_KEY",
-            None,
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "ChangePivManagementKey",
+            device_id: &device_id,
+            operation: "PIV_CHANGE_MANAGEMENT_KEY",
+            slot: None,
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -1894,16 +1875,17 @@ impl v1::agent_server::Agent for AgentService {
                         .collect::<std::result::Result<Vec<_>, Status>>()
                 });
         let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
-        audit_piv(
-            &caller,
-            "ListCertificateProfiles",
-            &device_id,
-            "PIV_ENROLL",
-            None,
-            "",
-            None,
-            &outcome,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "ListCertificateProfiles",
+            device_id: &device_id,
+            operation: "PIV_ENROLL",
+            slot: None,
+            serial: "",
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&outcome);
         result.map(|profiles| Response::new(v1::ListCertificateProfilesResponse { profiles }))
     }
 
@@ -1923,16 +1905,17 @@ impl v1::agent_server::Agent for AgentService {
         let serial = input.expected_serial.clone();
         let result = self.enroll_certificate(&caller, &device_id, input).await;
         let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
-        audit_piv(
-            &caller,
-            "EnrollPivCertificate",
-            &device_id,
-            "PIV_ENROLL",
-            None,
-            &serial,
-            None,
-            &outcome,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "EnrollPivCertificate",
+            device_id: &device_id,
+            operation: "PIV_ENROLL",
+            slot: None,
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&outcome);
         result.map(Response::new)
     }
 
@@ -1954,61 +1937,65 @@ impl v1::agent_server::Agent for AgentService {
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let key_algorithm = match piv_key_algorithm(input.algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let pin_policy = match pin_policy(input.pin_policy) {
             Ok(policy) => policy,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let touch_policy = match touch_policy(input.touch_policy) {
             Ok(policy) => policy,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         if let Some(managed) = input.managed.take() {
@@ -2018,17 +2005,17 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "management_key and management_key_algorithm must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let serial = self
@@ -2055,7 +2042,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2092,16 +2079,17 @@ impl v1::agent_server::Agent for AgentService {
         let management_algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let management_key = match ManagementKey::new(
@@ -2110,16 +2098,17 @@ impl v1::agent_server::Agent for AgentService {
         ) {
             Ok(key) => key,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "GeneratePivKey",
-                    &device_id,
-                    "PIV_GENERATE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "GeneratePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_GENERATE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let id = DeviceId(device_id.clone());
@@ -2149,16 +2138,17 @@ impl v1::agent_server::Agent for AgentService {
             )
         })
         .await;
-        audit_piv(
-            &caller,
-            "GeneratePivKey",
-            &device_id,
-            "PIV_GENERATE_KEY",
-            Some(slot.byte()),
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "GeneratePivKey",
+            device_id: &device_id,
+            operation: "PIV_GENERATE_KEY",
+            slot: Some(slot.byte()),
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|subject_public_key_info| {
             Response::new(v1::GeneratePivKeyResponse {
                 subject_public_key_info,
@@ -2184,16 +2174,17 @@ impl v1::agent_server::Agent for AgentService {
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "AttestPivKey",
-                    &device_id,
-                    "PIV_ATTEST",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "AttestPivKey",
+                    device_id: &device_id,
+                    operation: "PIV_ATTEST",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let id = DeviceId(device_id.clone());
@@ -2206,16 +2197,17 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        audit_piv(
-            &caller,
-            "AttestPivKey",
-            &device_id,
-            "PIV_ATTEST",
-            Some(slot.byte()),
-            &audit_serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "AttestPivKey",
+            device_id: &device_id,
+            operation: "PIV_ATTEST",
+            slot: Some(slot.byte()),
+            serial: &audit_serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|attestation| Response::new(attestation_response(attestation)))
     }
 
@@ -2237,31 +2229,33 @@ impl v1::agent_server::Agent for AgentService {
         let pin = match PivPin::new(std::mem::take(&mut input.pin)) {
             Ok(pin) => pin,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "SignPivCsr",
-                    &device_id,
-                    "PIV_SIGN_CSR",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "SignPivCsr",
+                    device_id: &device_id,
+                    operation: "PIV_SIGN_CSR",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "SignPivCsr",
-                    &device_id,
-                    "PIV_SIGN_CSR",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "SignPivCsr",
+                    device_id: &device_id,
+                    operation: "PIV_SIGN_CSR",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let subject_dn = input.subject_dn;
@@ -2287,16 +2281,17 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        audit_piv(
-            &caller,
-            "SignPivCsr",
-            &device_id,
-            "PIV_SIGN_CSR",
-            Some(slot.byte()),
-            &audit_serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "SignPivCsr",
+            device_id: &device_id,
+            operation: "PIV_SIGN_CSR",
+            slot: Some(slot.byte()),
+            serial: &audit_serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|csr_der| Response::new(v1::SignPivCsrResponse { csr_der }))
     }
 
@@ -2320,16 +2315,17 @@ impl v1::agent_server::Agent for AgentService {
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ImportPivCertificate",
-                    &device_id,
-                    "PIV_IMPORT_CERTIFICATE",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ImportPivCertificate",
+                    device_id: &device_id,
+                    operation: "PIV_IMPORT_CERTIFICATE",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         if let Some(managed) = input.managed.take() {
@@ -2339,17 +2335,17 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "management_key and management_key_algorithm must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "ImportPivCertificate",
-                    &device_id,
-                    "PIV_IMPORT_CERTIFICATE",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "ImportPivCertificate",
+                    device_id: &device_id,
+                    operation: "PIV_IMPORT_CERTIFICATE",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let certificate_der = std::mem::take(&mut input.certificate_der);
@@ -2377,7 +2373,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     move |grant| {
@@ -2406,32 +2402,34 @@ impl v1::agent_server::Agent for AgentService {
         let algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "ImportPivCertificate",
-                    &device_id,
-                    "PIV_IMPORT_CERTIFICATE",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "ImportPivCertificate",
+                    device_id: &device_id,
+                    operation: "PIV_IMPORT_CERTIFICATE",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let management_key =
             match ManagementKey::new(algorithm, std::mem::take(&mut input.management_key)) {
                 Ok(key) => key,
                 Err(error) => {
-                    return Err(audit_piv_error(
-                        &caller,
-                        "ImportPivCertificate",
-                        &device_id,
-                        "PIV_IMPORT_CERTIFICATE",
-                        Some(slot.byte()),
-                        &serial_hint,
-                        None,
-                        error,
-                    ));
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "ImportPivCertificate",
+                        device_id: &device_id,
+                        operation: "PIV_IMPORT_CERTIFICATE",
+                        slot: Some(slot.byte()),
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
             };
         let certificate_der = input.certificate_der;
@@ -2459,16 +2457,17 @@ impl v1::agent_server::Agent for AgentService {
             )
         })
         .await;
-        audit_piv(
-            &caller,
-            "ImportPivCertificate",
-            &device_id,
-            "PIV_IMPORT_CERTIFICATE",
-            Some(slot.byte()),
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "ImportPivCertificate",
+            device_id: &device_id,
+            operation: "PIV_IMPORT_CERTIFICATE",
+            slot: Some(slot.byte()),
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -2490,16 +2489,17 @@ impl v1::agent_server::Agent for AgentService {
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "DeletePivCertificate",
-                    &device_id,
-                    "PIV_DELETE_CERTIFICATE",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "DeletePivCertificate",
+                    device_id: &device_id,
+                    operation: "PIV_DELETE_CERTIFICATE",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         if let Some(managed) = input.managed.take() {
@@ -2509,17 +2509,17 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "management_key and management_key_algorithm must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "DeletePivCertificate",
-                    &device_id,
-                    "PIV_DELETE_CERTIFICATE",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "DeletePivCertificate",
+                    device_id: &device_id,
+                    operation: "PIV_DELETE_CERTIFICATE",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let serial = self
@@ -2546,7 +2546,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2567,32 +2567,34 @@ impl v1::agent_server::Agent for AgentService {
         let algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "DeletePivCertificate",
-                    &device_id,
-                    "PIV_DELETE_CERTIFICATE",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "DeletePivCertificate",
+                    device_id: &device_id,
+                    operation: "PIV_DELETE_CERTIFICATE",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let management_key =
             match ManagementKey::new(algorithm, std::mem::take(&mut input.management_key)) {
                 Ok(key) => key,
                 Err(error) => {
-                    return Err(audit_piv_error(
-                        &caller,
-                        "DeletePivCertificate",
-                        &device_id,
-                        "PIV_DELETE_CERTIFICATE",
-                        Some(slot.byte()),
-                        &serial_hint,
-                        None,
-                        error,
-                    ));
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "DeletePivCertificate",
+                        device_id: &device_id,
+                        operation: "PIV_DELETE_CERTIFICATE",
+                        slot: Some(slot.byte()),
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
             };
         let id = DeviceId(device_id.clone());
@@ -2612,16 +2614,17 @@ impl v1::agent_server::Agent for AgentService {
             credentials.delete_certificate(&id, &expected_serial, &management_key, slot)
         })
         .await;
-        audit_piv(
-            &caller,
-            "DeletePivCertificate",
-            &device_id,
-            "PIV_DELETE_CERTIFICATE",
-            Some(slot.byte()),
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "DeletePivCertificate",
+            device_id: &device_id,
+            operation: "PIV_DELETE_CERTIFICATE",
+            slot: Some(slot.byte()),
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -2643,16 +2646,17 @@ impl v1::agent_server::Agent for AgentService {
         let slot = match piv_slot(input.slot_byte) {
             Ok(slot) => slot,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "DeletePivKey",
-                    &device_id,
-                    "PIV_DELETE_KEY",
-                    slot_hint,
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "DeletePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_DELETE_KEY",
+                    slot: slot_hint,
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         if let Some(managed) = input.managed.take() {
@@ -2662,17 +2666,17 @@ impl v1::agent_server::Agent for AgentService {
                 let status = Status::invalid_argument(
                     "management_key and management_key_algorithm must be empty when managed authorization is supplied",
                 );
-                audit_managed::<()>(
-                    &caller,
-                    "DeletePivKey",
-                    &device_id,
-                    "PIV_DELETE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "DeletePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_DELETE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
             let serial = self
@@ -2699,7 +2703,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2720,32 +2724,34 @@ impl v1::agent_server::Agent for AgentService {
         let algorithm = match management_key_algorithm(input.management_key_algorithm) {
             Ok(algorithm) => algorithm,
             Err(error) => {
-                return Err(audit_piv_error(
-                    &caller,
-                    "DeletePivKey",
-                    &device_id,
-                    "PIV_DELETE_KEY",
-                    Some(slot.byte()),
-                    &serial_hint,
-                    None,
-                    error,
-                ));
+                return Err(PivAudit {
+                    caller: &caller,
+                    rpc: "DeletePivKey",
+                    device_id: &device_id,
+                    operation: "PIV_DELETE_KEY",
+                    slot: Some(slot.byte()),
+                    serial: &serial_hint,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record_error(error));
             }
         };
         let management_key =
             match ManagementKey::new(algorithm, std::mem::take(&mut input.management_key)) {
                 Ok(key) => key,
                 Err(error) => {
-                    return Err(audit_piv_error(
-                        &caller,
-                        "DeletePivKey",
-                        &device_id,
-                        "PIV_DELETE_KEY",
-                        Some(slot.byte()),
-                        &serial_hint,
-                        None,
-                        error,
-                    ));
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "DeletePivKey",
+                        device_id: &device_id,
+                        operation: "PIV_DELETE_KEY",
+                        slot: Some(slot.byte()),
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
             };
         let id = DeviceId(device_id.clone());
@@ -2764,16 +2770,17 @@ impl v1::agent_server::Agent for AgentService {
         let result =
             blocking(move || credentials.delete_key(&id, &expected_serial, &management_key, slot))
                 .await;
-        audit_piv(
-            &caller,
-            "DeletePivKey",
-            &device_id,
-            "PIV_DELETE_KEY",
-            Some(slot.byte()),
-            &serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "DeletePivKey",
+            device_id: &device_id,
+            operation: "PIV_DELETE_KEY",
+            slot: Some(slot.byte()),
+            serial: &serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -2795,16 +2802,17 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        audit_piv(
-            &caller,
-            "ResetPiv",
-            &device_id,
-            "PIV_RESET",
-            None,
-            &audit_serial,
-            None,
-            &result,
-        );
+        PivAudit {
+            caller: &caller,
+            rpc: "ResetPiv",
+            device_id: &device_id,
+            operation: "PIV_RESET",
+            slot: None,
+            serial: &audit_serial,
+            grant_id: None,
+            rotation_id: None,
+        }
+        .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -2824,17 +2832,17 @@ impl v1::agent_server::Agent for AgentService {
         let serial_hint = input.expected_serial.clone();
         let Some(managed) = input.managed.take() else {
             let status = self.missing_managed_authorization_status();
-            audit_managed::<()>(
-                &caller,
-                "InitializeManagedPiv",
-                &device_id,
-                "PIV_MANAGED_INITIALIZE",
-                None,
-                &serial_hint,
-                None,
-                None,
-                &Err(status.clone()),
-            );
+            PivAudit {
+                caller: &caller,
+                rpc: "InitializeManagedPiv",
+                device_id: &device_id,
+                operation: "PIV_MANAGED_INITIALIZE",
+                slot: None,
+                serial: &serial_hint,
+                grant_id: None,
+                rotation_id: None,
+            }
+            .record::<()>(&Err(status.clone()));
             return Err(status);
         };
         let serial = self
@@ -2860,7 +2868,7 @@ impl v1::agent_server::Agent for AgentService {
                 slot: None,
                 serial: &serial,
                 rotation_missing_detail: Some("backend omitted the managed-initialize rotation ID"),
-                completion_error_overrides: true,
+                abandon_failure: AbandonFailure::ReportToCaller,
             },
             managed,
             |grant| {
@@ -2912,17 +2920,17 @@ impl v1::agent_server::Agent for AgentService {
             Ok(kind) => kind,
             Err(_) => {
                 let status = Status::invalid_argument("managed secret kind is invalid");
-                audit_managed::<()>(
-                    &caller,
-                    "RotateManagedPivSecret",
-                    &device_id,
-                    "PIV_ROTATE_SECRET",
-                    None,
-                    &request.get_ref().expected_serial,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "RotateManagedPivSecret",
+                    device_id: &device_id,
+                    operation: "PIV_ROTATE_SECRET",
+                    slot: None,
+                    serial: &request.get_ref().expected_serial,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
         };
@@ -2934,17 +2942,17 @@ impl v1::agent_server::Agent for AgentService {
             ),
             v1::ManagedSecretKind::Unspecified => {
                 let status = Status::invalid_argument("managed secret kind is required");
-                audit_managed::<()>(
-                    &caller,
-                    "RotateManagedPivSecret",
-                    &device_id,
-                    "PIV_ROTATE_SECRET",
-                    None,
-                    &request.get_ref().expected_serial,
-                    None,
-                    None,
-                    &Err(status.clone()),
-                );
+                PivAudit {
+                    caller: &caller,
+                    rpc: "RotateManagedPivSecret",
+                    device_id: &device_id,
+                    operation: "PIV_ROTATE_SECRET",
+                    slot: None,
+                    serial: &request.get_ref().expected_serial,
+                    grant_id: None,
+                    rotation_id: None,
+                }
+                .record::<()>(&Err(status.clone()));
                 return Err(status);
             }
         };
@@ -2952,17 +2960,17 @@ impl v1::agent_server::Agent for AgentService {
         let serial_hint = input.expected_serial.clone();
         let Some(managed) = input.managed.take() else {
             let status = self.missing_managed_authorization_status();
-            audit_managed::<()>(
-                &caller,
-                "RotateManagedPivSecret",
-                &device_id,
-                operation_name,
-                None,
-                &serial_hint,
-                None,
-                None,
-                &Err(status.clone()),
-            );
+            PivAudit {
+                caller: &caller,
+                rpc: "RotateManagedPivSecret",
+                device_id: &device_id,
+                operation: operation_name,
+                slot: None,
+                serial: &serial_hint,
+                grant_id: None,
+                rotation_id: None,
+            }
+            .record::<()>(&Err(status.clone()));
             return Err(status);
         };
         let serial = self
@@ -2988,7 +2996,7 @@ impl v1::agent_server::Agent for AgentService {
                 slot: None,
                 serial: &serial,
                 rotation_missing_detail: Some("backend omitted the secret rotation ID"),
-                completion_error_overrides: true,
+                abandon_failure: AbandonFailure::ReportToCaller,
             },
             managed,
             move |grant| match kind {
@@ -3054,140 +3062,66 @@ fn audit_static(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-fn audit_piv<T>(
-    caller: &CallerIdentity,
+#[derive(Clone, Copy)]
+struct PivAudit<'a> {
+    caller: &'a CallerIdentity,
     rpc: &'static str,
-    device_id: &str,
+    device_id: &'a str,
     operation: &'static str,
     slot: Option<u8>,
-    serial: &str,
-    grant_id: Option<&str>,
-    result: &std::result::Result<T, Status>,
-) {
-    let (outcome, code) = match result {
-        Ok(_) => ("success", None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => ("denied", Some(status)),
-        Err(status) => ("error", Some(status)),
-    };
-    tracing::info!(
-        target: "sigil::audit",
-        caller_os_user = %caller.os_user,
-        session_id = ?caller.session_id,
-        pid = caller.pid,
-        rpc,
-        device_id,
-        operation,
-        piv_slot = slot.unwrap_or_default(),
-        serial,
-        grant_id = grant_id.unwrap_or_default(),
-        outcome,
-        code = %sigil_proto::audit_error_code(code)
-    );
+    serial: &'a str,
+    grant_id: Option<&'a str>,
+    rotation_id: Option<&'a str>,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn audit_managed<T>(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    operation: &'static str,
-    slot: Option<u8>,
-    serial: &str,
-    grant_id: Option<&str>,
-    rotation_id: Option<&str>,
-    result: &std::result::Result<T, Status>,
-) {
-    let (outcome, code) = match result {
-        Ok(_) => ("success", None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => ("denied", Some(status)),
-        Err(status) => ("error", Some(status)),
-    };
-    tracing::info!(
-        target: "sigil::audit",
-        caller_os_user = %caller.os_user,
-        session_id = ?caller.session_id,
-        pid = caller.pid,
-        rpc,
-        device_id,
-        operation,
-        piv_slot = slot.unwrap_or_default(),
-        serial,
-        grant_id = grant_id.unwrap_or_default(),
-        rotation_id = rotation_id.unwrap_or_default(),
-        outcome,
-        code = %sigil_proto::audit_error_code(code)
-    );
-}
+impl PivAudit<'_> {
+    fn record<T>(self, result: &std::result::Result<T, Status>) {
+        let (outcome, code) = match result {
+            Ok(_) => ("success", None),
+            Err(status) if status.code() == tonic::Code::PermissionDenied => {
+                ("denied", Some(status))
+            }
+            Err(status) => ("error", Some(status)),
+        };
+        tracing::info!(
+            target: "sigil::audit",
+            caller_os_user = %self.caller.os_user,
+            session_id = ?self.caller.session_id,
+            pid = self.caller.pid,
+            rpc = self.rpc,
+            device_id = self.device_id,
+            operation = self.operation,
+            piv_slot = self.slot.unwrap_or_default(),
+            serial = self.serial,
+            grant_id = self.grant_id.unwrap_or_default(),
+            rotation_id = self.rotation_id.unwrap_or_default(),
+            outcome,
+            code = %sigil_proto::audit_error_code(code)
+        );
+    }
 
-fn audit_managed_call<T>(
-    call: ManagedCall<'_>,
-    grant_id: Option<&str>,
-    rotation_id: Option<&str>,
-    result: &std::result::Result<T, Status>,
-) {
-    audit_managed(
-        call.caller,
-        call.rpc,
-        call.device_id,
-        call.operation_name,
-        call.slot,
-        call.serial,
-        grant_id,
-        rotation_id,
-        result,
-    );
-}
+    fn record_error(self, error: CredentialError) -> Status {
+        let status = status_from_error(&error);
+        self.record::<()>(&Err(status.clone()));
+        status
+    }
 
-#[allow(clippy::too_many_arguments)]
-fn audit_rotation_unknown(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    operation: &'static str,
-    serial: &str,
-    grant_id: Option<&str>,
-    rotation_id: &str,
-) {
-    tracing::error!(
-        target: "sigil::audit",
-        caller_os_user = %caller.os_user,
-        session_id = ?caller.session_id,
-        pid = caller.pid,
-        rpc,
-        device_id,
-        operation,
-        serial,
-        grant_id = grant_id.unwrap_or_default(),
-        rotation_id,
-        outcome = "rotation_outcome_unknown",
-        code = "rotation_outcome_unknown"
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn audit_piv_error(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    operation: &'static str,
-    slot: Option<u8>,
-    serial: &str,
-    grant_id: Option<&str>,
-    error: CredentialError,
-) -> Status {
-    let status = status_from_error(&error);
-    audit_piv::<()>(
-        caller,
-        rpc,
-        device_id,
-        operation,
-        slot,
-        serial,
-        grant_id,
-        &Err(status.clone()),
-    );
-    status
+    fn record_rotation_unknown(self) {
+        tracing::error!(
+            target: "sigil::audit",
+            caller_os_user = %self.caller.os_user,
+            session_id = ?self.caller.session_id,
+            pid = self.caller.pid,
+            rpc = self.rpc,
+            device_id = self.device_id,
+            operation = self.operation,
+            serial = self.serial,
+            grant_id = self.grant_id.unwrap_or_default(),
+            rotation_id = self.rotation_id.unwrap_or_default(),
+            outcome = "rotation_outcome_unknown",
+            code = "rotation_outcome_unknown"
+        );
+    }
 }
 
 fn audit_device<T>(
@@ -3235,28 +3169,6 @@ fn audit_device_error(
         &Err(status.clone()),
     );
     status
-}
-
-fn applications_from_proto(values: Vec<i32>) -> CoreResult<Vec<Application>> {
-    values
-        .into_iter()
-        .map(|value| {
-            match v1::Application::try_from(value).map_err(|_| {
-                CredentialError::SmartCardOperation("invalid application value".into())
-            })? {
-                v1::Application::Piv => Ok(Application::Piv),
-                v1::Application::Fido2 => Ok(Application::Fido2),
-                v1::Application::U2f => Ok(Application::U2f),
-                v1::Application::Otp => Ok(Application::Otp),
-                v1::Application::OpenPgp => Ok(Application::OpenPgp),
-                v1::Application::Oath => Ok(Application::Oath),
-                v1::Application::YubiHsmAuth => Ok(Application::YubiHsmAuth),
-                v1::Application::Unspecified => Err(CredentialError::SmartCardOperation(
-                    "unspecified application value".into(),
-                )),
-            }
-        })
-        .collect()
 }
 
 fn piv_slot(slot_byte: u32) -> CoreResult<PivSlot> {
@@ -3361,17 +3273,17 @@ mod audit_tests {
         };
         let result: std::result::Result<(), Status> = Ok(());
         tracing::dispatcher::with_default(&subscriber, || {
-            audit_managed(
-                &caller,
-                "InitializeManagedPiv",
-                "mock-device",
-                "PIV_MANAGED_INITIALIZE",
-                None,
-                "12345678",
-                Some("grant-id"),
-                Some("rotation-id"),
-                &result,
-            );
+            PivAudit {
+                caller: &caller,
+                rpc: "InitializeManagedPiv",
+                device_id: "mock-device",
+                operation: "PIV_MANAGED_INITIALIZE",
+                slot: None,
+                serial: "12345678",
+                grant_id: Some("grant-id"),
+                rotation_id: Some("rotation-id"),
+            }
+            .record(&result);
         });
         let events = outbox.batch(1).expect("read managed audit event");
         assert_eq!(events.len(), 1);
@@ -3413,37 +3325,39 @@ mod audit_tests {
             Err(Status::failed_precondition("plain failure"));
         let success: std::result::Result<(), Status> = Ok(());
         tracing::dispatcher::with_default(&subscriber, || {
-            audit_piv(
-                &caller,
-                "ChangePivPin",
-                "mock-device",
-                "PIV_CHANGE_PIN",
-                None,
-                "12345678",
-                None,
-                &complexity,
-            );
-            audit_managed(
-                &caller,
-                "GeneratePivKey",
-                "mock-device",
-                "PIV_GENERATE_KEY",
-                None,
-                "12345678",
-                None,
-                None,
-                &generic,
-            );
-            audit_piv(
-                &caller,
-                "ChangePivPin",
-                "mock-device",
-                "PIV_CHANGE_PIN",
-                None,
-                "12345678",
-                None,
-                &success,
-            );
+            PivAudit {
+                caller: &caller,
+                rpc: "ChangePivPin",
+                device_id: "mock-device",
+                operation: "PIV_CHANGE_PIN",
+                slot: None,
+                serial: "12345678",
+                grant_id: None,
+                rotation_id: None,
+            }
+            .record(&complexity);
+            PivAudit {
+                caller: &caller,
+                rpc: "GeneratePivKey",
+                device_id: "mock-device",
+                operation: "PIV_GENERATE_KEY",
+                slot: None,
+                serial: "12345678",
+                grant_id: None,
+                rotation_id: None,
+            }
+            .record(&generic);
+            PivAudit {
+                caller: &caller,
+                rpc: "ChangePivPin",
+                device_id: "mock-device",
+                operation: "PIV_CHANGE_PIN",
+                slot: None,
+                serial: "12345678",
+                grant_id: None,
+                rotation_id: None,
+            }
+            .record(&success);
         });
         let codes: Vec<String> = outbox
             .batch(3)
