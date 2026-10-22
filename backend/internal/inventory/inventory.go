@@ -91,12 +91,7 @@ func (r *Repository) Report(ctx context.Context, stationID string, tokens []*bac
 	if err != nil {
 		return fmt.Errorf("begin token inventory report: %w", err)
 	}
-	commit := false
-	defer func() {
-		if !commit {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 	for _, token := range normalized {
 		if err := db.InsertObservedToken(ctx, tx, stationID, token); err != nil {
 			return err
@@ -134,6 +129,5 @@ func (r *Repository) Report(ctx context.Context, stationID string, tokens []*bac
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit token inventory report: %w", err)
 	}
-	commit = true
 	return nil
 }
