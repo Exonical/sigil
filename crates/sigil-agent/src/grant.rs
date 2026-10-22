@@ -212,7 +212,19 @@ impl GrantProvider for DevSigner {
         caller: &crate::caller::CallerIdentity,
         request: &GrantRequest,
     ) -> Result<SignedGrant> {
-        tracing::warn!(target: "sigil::audit", grant_key_id = %self.key_id, "DEVELOPMENT grant signer used");
+        crate::audit::emit(&crate::audit::AuditRecord {
+            rpc: "AgentEvent",
+            operation: "",
+            device_id: "",
+            token_serial: "",
+            piv_slot: None,
+            caller: None,
+            outcome: crate::audit::AuditOutcome::Error,
+            code: "",
+            grant_id: "",
+            rotation_id: "",
+        });
+        tracing::warn!(target: "sigil::agent", grant_key_id = %self.key_id, "DEVELOPMENT grant signer used");
         let now = now_unix();
         let grant = OperationGrant {
             version: 1,
