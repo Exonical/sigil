@@ -409,8 +409,16 @@ impl<S: Subscriber> Layer<S> for AuditOutboxLayer {
             grant_id: field_string(&fields, "grant_id"),
             rotation_id: field_string(&fields, "rotation_id"),
         };
-        if self.outbox.enqueue(event).is_err() {
-            tracing::warn!(target: "sigil::agent", "could not persist agent audit event");
+        let rpc = event.rpc.clone();
+        let operation = event.operation.clone();
+        if let Err(error) = self.outbox.enqueue(event) {
+            tracing::warn!(
+                target: "sigil::agent",
+                error = %format_args!("{error:#}"),
+                rpc = %rpc,
+                operation = %operation,
+                "could not persist agent audit event"
+            );
         }
     }
 }
