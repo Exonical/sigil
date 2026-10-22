@@ -201,13 +201,18 @@ fn set_management_key_command(new_key: &ManagementKey) -> Result<Vec<u8>> {
     let template = sigil_piv::tlv::encode(0x7f4a, &fields)?;
     let mut data = sigil_piv::tlv::encode(0x5c, &[0xff, 0x84, 0x0b])?;
     data.extend_from_slice(&template);
+    put_data_command(&data, "management-key")
+}
+
+/// Frames a Thales PUT DATA (`00 DB 3F FF Lc <data> 00`) as captured in SAC.
+fn put_data_command(data: &[u8], what: &str) -> Result<Vec<u8>> {
     if data.len() > u8::MAX as usize {
-        return Err(CredentialError::SmartCardOperation(
-            "Thales management-key APDU exceeds short Lc".into(),
-        ));
+        return Err(CredentialError::SmartCardOperation(format!(
+            "Thales {what} APDU exceeds short Lc"
+        )));
     }
     let mut command = vec![0x00, 0xdb, 0x3f, 0xff, data.len() as u8];
-    command.extend_from_slice(&data);
+    command.extend_from_slice(data);
     command.push(0x00);
     Ok(command)
 }
@@ -290,14 +295,7 @@ fn put_key_parameter(
     let object = [0xff, 0x90, object_id];
     let mut data = sigil_piv::tlv::encode(0x5c, &object)?;
     data.extend_from_slice(&template);
-    if data.len() > u8::MAX as usize {
-        return Err(CredentialError::SmartCardOperation(
-            "Thales key parameter APDU exceeds short Lc".into(),
-        ));
-    }
-    let mut command = vec![0x00, 0xdb, 0x3f, 0xff, data.len() as u8];
-    command.extend_from_slice(&data);
-    command.push(0x00);
+    let command = put_data_command(&data, "key parameter")?;
     let (_, sw) = sigil_piv::transceive(transport, &command)?;
     if sw == 0x9000 {
         Ok(())
@@ -644,5 +642,20 @@ mod tests {
             Err(CredentialError::CardStatus(0x6a80))
         );
         assert!(transport.0.is_empty());
+    }
+
+    #[test]
+    fn put_data_command_frames_short_apdu_and_rejects_oversized_data() {
+        assert_eq!(
+            put_data_command(&[0x5c, 0x01, 0x02], "test").unwrap(),
+            bytes("00DB3FFF035C010200")
+        );
+        assert_eq!(put_data_command(&[0; 255], "test").unwrap().len(), 261);
+        assert_eq!(
+            put_data_command(&[0; 256], "key parameter"),
+            Err(CredentialError::SmartCardOperation(
+                "Thales key parameter APDU exceeds short Lc".into()
+            ))
+        );
     }
 }
