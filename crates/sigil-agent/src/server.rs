@@ -4,8 +4,8 @@ use futures_util::Stream;
 use sigil_app::CredentialService;
 use sigil_core::{
     CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
-    ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk,
-    PivSlot, Result as CoreResult, Secret, TouchPolicy,
+    ManagementKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, Result as CoreResult,
+    Secret,
 };
 use sigil_proto::{status_from_error, v1};
 use tokio::{sync::mpsc, task};
@@ -818,11 +818,14 @@ impl AgentService {
         let expected_serial = serial
             .parse::<u64>()
             .map_err(|_| Status::failed_precondition("the token serial is not numeric"))?;
-        let expected_pin = pin_policy(enrollment::pin_policy_name(&profile.pin_policy)? as i32)
-            .map_err(|error| status_from_error(&error))?;
-        let expected_touch =
-            touch_policy(enrollment::touch_policy_name(&profile.touch_policy)? as i32)
-                .map_err(|error| status_from_error(&error))?;
+        let expected_pin = sigil_proto::pin_policy_from_proto(enrollment::pin_policy_name(
+            &profile.pin_policy,
+        )? as i32)
+        .map_err(|error| status_from_error(&error))?;
+        let expected_touch = sigil_proto::touch_policy_from_proto(enrollment::touch_policy_name(
+            &profile.touch_policy,
+        )? as i32)
+        .map_err(|error| status_from_error(&error))?;
         let expected_slot = piv_slot(slot_byte).map_err(|error| status_from_error(&error))?;
         sigil_yubikey::attestation::check_expected(
             &attestation.inspection,
@@ -1749,38 +1752,40 @@ impl v1::agent_server::Agent for AgentService {
                 )
                 .await;
         }
-        let current_algorithm = match management_key_algorithm(input.current_algorithm) {
-            Ok(algorithm) => algorithm,
-            Err(error) => {
-                return Err(PivAudit {
-                    caller: &caller,
-                    rpc: "ChangePivManagementKey",
-                    device_id: &device_id,
-                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
-                    slot: None,
-                    serial: &serial_hint,
-                    grant_id: None,
-                    rotation_id: None,
+        let current_algorithm =
+            match sigil_proto::management_key_algorithm_from_proto(input.current_algorithm) {
+                Ok(algorithm) => algorithm,
+                Err(error) => {
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "ChangePivManagementKey",
+                        device_id: &device_id,
+                        operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                        slot: None,
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
-                .record_error(error));
-            }
-        };
-        let new_algorithm = match management_key_algorithm(input.new_algorithm) {
-            Ok(algorithm) => algorithm,
-            Err(error) => {
-                return Err(PivAudit {
-                    caller: &caller,
-                    rpc: "ChangePivManagementKey",
-                    device_id: &device_id,
-                    operation: "PIV_CHANGE_MANAGEMENT_KEY",
-                    slot: None,
-                    serial: &serial_hint,
-                    grant_id: None,
-                    rotation_id: None,
+            };
+        let new_algorithm =
+            match sigil_proto::management_key_algorithm_from_proto(input.new_algorithm) {
+                Ok(algorithm) => algorithm,
+                Err(error) => {
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "ChangePivManagementKey",
+                        device_id: &device_id,
+                        operation: "PIV_CHANGE_MANAGEMENT_KEY",
+                        slot: None,
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
-                .record_error(error));
-            }
-        };
+            };
         let current = match ManagementKey::new(
             current_algorithm,
             std::mem::take(&mut input.current_management_key),
@@ -1950,23 +1955,24 @@ impl v1::agent_server::Agent for AgentService {
                 .record_error(error));
             }
         };
-        let key_algorithm = match piv_key_algorithm(input.algorithm) {
-            Ok(algorithm) => algorithm,
-            Err(error) => {
-                return Err(PivAudit {
-                    caller: &caller,
-                    rpc: "GeneratePivKey",
-                    device_id: &device_id,
-                    operation: "PIV_GENERATE_KEY",
-                    slot: Some(slot.byte()),
-                    serial: &serial_hint,
-                    grant_id: None,
-                    rotation_id: None,
+        let key_algorithm =
+            match sigil_proto::piv_key_generation_algorithm_from_proto(input.algorithm) {
+                Ok(algorithm) => algorithm,
+                Err(error) => {
+                    return Err(PivAudit {
+                        caller: &caller,
+                        rpc: "GeneratePivKey",
+                        device_id: &device_id,
+                        operation: "PIV_GENERATE_KEY",
+                        slot: Some(slot.byte()),
+                        serial: &serial_hint,
+                        grant_id: None,
+                        rotation_id: None,
+                    }
+                    .record_error(error));
                 }
-                .record_error(error));
-            }
-        };
-        let pin_policy = match pin_policy(input.pin_policy) {
+            };
+        let pin_policy = match sigil_proto::pin_policy_from_proto(input.pin_policy) {
             Ok(policy) => policy,
             Err(error) => {
                 return Err(PivAudit {
@@ -1982,7 +1988,7 @@ impl v1::agent_server::Agent for AgentService {
                 .record_error(error));
             }
         };
-        let touch_policy = match touch_policy(input.touch_policy) {
+        let touch_policy = match sigil_proto::touch_policy_from_proto(input.touch_policy) {
             Ok(policy) => policy,
             Err(error) => {
                 return Err(PivAudit {
@@ -2076,7 +2082,9 @@ impl v1::agent_server::Agent for AgentService {
                 )
                 .await;
         }
-        let management_algorithm = match management_key_algorithm(input.management_key_algorithm) {
+        let management_algorithm = match sigil_proto::management_key_algorithm_from_proto(
+            input.management_key_algorithm,
+        ) {
             Ok(algorithm) => algorithm,
             Err(error) => {
                 return Err(PivAudit {
@@ -2399,7 +2407,9 @@ impl v1::agent_server::Agent for AgentService {
                 )
                 .await;
         }
-        let algorithm = match management_key_algorithm(input.management_key_algorithm) {
+        let algorithm = match sigil_proto::management_key_algorithm_from_proto(
+            input.management_key_algorithm,
+        ) {
             Ok(algorithm) => algorithm,
             Err(error) => {
                 return Err(PivAudit {
@@ -2564,7 +2574,9 @@ impl v1::agent_server::Agent for AgentService {
                 )
                 .await;
         }
-        let algorithm = match management_key_algorithm(input.management_key_algorithm) {
+        let algorithm = match sigil_proto::management_key_algorithm_from_proto(
+            input.management_key_algorithm,
+        ) {
             Ok(algorithm) => algorithm,
             Err(error) => {
                 return Err(PivAudit {
@@ -2721,7 +2733,9 @@ impl v1::agent_server::Agent for AgentService {
                 )
                 .await;
         }
-        let algorithm = match management_key_algorithm(input.management_key_algorithm) {
+        let algorithm = match sigil_proto::management_key_algorithm_from_proto(
+            input.management_key_algorithm,
+        ) {
             Ok(algorithm) => algorithm,
             Err(error) => {
                 return Err(PivAudit {
@@ -3176,61 +3190,6 @@ fn piv_slot(slot_byte: u32) -> CoreResult<PivSlot> {
         u8::try_from(slot_byte).map_err(|_| CredentialError::InvalidSlot(slot_byte.to_string()))?;
     PivSlot::from_byte(slot_byte)
         .ok_or_else(|| CredentialError::InvalidSlot(format!("{slot_byte:02x}")))
-}
-
-fn management_key_algorithm(value: i32) -> CoreResult<ManagementKeyAlgorithm> {
-    match v1::ManagementKeyAlgorithm::try_from(value)
-        .map_err(|_| CredentialError::InvalidSlot(value.to_string()))?
-    {
-        v1::ManagementKeyAlgorithm::Aes128 => Ok(ManagementKeyAlgorithm::Aes128),
-        v1::ManagementKeyAlgorithm::Aes192 => Ok(ManagementKeyAlgorithm::Aes192),
-        v1::ManagementKeyAlgorithm::Aes256 => Ok(ManagementKeyAlgorithm::Aes256),
-        v1::ManagementKeyAlgorithm::Unspecified => Err(CredentialError::UnsupportedOperation(
-            "management key algorithm is required".into(),
-        )),
-    }
-}
-
-fn piv_key_algorithm(value: i32) -> CoreResult<PivKeyAlgorithm> {
-    match v1::PivKeyGenerationAlgorithm::try_from(value)
-        .map_err(|_| CredentialError::UnsupportedOperation("unknown PIV key algorithm".into()))?
-    {
-        v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP256 => Ok(PivKeyAlgorithm::EccP256),
-        v1::PivKeyGenerationAlgorithm::PivKeyGenerationEccP384 => Ok(PivKeyAlgorithm::EccP384),
-        v1::PivKeyGenerationAlgorithm::Unspecified => Err(CredentialError::UnsupportedOperation(
-            "PIV key algorithm is required".into(),
-        )),
-    }
-}
-
-fn pin_policy(value: i32) -> CoreResult<PinPolicy> {
-    match v1::PinPolicy::try_from(value)
-        .map_err(|_| CredentialError::UnsupportedOperation("unknown PIV PIN policy".into()))?
-    {
-        v1::PinPolicy::Default => Ok(PinPolicy::Default),
-        v1::PinPolicy::Never => Ok(PinPolicy::Never),
-        v1::PinPolicy::Once => Ok(PinPolicy::Once),
-        v1::PinPolicy::Always => Ok(PinPolicy::Always),
-        v1::PinPolicy::MatchOnce => Ok(PinPolicy::MatchOnce),
-        v1::PinPolicy::MatchAlways => Ok(PinPolicy::MatchAlways),
-        v1::PinPolicy::Unspecified => Err(CredentialError::UnsupportedOperation(
-            "PIV PIN policy is required".into(),
-        )),
-    }
-}
-
-fn touch_policy(value: i32) -> CoreResult<TouchPolicy> {
-    match v1::TouchPolicy::try_from(value)
-        .map_err(|_| CredentialError::UnsupportedOperation("unknown PIV touch policy".into()))?
-    {
-        v1::TouchPolicy::Default => Ok(TouchPolicy::Default),
-        v1::TouchPolicy::Never => Ok(TouchPolicy::Never),
-        v1::TouchPolicy::Always => Ok(TouchPolicy::Always),
-        v1::TouchPolicy::Cached => Ok(TouchPolicy::Cached),
-        v1::TouchPolicy::Unspecified => Err(CredentialError::UnsupportedOperation(
-            "PIV touch policy is required".into(),
-        )),
-    }
 }
 
 fn attestation_response(attestation: sigil_core::PivAttestation) -> v1::AttestPivKeyResponse {
