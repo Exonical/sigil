@@ -1,6 +1,6 @@
 use crate::state::SetLive;
 use dioxus::prelude::*;
-use sigil_core::{DeviceInfo, KeyStatus, PivSlot, PivSlotInfo};
+use sigil_core::{DeviceInfo, KeyStatus, PivInfo, PivSlot, PivSlotInfo};
 
 use crate::{
     icons::Icon,
@@ -71,20 +71,9 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
         .read()
         .unwrap_or(PivSlot::AUTHENTICATION);
     let slots = visible_slots(&current_slots);
-    let fips_defaults = device.fips == Some(true)
-        && current_info.as_ref().is_some_and(|info| {
-            info.pin
-                .as_ref()
-                .is_some_and(|status| status.default_value == Some(true))
-                || info
-                    .puk
-                    .as_ref()
-                    .is_some_and(|status| status.default_value == Some(true))
-                || info
-                    .management_key
-                    .as_ref()
-                    .is_some_and(|status| status.default_value == Some(true))
-        });
+    let defaults = current_info.as_ref().map(DefaultSecrets::of);
+    let fips_defaults =
+        device.fips == Some(true) && defaults.is_some_and(|defaults| defaults.any());
 
     let managed_ready = managed::ready(&state);
     let factory_initialize_supported = device
@@ -93,23 +82,14 @@ pub fn CertificatesPage(device: Option<DeviceInfo>) -> Element {
     let managed_enrollment_supported = device
         .piv_capabilities
         .is_some_and(|capabilities| capabilities.attestation);
-    let secrets_default = current_info.as_ref().is_some_and(|info| {
-        info.puk
-            .as_ref()
-            .is_some_and(|status| status.default_value == Some(true))
-            || info
-                .management_key
-                .as_ref()
-                .is_some_and(|status| status.default_value == Some(true))
-    });
+    let secrets_default = defaults.is_some_and(|defaults| defaults.system_secrets());
     let (banner_label, banner_action) = match (managed_ready, secrets_default) {
         (false, _) => ("Set up FIPS", DialogKind::SetupFips),
         (true, true) if factory_initialize_supported => (
             "Set up managed PIV",
             DialogKind::Managed(ManagedAction::Initialize),
         ),
-        (true, true) => ("Change PIN", DialogKind::Piv(PivAction::ChangePin)),
-        (true, false) => ("Change PIN", DialogKind::Piv(PivAction::ChangePin)),
+        (true, _) => ("Change PIN", DialogKind::Piv(PivAction::ChangePin)),
     };
 
     rsx! {
@@ -196,6 +176,40 @@ fn SlotRow(slot_info: PivSlotInfo, selected: bool, onclick: EventHandler<MouseEv
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DefaultSecrets {
+    pin: bool,
+    puk: bool,
+    management_key: bool,
+}
+
+impl DefaultSecrets {
+    fn of(info: &PivInfo) -> Self {
+        Self {
+            pin: is_default(info.pin.as_ref().and_then(|status| status.default_value)),
+            puk: is_default(info.puk.as_ref().and_then(|status| status.default_value)),
+            management_key: is_default(
+                info.management_key
+                    .as_ref()
+                    .and_then(|status| status.default_value),
+            ),
+        }
+    }
+
+    fn any(self) -> bool {
+        self.pin || self.system_secrets()
+    }
+
+    /// The secrets managed PIV randomizes: PUK and management key.
+    fn system_secrets(self) -> bool {
+        self.puk || self.management_key
+    }
+}
+
+fn is_default(default_value: Option<bool>) -> bool {
+    default_value == Some(true)
+}
+
 fn visible_slots(slots: &[PivSlotInfo]) -> Vec<PivSlotInfo> {
     let mut visible = PivSlot::STANDARD
         .iter()
@@ -221,4 +235,62 @@ fn visible_slots(slots: &[PivSlotInfo]) -> Vec<PivSlotInfo> {
             .cloned(),
     );
     visible
+}
+
+#[cfg(test)]
+mod tests {
+    use sigil_core::{ManagementKeyStatus, PivAlgorithm, PivInfo, RetryStatus};
+
+    use super::DefaultSecrets;
+
+    fn retry(default_value: Option<bool>) -> RetryStatus {
+        RetryStatus {
+            remaining: 3,
+            total: Some(3),
+            default_value,
+        }
+    }
+
+    fn info(
+        pin: Option<Option<bool>>,
+        puk: Option<Option<bool>>,
+        management_key: Option<Option<bool>>,
+    ) -> PivInfo {
+        PivInfo {
+            version: None,
+            pin: pin.map(retry),
+            puk: puk.map(retry),
+            management_key: management_key.map(|default_value| ManagementKeyStatus {
+                algorithm: PivAlgorithm::Aes256,
+                default_value,
+                touch_policy: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn only_known_defaults_count() {
+        let defaults = DefaultSecrets::of(&info(None, Some(None), Some(Some(false))));
+        assert!(!defaults.any());
+        assert!(!defaults.system_secrets());
+    }
+
+    #[test]
+    fn default_pin_is_not_a_system_secret() {
+        let defaults = DefaultSecrets::of(&info(Some(Some(true)), Some(Some(false)), None));
+        assert!(defaults.any());
+        assert!(!defaults.system_secrets());
+    }
+
+    #[test]
+    fn default_puk_or_management_key_is_a_system_secret() {
+        for info in [
+            info(Some(Some(false)), Some(Some(true)), Some(Some(false))),
+            info(Some(Some(false)), Some(Some(false)), Some(Some(true))),
+        ] {
+            let defaults = DefaultSecrets::of(&info);
+            assert!(defaults.any());
+            assert!(defaults.system_secrets());
+        }
+    }
 }
