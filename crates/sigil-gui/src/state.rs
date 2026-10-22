@@ -80,6 +80,8 @@ pub enum DialogKind {
 pub struct AppState {
     pub credentials: CredentialService,
     pub mode: ConnectionMode,
+    /// Where the connected agent writes its log, if it reported one.
+    pub agent_log_location: Option<String>,
     pub auth_config: crate::auth::AuthConfig,
     pub auth: SyncSignal<crate::auth::AuthStatus>,
     pub session: SyncSignal<Option<std::sync::Arc<sigil_auth::Session>>>,

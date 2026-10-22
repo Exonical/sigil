@@ -68,6 +68,7 @@ fn ConnectedApp() -> Element {
     let state = AppState {
         credentials: connection.credentials.clone(),
         mode: connection.mode.clone(),
+        agent_log_location: connection.agent_log_location.clone(),
         auth_config,
         auth: use_signal_sync(|| crate::auth::AuthStatus::Checking),
         session: use_signal_sync(|| None::<std::sync::Arc<sigil_auth::Session>>),

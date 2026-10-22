@@ -90,6 +90,7 @@ pub struct AgentService {
     backend: Option<Arc<dyn ManagedAuthority>>,
     audit_outbox: Option<Arc<AuditOutbox>>,
     issuing_cas: Vec<Vec<u8>>,
+    log_location: String,
 }
 
 impl AgentService {
@@ -103,6 +104,7 @@ impl AgentService {
             backend: None,
             audit_outbox: None,
             issuing_cas: Vec::new(),
+            log_location: String::new(),
         }
     }
 
@@ -133,6 +135,12 @@ impl AgentService {
 
     pub fn with_policy(mut self, policy: CallerPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Sets where this agent writes its diagnostic log, as reported by `GetAgentInfo`.
+    pub fn with_log_location(mut self, log_location: impl Into<String>) -> Self {
+        self.log_location = log_location.into();
         self
     }
 
@@ -919,6 +927,7 @@ impl v1::agent_server::Agent for AgentService {
                 session_id: caller.session_id,
                 pid: caller.pid,
             }),
+            log_location: self.log_location.clone(),
         };
         audit_static(&caller, "GetAgentInfo", "", true, None);
         Ok(Response::new(response))
