@@ -11,12 +11,9 @@ use p256::ecdsa::Signature;
 use p256::ecdsa::SigningKey;
 #[cfg(feature = "dev-grants")]
 use p256::ecdsa::signature::Signer;
+use p256::ecdsa::{VerifyingKey, signature::Verifier};
 #[cfg(feature = "dev-grants")]
 use p256::pkcs8::DecodePrivateKey;
-use p256::{
-    ecdsa::{VerifyingKey, signature::Verifier},
-    pkcs8::DecodePublicKey,
-};
 use prost::Message;
 use sigil_core::{CredentialError, Result};
 use sigil_proto::v1::{Operation, OperationGrant, SignedGrant};
@@ -51,27 +48,6 @@ impl GrantVerifier {
             trusted_keys,
             used_grants: Arc::new(Mutex::new(ReplaySet::default())),
         }
-    }
-
-    pub fn from_pem_paths(
-        keys: impl IntoIterator<Item = (String, std::path::PathBuf)>,
-    ) -> GrantResult<Self> {
-        let mut trusted = HashMap::new();
-        for (key_id, path) in keys {
-            let pem = std::fs::read_to_string(&path).map_err(|error| {
-                CredentialError::OperationUnauthorized(format!(
-                    "could not read trusted grant key {}: {error}",
-                    path.display()
-                ))
-            })?;
-            let key = VerifyingKey::from_public_key_pem(&pem).map_err(|error| {
-                CredentialError::OperationUnauthorized(format!(
-                    "invalid trusted grant key {key_id}: {error}"
-                ))
-            })?;
-            trusted.insert(key_id, key);
-        }
-        Ok(Self::new(trusted))
     }
 
     pub fn verify(
@@ -268,6 +244,7 @@ impl GrantProvider for DevSigner {
 mod tests {
     use super::*;
     use p256::ecdsa::signature::Signer;
+    use p256::pkcs8::DecodePublicKey;
     use serde::Deserialize;
     use sigil_proto::v1::Operation;
 
