@@ -15,7 +15,7 @@ use crate::{
     state::{AppState, PivAction},
 };
 
-use super::managed_dialog::pin_length_hint;
+use super::managed_dialog::{pin_length_check, pin_length_hint};
 
 const DEFAULT_PIN: &[u8] = b"123456";
 const DEFAULT_PUK: &[u8] = b"12345678";
@@ -362,9 +362,9 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             return None;
         }
         if needs_current_pin {
-            validate_code(current.read().as_str(), "PIN", false).err()
+            pin_length_check(current.read().as_str(), "PIN", false).err()
         } else if needs_current_puk {
-            validate_code(current.read().as_str(), "PUK", false).err()
+            pin_length_check(current.read().as_str(), "PUK", false).err()
         } else if needs_management_key {
             parse_hex(current.read().as_str()).err()
         } else {
@@ -630,19 +630,19 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
         Err(message) => generated_error.set(Some(message)),
     });
     let current_pin_error = (!pin_default)
-        .then(|| validate_code(current_pin.read().as_str(), "PIN", false).err())
+        .then(|| pin_length_check(current_pin.read().as_str(), "PIN", false).err())
         .flatten();
     let current_puk_error = (!puk_default)
-        .then(|| validate_code(current_puk.read().as_str(), "PUK", false).err())
+        .then(|| pin_length_check(current_puk.read().as_str(), "PUK", false).err())
         .flatten();
     let current_management_key_error = (!management_key_default)
         .then(|| {
             current_management_key(info.as_ref(), current_management_input.read().as_str()).err()
         })
         .flatten();
-    let valid = validate_code(pin.read().as_str(), "PIN", true).is_ok()
+    let valid = pin_length_check(pin.read().as_str(), "PIN", true).is_ok()
         && pin.read().as_str() == pin_confirmation.read().as_str()
-        && validate_code(puk.read().as_str(), "PUK", true).is_ok()
+        && pin_length_check(puk.read().as_str(), "PUK", true).is_ok()
         && puk.read().as_str() == puk_confirmation.read().as_str()
         && (pin_default || current_pin_error.is_none())
         && (puk_default || current_puk_error.is_none())
@@ -1027,27 +1027,11 @@ fn current_puk(info: Option<&sigil_core::PivInfo>, entered: &str) -> Result<PivP
     make_puk(entered, false)
 }
 
-fn validate_code(value: &str, kind: &str, fips: bool) -> Result<(), String> {
-    let characters = value.chars().count();
-    if fips && characters != 8 {
-        return Err(format!("This FIPS key requires an 8-character {kind}."));
-    }
-    if !(6..=8).contains(&characters) {
-        return Err(format!(
-            "{kind} must be 6–8 characters; you entered {characters}"
-        ));
-    }
-    if !value.is_ascii() {
-        return Err(format!("{kind} must use ASCII characters."));
-    }
-    Ok(())
-}
-
 fn code_validation(value: &str, confirmation: &str, kind: &str, fips: bool) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    if let Err(message) = validate_code(value, kind, fips) {
+    if let Err(message) = pin_length_check(value, kind, fips) {
         return Some(message);
     }
     if !confirmation.is_empty() && value != confirmation {
@@ -1057,12 +1041,12 @@ fn code_validation(value: &str, confirmation: &str, kind: &str, fips: bool) -> O
 }
 
 fn make_pin(value: &str, fips: bool) -> Result<PivPin, String> {
-    validate_code(value, "PIN", fips)?;
+    pin_length_check(value, "PIN", fips)?;
     PivPin::new(value.as_bytes().to_vec()).map_err(|error| error.to_string())
 }
 
 fn make_puk(value: &str, fips: bool) -> Result<PivPuk, String> {
-    validate_code(value, "PUK", fips)?;
+    pin_length_check(value, "PUK", fips)?;
     PivPuk::new(value.as_bytes().to_vec()).map_err(|error| error.to_string())
 }
 
@@ -1243,7 +1227,7 @@ impl PivForm {
         if *self.new_secret != *self.confirmation {
             return Err(mismatch.into());
         }
-        validate_code(&self.new_secret, kind, self.fips)
+        pin_length_check(&self.new_secret, kind, self.fips)
     }
 
     fn certificate_file(&self) -> Result<PathBuf, String> {
