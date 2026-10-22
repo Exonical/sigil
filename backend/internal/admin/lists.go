@@ -33,7 +33,7 @@ func (s *Service) ListCertificates(ctx context.Context, req *connect.Request[adm
 		LIMIT $5 OFFSET $6
 	`, req.Msg.Status, req.Msg.ExpiringBeforeUnix, req.Msg.Profile, req.Msg.TokenSerial, limit, offset)
 	if err != nil {
-		return nil, internal("could not list certificates", err)
+		return nil, internal(ctx, "could not list certificates", err)
 	}
 	defer rows.Close()
 	response := &adminv1.ListCertificatesResponse{}
@@ -42,13 +42,13 @@ func (s *Service) ListCertificates(ctx context.Context, req *connect.Request[adm
 		var total int64
 		if err := rows.Scan(&c.Id, &c.TokenSerial, &c.Slot, &c.Profile, &c.UserDisplay, &c.SerialNumber, &c.Subject,
 			&c.NotBeforeUnix, &c.NotAfterUnix, &c.Status, &c.RevokedAtUnix, &c.RevocationReason, &total); err != nil {
-			return nil, internal("could not read certificates", err)
+			return nil, internal(ctx, "could not read certificates", err)
 		}
 		response.Certificates = append(response.Certificates, &c)
 		response.Total = total
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read certificates", err)
+		return nil, internal(ctx, "could not read certificates", err)
 	}
 	if err := s.attachAttestations(ctx, response.Certificates); err != nil {
 		return nil, err
@@ -61,19 +61,19 @@ func (s *Service) ListStations(ctx context.Context, _ *connect.Request[adminv1.E
 	logRead(ctx, "ListStations", nil)
 	rows, err := s.store.Pool.Query(ctx, `SELECT id, dns_name, display_name, mode, status FROM stations ORDER BY dns_name`)
 	if err != nil {
-		return nil, internal("could not list stations", err)
+		return nil, internal(ctx, "could not list stations", err)
 	}
 	defer rows.Close()
 	response := &adminv1.ListStationsResponse{}
 	for rows.Next() {
 		var station adminv1.StationSummary
 		if err := rows.Scan(&station.Id, &station.DnsName, &station.DisplayName, &station.Mode, &station.Status); err != nil {
-			return nil, internal("could not read stations", err)
+			return nil, internal(ctx, "could not read stations", err)
 		}
 		response.Stations = append(response.Stations, &station)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read stations", err)
+		return nil, internal(ctx, "could not read stations", err)
 	}
 	return connect.NewResponse(response), nil
 }
@@ -99,7 +99,7 @@ func (s *Service) ListUsers(ctx context.Context, req *connect.Request[adminv1.Li
 		LIMIT $2 OFFSET $3
 	`, pattern, limit, offset)
 	if err != nil {
-		return nil, internal("could not list users", err)
+		return nil, internal(ctx, "could not list users", err)
 	}
 	defer rows.Close()
 	response := &adminv1.ListUsersResponse{}
@@ -108,14 +108,14 @@ func (s *Service) ListUsers(ctx context.Context, req *connect.Request[adminv1.Li
 		var user adminv1.UserSummary
 		var total int64
 		if err := rows.Scan(&user.Id, &user.Username, &user.Email, &user.DisplayName, &entry.TokenCount, &total); err != nil {
-			return nil, internal("could not read users", err)
+			return nil, internal(ctx, "could not read users", err)
 		}
 		entry.User = &user
 		response.Users = append(response.Users, &entry)
 		response.Total = total
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read users", err)
+		return nil, internal(ctx, "could not read users", err)
 	}
 	return connect.NewResponse(response), nil
 }
@@ -142,7 +142,7 @@ func (s *Service) ListAudit(ctx context.Context, req *connect.Request[adminv1.Li
 	`, req.Msg.ActorType, req.Msg.ActorId, req.Msg.Action, req.Msg.Target,
 		req.Msg.FromUnix, req.Msg.ToUnix, req.Msg.BeforeSeq, limit)
 	if err != nil {
-		return nil, internal("could not read the audit trail", err)
+		return nil, internal(ctx, "could not read the audit trail", err)
 	}
 	defer rows.Close()
 	response := &adminv1.ListAuditResponse{}
@@ -150,12 +150,12 @@ func (s *Service) ListAudit(ctx context.Context, req *connect.Request[adminv1.Li
 		var e adminv1.AuditEvent
 		if err := rows.Scan(&e.Seq, &e.OccurredAtUnix, &e.ActorType, &e.ActorId, &e.Action, &e.TargetType, &e.TargetId,
 			&e.Outcome, &e.DetailJson); err != nil {
-			return nil, internal("could not read the audit trail", err)
+			return nil, internal(ctx, "could not read the audit trail", err)
 		}
 		response.Events = append(response.Events, &e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read the audit trail", err)
+		return nil, internal(ctx, "could not read the audit trail", err)
 	}
 	if len(response.Events) == limit {
 		response.NextBeforeSeq = response.Events[len(response.Events)-1].Seq
@@ -173,7 +173,7 @@ func (s *Service) VerifyAudit(ctx context.Context, _ *connect.Request[adminv1.Em
 	}
 	var count int64
 	if err := s.store.Pool.QueryRow(ctx, `SELECT count(*) FROM audit_events`).Scan(&count); err != nil {
-		return nil, internal("could not count audit events", err)
+		return nil, internal(ctx, "could not count audit events", err)
 	}
 	response := &adminv1.VerifyAuditResponse{Ok: true, EventsChecked: count}
 	if err := audit.Verify(ctx, s.store.Pool); err != nil {

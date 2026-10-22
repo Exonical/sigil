@@ -54,6 +54,7 @@ struct FakeAuthority {
     authorize_error: Mutex<Option<Status>>,
     grant_override: Mutex<GrantOverride>,
     complete_failures: AtomicUsize,
+    completion_rejection: Mutex<Option<Status>>,
     completions: Mutex<Vec<(String, bool)>>,
     profiles: Mutex<Vec<sigil_proto::backend::v1::CertificateProfile>>,
     issuer: Mutex<Option<(rcgen::Certificate, rcgen::KeyPair)>>,
@@ -72,6 +73,7 @@ impl FakeAuthority {
             authorize_error: Mutex::new(None),
             grant_override: Mutex::new(GrantOverride::default()),
             complete_failures: AtomicUsize::new(0),
+            completion_rejection: Mutex::new(None),
             completions: Mutex::new(Vec::new()),
             profiles: Mutex::new(Vec::new()),
             issuer: Mutex::new(None),
@@ -101,6 +103,13 @@ impl FakeAuthority {
 
     fn fail_next_completions(&self, count: usize) {
         self.complete_failures.store(count, Ordering::SeqCst);
+    }
+
+    fn reject_completions_with(&self, status: Status) {
+        *self
+            .completion_rejection
+            .lock()
+            .expect("completion rejection mutex") = Some(status);
     }
 
     fn completions(&self) -> Vec<(String, bool)> {
@@ -208,6 +217,14 @@ impl ManagedAuthority for FakeAuthority {
     }
 
     async fn complete_rotation(&self, rotation_id: &str, applied: bool) -> Result<(), Status> {
+        if let Some(status) = self
+            .completion_rejection
+            .lock()
+            .expect("completion rejection mutex")
+            .clone()
+        {
+            return Err(status);
+        }
         let mut remaining = self.complete_failures.load(Ordering::SeqCst);
         while remaining > 0 {
             match self.complete_failures.compare_exchange_weak(
@@ -903,6 +920,58 @@ async fn initialize_not_default_and_rollback_outcomes_complete_safely() {
     let info = mock.piv_info(&id).unwrap();
     assert_eq!(info.puk.unwrap().default_value, Some(true));
     assert_eq!(info.management_key.unwrap().default_value, Some(false));
+}
+
+#[tokio::test]
+async fn rejected_rotation_abandon_keeps_each_rpc_caller_status() {
+    let (mock, credentials) = mock_service();
+    let id = DeviceId("mock-yubikey-12345678".into());
+    let original = PivPuk::new(b"12345678".to_vec()).unwrap();
+    let changed = PivPuk::new(b"00000000".to_vec()).unwrap();
+    mock.change_puk(&id, TOKEN_SERIAL, &original, &changed)
+        .unwrap();
+    let backend = Arc::new(FakeAuthority::new());
+    backend.reject_completions_with(Status::permission_denied("rotation already closed"));
+    let service = agent_service(credentials, Some(backend.clone()), None);
+    let status = Agent::change_piv_puk(
+        &service,
+        with_caller(Request::new(v1::ChangePivPukRequest {
+            id: id.0.clone(),
+            expected_serial: TOKEN_SERIAL.into(),
+            old_puk: Vec::new(),
+            new_puk: Vec::new(),
+            managed: managed_token(),
+        })),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+    assert_ne!(
+        error_from_status(&status),
+        sigil_core::CredentialError::BackendRejected("rotation already closed".into())
+    );
+
+    let (mock, credentials) = mock_service();
+    let factory_puk = PivPuk::new(b"12345678".to_vec()).unwrap();
+    mock.change_puk(&id, TOKEN_SERIAL, &factory_puk, &changed)
+        .unwrap();
+    let backend = Arc::new(FakeAuthority::new());
+    backend.reject_completions_with(Status::permission_denied("rotation already closed"));
+    let service = agent_service(credentials, Some(backend.clone()), None);
+    let status = Agent::initialize_managed_piv(
+        &service,
+        with_caller(Request::new(v1::InitializeManagedPivRequest {
+            id: id.0.clone(),
+            expected_serial: TOKEN_SERIAL.into(),
+            managed: managed_token(),
+        })),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error_from_status(&status),
+        sigil_core::CredentialError::BackendRejected("rotation already closed".into())
+    );
 }
 
 #[tokio::test]

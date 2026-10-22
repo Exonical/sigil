@@ -424,3 +424,76 @@ func TestIssueCertificateRejectionsAreAuditedAndIssueNothing(t *testing.T) {
 		})
 	}
 }
+
+// failingUserStore makes every OIDC user upsert fail, as during a database outage.
+type failingUserStore struct{}
+
+func (failingUserStore) UpsertUser(context.Context, string, string, string, string, string) (string, error) {
+	return "", errors.New("database unavailable")
+}
+
+func (f issuanceFixture) auditCount(t *testing.T, action, actorType, serial, outcome, reason string) int {
+	t.Helper()
+	var count int
+	if err := f.store.Pool.QueryRow(f.ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE action=$1 AND actor_type=$2 AND target_id=$3 AND outcome=$4 AND detail->>'reason'=$5
+	`, action, actorType, serial, outcome, reason).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func TestListProfilesAuditsATokenMissingFromInventory(t *testing.T) {
+	f := setupIssuance(t)
+	_, err := f.service.ListProfiles(contextForPeerCertificate(f.operatorCert), &backendv1.ListProfilesRequest{
+		AccessToken: f.issuer.token(t, "bob", []string{"helpdesk"}, time.Now().Add(time.Hour)),
+		TokenVendor: "Yubico",
+		TokenSerial: "3000001",
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("code = %v, want PermissionDenied (err %v)", status.Code(err), err)
+	}
+	if got := f.auditCount(t, "ListProfiles", "user", "3000001", "denied", "token is not in inventory"); got != 1 {
+		t.Fatalf("expected one denied ListProfiles audit record for the missing token, got %d", got)
+	}
+}
+
+func TestOIDCUserStoreFailureIsAuditedAsAnError(t *testing.T) {
+	calls := map[string]func(f issuanceFixture, serial string) error{
+		"ListProfiles": func(f issuanceFixture, serial string) error {
+			_, err := f.service.ListProfiles(contextForPeerCertificate(f.operatorCert), &backendv1.ListProfilesRequest{
+				AccessToken: f.issuer.token(t, "bob", []string{"helpdesk"}, time.Now().Add(time.Hour)),
+				TokenVendor: "Yubico",
+				TokenSerial: serial,
+			})
+			return err
+		},
+		"IssueCertificate": func(f issuanceFixture, serial string) error {
+			_, err := f.issue(t, f.operatorCert, "bob", []string{"helpdesk"}, serial, mustP256(t),
+				[]byte("attestation-ok"), []byte("f9-ok"), "piv-authentication")
+			return err
+		},
+	}
+	for rpcName, call := range calls {
+		t.Run(rpcName, func(t *testing.T) {
+			f := setupIssuance(t)
+			authenticator, err := authn.New(f.ctx, authn.Config{Issuer: f.issuer.server.URL, Audience: "sigil-backend", GroupsClaim: "groups"}, failingUserStore{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.service.auth = authenticator
+			const serial = "3000002"
+			f.seedToken(t, serial, "active", "alice")
+			if err := call(f, serial); status.Code(err) != codes.Internal {
+				t.Fatalf("code = %v, want Internal (err %v)", status.Code(err), err)
+			}
+			if got := f.auditCount(t, rpcName, "station", serial, "error", "OIDC user persistence failed"); got != 1 {
+				t.Fatalf("expected one error %s audit record for the user store failure, got %d", rpcName, got)
+			}
+			if got := f.auditCount(t, rpcName, "station", serial, "denied", "OIDC access token rejected"); got != 0 {
+				t.Fatalf("a user store failure must not be audited as a rejected token, got %d", got)
+			}
+		})
+	}
+}
