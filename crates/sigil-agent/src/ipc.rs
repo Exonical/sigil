@@ -54,6 +54,92 @@ async fn serve_inner(
     }
 }
 
+/// Runs the spawned tonic server until it exits or `stop` completes. A stop drains the server for
+/// up to two seconds and then returns the stop's own error, if any, ahead of the server's result.
+#[cfg(any(windows, unix))]
+async fn run_until_stopped(
+    mut server: tokio::task::JoinHandle<Result<(), tonic::transport::Error>>,
+    graceful_stop: oneshot::Sender<()>,
+    stop: impl std::future::Future<Output = ServeResult<()>>,
+) -> ServeResult<()> {
+    let stopped = tokio::select! {
+        result = &mut server => {
+            result??;
+            return Ok(());
+        }
+        stopped = stop => stopped,
+    };
+    let _ = graceful_stop.send(());
+    let drained = match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server).await {
+        Ok(result) => result?.map_err(anyhow::Error::from),
+        Err(_) => {
+            server.abort();
+            let _ = server.await;
+            tracing::warn!("forcing IPC streams closed during agent shutdown");
+            Ok(())
+        }
+    };
+    stopped?;
+    drained
+}
+
+#[cfg(all(test, any(windows, unix)))]
+mod run_until_stopped_tests {
+    use std::future;
+
+    use tokio::sync::oneshot;
+
+    use super::run_until_stopped;
+
+    #[tokio::test]
+    async fn returns_when_the_server_exits_without_a_stop() {
+        let (graceful_stop, _graceful_receiver) = oneshot::channel();
+        let server = tokio::spawn(async { Ok(()) });
+
+        run_until_stopped(server, graceful_stop, future::pending())
+            .await
+            .expect("server exit");
+    }
+
+    #[tokio::test]
+    async fn requested_stop_drains_the_server() {
+        let (graceful_stop, graceful_receiver) = oneshot::channel::<()>();
+        let server = tokio::spawn(async move {
+            let _ = graceful_receiver.await;
+            Ok(())
+        });
+
+        run_until_stopped(server, graceful_stop, async { Ok(()) })
+            .await
+            .expect("graceful stop");
+    }
+
+    #[tokio::test]
+    async fn failed_stop_drains_the_server_and_returns_the_error() {
+        let (graceful_stop, graceful_receiver) = oneshot::channel::<()>();
+        let (drained_sender, drained) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let _ = graceful_receiver.await;
+            let _ = drained_sender.send(());
+            Ok(())
+        });
+
+        let error = run_until_stopped(server, graceful_stop, async {
+            Err(anyhow::anyhow!(
+                "could not create pending named pipe instance"
+            ))
+        })
+        .await
+        .expect_err("accept failure");
+
+        assert_eq!(
+            error.to_string(),
+            "could not create pending named pipe instance"
+        );
+        drained.await.expect("server was asked to stop");
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use std::{
@@ -67,6 +153,7 @@ mod windows {
         task::{Context, Poll},
     };
 
+    use anyhow::Context as _;
     use sigil_proto::v1::agent_server::AgentServer;
     use tokio::{
         io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -91,7 +178,7 @@ mod windows {
 
     use crate::{
         caller::{self, CallerIdentity, CallerPolicy},
-        ipc::ServeResult,
+        ipc::{ServeResult, run_until_stopped},
         server::AgentService,
     };
 
@@ -207,72 +294,77 @@ mod windows {
     ) -> ServeResult<()> {
         let security = Arc::new(PipeSecurity::new()?);
         let first = create_pipe(&endpoint, &security, true)?;
-        let mut spare = create_pipe(&endpoint, &security, false)?;
+        let spare = create_pipe(&endpoint, &security, false)?;
         let (sender, receiver) = mpsc::channel::<io::Result<PipeConnection>>(8);
-        let accept_sender = sender.clone();
-        let accept_endpoint = endpoint.clone();
-        tokio::spawn(async move {
-            let mut pending = first;
-            loop {
-                if let Err(error) = pending.connect().await {
-                    tracing::warn!(%error, "named pipe accept failed");
-                    break;
-                }
-                let caller = caller::identify_named_pipe_client(pending.as_raw_handle())
-                    .unwrap_or_else(|error| {
-                        tracing::debug!(%error, "could not identify named pipe caller");
-                        CallerIdentity::rejected()
-                    });
-                let next = match create_pipe(&accept_endpoint, &security, false) {
-                    Ok(pipe) => pipe,
-                    Err(error) => {
-                        tracing::error!(%error, "could not create pending named pipe instance");
-                        break;
-                    }
-                };
-                if accept_sender
-                    .send(Ok(PipeConnection {
-                        pipe: pending,
-                        caller,
-                    }))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-                pending = spare;
-                spare = next;
-            }
-        });
+        let mut accept = tokio::spawn(accept_connections(
+            first,
+            spare,
+            endpoint,
+            security,
+            sender.clone(),
+        ));
+        let accept_abort = accept.abort_handle();
         if let Some(ready) = ready {
             let _ = ready.send(());
         }
         let (graceful_stop, graceful_receiver) = oneshot::channel();
-        let mut server = tokio::spawn(
+        let server = tokio::spawn(
             Server::builder()
                 .add_service(AgentServer::new(service.with_policy(policy)))
                 .serve_with_incoming_shutdown(ReceiverStream::new(receiver), async move {
                     let _ = graceful_receiver.await;
                 }),
         );
-        let result = tokio::select! {
-            result = &mut server => result.map_err(anyhow::Error::from)?,
-            _ = shutdown => {
-                let _ = graceful_stop.send(());
-                match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server).await {
-                    Ok(result) => result.map_err(anyhow::Error::from)?,
-                    Err(_) => {
-                        server.abort();
-                        let _ = server.await;
-                        tracing::warn!("forcing IPC streams closed during agent shutdown");
-                        Ok(())
-                    }
-                }
+        let stop = async move {
+            tokio::select! {
+                _ = shutdown => Ok(()),
+                accepted = &mut accept => accepted?,
             }
         };
+        // Holding `sender` keeps the incoming stream open, so a failed accept task stops the
+        // server through `stop` and reports its error instead of ending the stream cleanly.
+        let result = run_until_stopped(server, graceful_stop, stop).await;
+        accept_abort.abort();
         drop(sender);
-        result?;
-        Ok(())
+        result
+    }
+
+    /// Accepts clients until the server drops its receiver. A failed `connect()` is passed to the
+    /// server as an `Err` item and replaced by a fresh pipe instance, like a failed Unix `accept()`;
+    /// failing to create a pipe instance is fatal and ends the task with that error.
+    async fn accept_connections(
+        mut pending: NamedPipeServer,
+        mut spare: NamedPipeServer,
+        endpoint: String,
+        security: Arc<PipeSecurity>,
+        sender: mpsc::Sender<io::Result<PipeConnection>>,
+    ) -> ServeResult<()> {
+        loop {
+            let accepted = match pending.connect().await {
+                Ok(()) => {
+                    let caller = caller::identify_named_pipe_client(pending.as_raw_handle())
+                        .unwrap_or_else(|error| {
+                            tracing::debug!(%error, "could not identify named pipe caller");
+                            CallerIdentity::rejected()
+                        });
+                    Ok(PipeConnection {
+                        pipe: pending,
+                        caller,
+                    })
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "named pipe accept failed");
+                    Err(error)
+                }
+            };
+            let next = create_pipe(&endpoint, &security, false)
+                .context("could not create pending named pipe instance")?;
+            if sender.send(accepted).await.is_err() {
+                return Ok(());
+            }
+            pending = spare;
+            spare = next;
+        }
     }
 
     #[cfg(test)]
@@ -442,7 +534,7 @@ mod unix {
 
     use crate::{
         caller::{self, CallerIdentity, CallerPolicy},
-        ipc::ServeResult,
+        ipc::{ServeResult, run_until_stopped},
         server::AgentService,
     };
 
@@ -537,29 +629,17 @@ mod unix {
             Some((accepted, listener))
         });
         let (graceful_stop, graceful_receiver) = oneshot::channel();
-        let mut server = tokio::spawn(
+        let server = tokio::spawn(
             Server::builder()
                 .add_service(AgentServer::new(service.with_policy(policy)))
                 .serve_with_incoming_shutdown(incoming, async move {
                     let _ = graceful_receiver.await;
                 }),
         );
-        let result = tokio::select! {
-            result = &mut server => result.map_err(anyhow::Error::from)?,
-            _ = shutdown => {
-                let _ = graceful_stop.send(());
-                match tokio::time::timeout(std::time::Duration::from_secs(2), &mut server).await {
-                    Ok(result) => result.map_err(anyhow::Error::from)?,
-                    Err(_) => {
-                        server.abort();
-                        let _ = server.await;
-                        tracing::warn!("forcing IPC streams closed during agent shutdown");
-                        Ok(())
-                    }
-                }
-            }
-        };
-        result?;
-        Ok(())
+        run_until_stopped(server, graceful_stop, async move {
+            let _ = shutdown.await;
+            Ok(())
+        })
+        .await
     }
 }
