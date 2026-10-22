@@ -39,7 +39,16 @@ struct ManagedCall<'a> {
     slot: Option<u8>,
     serial: &'a str,
     rotation_missing_detail: Option<&'static str>,
-    completion_error_overrides: bool,
+    abandon_failure: AbandonFailure,
+}
+
+/// What the caller sees when the backend cannot record an abandoned rotation.
+#[derive(Clone, Copy)]
+enum AbandonFailure {
+    /// Return the completion error instead of the card or argument status.
+    ReportToCaller,
+    /// Return the card or argument status and log the completion error.
+    KeepCallerStatus,
 }
 
 enum ManagedCardOutcome<T> {
@@ -457,6 +466,34 @@ impl AgentService {
         }))
     }
 
+    async fn abandon_rotation(
+        &self,
+        call: ManagedCall<'_>,
+        rotation_id: Option<&str>,
+        policy: AbandonFailure,
+        status: Status,
+    ) -> Status {
+        let Some(rotation_id) = rotation_id else {
+            return status;
+        };
+        let Err(completion) = self.complete_rotation(rotation_id, false).await else {
+            return status;
+        };
+        match policy {
+            AbandonFailure::ReportToCaller => completion,
+            AbandonFailure::KeepCallerStatus => {
+                tracing::warn!(
+                    target: "sigil::agent",
+                    rpc = call.rpc,
+                    rotation_id,
+                    code = ?completion.code(),
+                    "could not record an abandoned managed rotation"
+                );
+                status
+            }
+        }
+    }
+
     async fn run_managed<T, S, Extract, CardOperation>(
         &self,
         call: ManagedCall<'_>,
@@ -504,9 +541,14 @@ impl AgentService {
         let arguments = match extracted {
             Ok(arguments) => arguments,
             Err(status) => {
-                if let Some(rotation_id) = rotation_id.as_deref() {
-                    let _ = self.complete_rotation(rotation_id, false).await;
-                }
+                let status = self
+                    .abandon_rotation(
+                        call,
+                        rotation_id.as_deref(),
+                        AbandonFailure::KeepCallerStatus,
+                        status,
+                    )
+                    .await;
                 audit_managed_call::<()>(
                     call,
                     Some(&grant_id),
@@ -530,21 +572,9 @@ impl AgentService {
                 result
             }
             Ok(ManagedCardOutcome::NotApplied(status)) => {
-                let status = if call.completion_error_overrides {
-                    if let Some(rotation_id) = rotation_id.as_deref() {
-                        self.complete_rotation(rotation_id, false)
-                            .await
-                            .err()
-                            .unwrap_or(status)
-                    } else {
-                        status
-                    }
-                } else {
-                    if let Some(rotation_id) = rotation_id.as_deref() {
-                        let _ = self.complete_rotation(rotation_id, false).await;
-                    }
-                    status
-                };
+                let status = self
+                    .abandon_rotation(call, rotation_id.as_deref(), call.abandon_failure, status)
+                    .await;
                 audit_managed_call::<()>(
                     call,
                     Some(&grant_id),
@@ -569,19 +599,14 @@ impl AgentService {
                 ))
             }
             Err(error) if rotation_id.is_some() && card_failure_is_definite(&error) => {
-                let completion = self
-                    .complete_rotation(
-                        rotation_id.as_deref().expect("rotation ID is present"),
-                        false,
+                let status = self
+                    .abandon_rotation(
+                        call,
+                        rotation_id.as_deref(),
+                        call.abandon_failure,
+                        status_from_error(&error),
                     )
                     .await;
-                let status = if call.completion_error_overrides {
-                    completion
-                        .err()
-                        .unwrap_or_else(|| status_from_error(&error))
-                } else {
-                    status_from_error(&error)
-                };
                 audit_managed_call::<()>(
                     call,
                     Some(&grant_id),
@@ -1449,7 +1474,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: None,
                         serial: &serial,
                         rotation_missing_detail: Some("backend omitted the PUK rotation ID"),
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -1601,7 +1626,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: None,
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     move |grant| {
@@ -1740,7 +1765,7 @@ impl v1::agent_server::Agent for AgentService {
                         rotation_missing_detail: Some(
                             "backend omitted the management-key rotation ID",
                         ),
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2046,7 +2071,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2368,7 +2393,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     move |grant| {
@@ -2537,7 +2562,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2690,7 +2715,7 @@ impl v1::agent_server::Agent for AgentService {
                         slot: Some(slot.byte()),
                         serial: &serial,
                         rotation_missing_detail: None,
-                        completion_error_overrides: false,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
                     managed,
                     |grant| {
@@ -2851,7 +2876,7 @@ impl v1::agent_server::Agent for AgentService {
                 slot: None,
                 serial: &serial,
                 rotation_missing_detail: Some("backend omitted the managed-initialize rotation ID"),
-                completion_error_overrides: true,
+                abandon_failure: AbandonFailure::ReportToCaller,
             },
             managed,
             |grant| {
@@ -2979,7 +3004,7 @@ impl v1::agent_server::Agent for AgentService {
                 slot: None,
                 serial: &serial,
                 rotation_missing_detail: Some("backend omitted the secret rotation ID"),
-                completion_error_overrides: true,
+                abandon_failure: AbandonFailure::ReportToCaller,
             },
             managed,
             move |grant| match kind {
