@@ -3,7 +3,10 @@
 use rcgen::{
     BasicConstraints, CertificateParams, CustomExtension, DnType, IsCa, KeyPair, date_time_ymd,
 };
-use sigil_yubikey::attestation::{AttestationTrust, inspect, now_unix, verify_path};
+use sigil_core::{PinPolicy, PivSlot, TouchPolicy};
+use sigil_yubikey::attestation::{
+    AttestationTrust, ExpectedAttestation, check_expected, inspect, now_unix, verify_path,
+};
 use x509_cert::Certificate;
 use x509_cert::der::Decode;
 
@@ -234,6 +237,50 @@ fn the_slot_certificate_must_itself_chain_to_the_root() {
         now_unix(),
     );
     assert!(!report.verified);
+}
+
+#[test]
+fn an_inspected_attestation_passes_the_enrollment_check_only_for_what_it_attests() {
+    let h = hierarchy();
+    let trust = trust(&[&h.root], &[&h.intermediate]);
+    let inspection = inspect(
+        h.leaf.der().as_ref(),
+        h.f9.der().as_ref(),
+        &trust,
+        now_unix(),
+    )
+    .into_inspection();
+    let spki = h.leaf_key.public_key_der();
+    let expected = ExpectedAttestation {
+        serial: 39_192_733,
+        slot: PivSlot::AUTHENTICATION,
+        pin_policy: PinPolicy::Once,
+        touch_policy: TouchPolicy::Never,
+        subject_public_key_info: &spki,
+    };
+    assert_eq!(check_expected(&inspection, &expected), Ok(()));
+    assert!(
+        check_expected(
+            &inspection,
+            &ExpectedAttestation {
+                serial: 1,
+                ..expected
+            }
+        )
+        .unwrap_err()
+        .contains("attested serial")
+    );
+    assert!(
+        check_expected(
+            &inspection,
+            &ExpectedAttestation {
+                pin_policy: PinPolicy::Always,
+                ..expected
+            }
+        )
+        .unwrap_err()
+        .contains("PIN policy")
+    );
 }
 
 #[test]
