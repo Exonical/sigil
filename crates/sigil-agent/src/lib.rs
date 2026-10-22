@@ -28,7 +28,7 @@ use tokio::{
 };
 
 use crate::{
-    audit_outbox::AuditOutbox,
+    audit_outbox::{AuditOutbox, PendingCompletion},
     backend::{GrpcBackend, ManagedAuthority, observed_token},
     caller::CallerPolicy,
     config::AgentConfig,
@@ -245,6 +245,33 @@ fn spawn_audit_reporter(
     })
 }
 
+/// Age after which a pending rotation completion is dropped instead of sent.
+/// Kept one minute below the backend's `rotationMaxAge` (15 minutes,
+/// `backend/internal/gateway/managed.go`), after which the backend marks the
+/// rotation `unconfirmed`; keep the two in sync.
+const COMPLETION_EXPIRY_MS: i64 = 14 * 60 * 1000;
+
+/// Removes `completion` from the outbox and audits the expiry if it is older
+/// than [`COMPLETION_EXPIRY_MS`]. Returns whether it expired.
+fn expire_if_stale(outbox: &AuditOutbox, completion: &PendingCompletion) -> anyhow::Result<bool> {
+    if crate::backend::current_unix_millis().saturating_sub(completion.created_at_unix_ms)
+        <= COMPLETION_EXPIRY_MS
+    {
+        return Ok(false);
+    }
+    outbox.remove_completion(&completion.rotation_id)?;
+    tracing::error!(
+        target: "sigil::audit",
+        rpc = "CompleteRotation",
+        operation = "rotation_completion",
+        rotation_id = %completion.rotation_id,
+        outcome = "error",
+        code = "completion_expired",
+        "pending rotation completion expired before backend confirmation"
+    );
+    Ok(true)
+}
+
 fn spawn_completion_reporter(
     backend: Arc<dyn ManagedAuthority>,
     outbox: Arc<AuditOutbox>,
@@ -269,22 +296,21 @@ fn spawn_completion_reporter(
                 {
                     continue;
                 }
-                if crate::backend::current_unix_millis()
-                    .saturating_sub(completion.created_at_unix_ms)
-                    > 14 * 60 * 1000
-                {
-                    let _ = outbox.remove_completion(&completion.rotation_id);
-                    retry_schedule.remove(&completion.rotation_id);
-                    tracing::error!(
-                        target: "sigil::audit",
-                        rpc = "CompleteRotation",
-                        operation = "rotation_completion",
-                        rotation_id = %completion.rotation_id,
-                        outcome = "error",
-                        code = "completion_expired",
-                        "pending rotation completion expired before backend confirmation"
-                    );
-                    continue;
+                match expire_if_stale(&outbox, &completion) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        retry_schedule.remove(&completion.rotation_id);
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "sigil::agent",
+                            error = %format_args!("{error:#}"),
+                            rotation_id = %completion.rotation_id,
+                            "could not remove expired rotation completion"
+                        );
+                        continue;
+                    }
                 }
                 match backend
                     .complete_rotation(&completion.rotation_id, completion.applied)
@@ -322,19 +348,7 @@ pub async fn retry_pending_completions_once(
     outbox: &AuditOutbox,
 ) -> anyhow::Result<()> {
     for completion in outbox.pending_completions()? {
-        if crate::backend::current_unix_millis().saturating_sub(completion.created_at_unix_ms)
-            > 14 * 60 * 1000
-        {
-            outbox.remove_completion(&completion.rotation_id)?;
-            tracing::error!(
-                target: "sigil::audit",
-                rpc = "CompleteRotation",
-                operation = "rotation_completion",
-                rotation_id = %completion.rotation_id,
-                outcome = "error",
-                code = "completion_expired",
-                "pending rotation completion expired before backend confirmation"
-            );
+        if expire_if_stale(outbox, &completion)? {
             continue;
         }
         if backend
