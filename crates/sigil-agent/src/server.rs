@@ -14,7 +14,7 @@ use tonic::{Request, Response, Status};
 use zeroize::Zeroizing;
 
 use crate::enrollment;
-use crate::grant::{GrantExpectation, GrantProvider, GrantRequest, GrantVerifier, Unconfigured};
+use crate::grant::{GrantExpectation, GrantProvider, GrantVerifier, Unconfigured};
 use crate::{
     audit_outbox::{AuditOutbox, PendingCompletion},
     backend::{ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret, token_identity},
@@ -272,44 +272,6 @@ impl AgentService {
                 Err(status)
             }
         }
-    }
-
-    #[allow(dead_code)] // used by escrow-backed agent operations
-    async fn authorize_piv_grant(
-        &self,
-        caller: &CallerIdentity,
-        id: &DeviceId,
-        expected_serial: &str,
-        operation: v1::Operation,
-        slot: Option<u8>,
-    ) -> std::result::Result<PivGrantContext, Status> {
-        let serial = self.ensure_expected_serial(id, expected_serial).await?;
-        let request = GrantRequest {
-            operation,
-            station_id: self.station_id.clone(),
-            token_serial: serial.clone(),
-            caller_os_user: caller.os_user.clone(),
-            piv_slot: slot,
-        };
-        let signed = self
-            .grant_provider
-            .obtain(caller, &request)
-            .map_err(|error| status_from_error(&error))?;
-        let expectation = GrantExpectation {
-            operation,
-            station_id: self.station_id.clone(),
-            token_serial: serial.clone(),
-            caller_os_user: Some(caller.os_user.clone()),
-            piv_slot: slot,
-        };
-        let grant = self
-            .grant_verifier
-            .verify(&signed, &expectation, crate::grant::now_unix())
-            .map_err(|error| status_from_error(&error))?;
-        Ok(PivGrantContext {
-            serial,
-            grant_id: grant.grant_id,
-        })
     }
 
     async fn authorize_managed(
@@ -612,12 +574,6 @@ impl AgentService {
             }
         }
     }
-}
-
-#[allow(dead_code)] // used by escrow-backed agent operations
-struct PivGrantContext {
-    serial: String,
-    grant_id: String,
 }
 
 fn map_backend_status(status: Status) -> Status {
