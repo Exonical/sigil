@@ -214,14 +214,23 @@ fn success_message(action: ManagedAction) -> &'static str {
     }
 }
 
-pub(super) fn pin_length_ok(value: &str, fips: bool) -> bool {
+/// Checks the PIV PIN/PUK rule: 6-8 ASCII characters, exactly 8 on FIPS keys.
+pub(super) fn pin_length_check(value: &str, kind: &str, fips: bool) -> Result<(), String> {
     let characters = value.chars().count();
-    value.is_ascii()
-        && if fips {
-            characters == 8
-        } else {
-            (6..=8).contains(&characters)
-        }
+    if fips && characters != 8 {
+        return Err(format!("This FIPS key requires an 8-character {kind}."));
+    }
+    if !(6..=8).contains(&characters) {
+        return Err(format!("The {kind} must be 6-8 characters."));
+    }
+    if !value.is_ascii() {
+        return Err(format!("The {kind} must use ASCII characters."));
+    }
+    Ok(())
+}
+
+pub(super) fn pin_length_ok(value: &str, fips: bool) -> bool {
+    pin_length_check(value, "PIN", fips).is_ok()
 }
 
 pub(super) fn pin_length_hint(fips: bool) -> &'static str {
@@ -233,18 +242,16 @@ pub(super) fn pin_length_hint(fips: bool) -> &'static str {
 }
 
 pub(super) fn pin_length_message(value: &str, fips: bool) -> Option<String> {
-    if value.is_empty() || pin_length_ok(value, fips) {
+    if value.is_empty() {
         None
-    } else if fips {
-        Some("This FIPS key requires an 8-character PIN.".to_owned())
     } else {
-        Some("The PIN must be 6-8 characters.".to_owned())
+        pin_length_check(value, "PIN", fips).err()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{pin_length_hint, pin_length_message, pin_length_ok};
+    use super::{pin_length_check, pin_length_hint, pin_length_message, pin_length_ok};
 
     #[test]
     fn fips_pins_are_exactly_eight_characters_and_others_six_to_eight() {
@@ -275,6 +282,27 @@ mod tests {
         assert_eq!(
             pin_length_message("12345", false).as_deref(),
             Some("The PIN must be 6-8 characters.")
+        );
+        assert_eq!(
+            pin_length_message("1234567é", false).as_deref(),
+            Some("The PIN must use ASCII characters.")
+        );
+    }
+
+    #[test]
+    fn pin_length_check_names_the_code_kind() {
+        assert_eq!(pin_length_check("12345678", "PUK", true), Ok(()));
+        assert_eq!(
+            pin_length_check("123456", "PUK", true),
+            Err("This FIPS key requires an 8-character PUK.".to_owned())
+        );
+        assert_eq!(
+            pin_length_check("123456789", "PUK", false),
+            Err("The PUK must be 6-8 characters.".to_owned())
+        );
+        assert_eq!(
+            pin_length_check("12345é", "PUK", false),
+            Err("The PUK must use ASCII characters.".to_owned())
         );
     }
 }
