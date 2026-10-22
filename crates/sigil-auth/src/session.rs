@@ -12,7 +12,7 @@ use crate::{
     flow::{
         Discovery, SignedInTokens, TokenResponse, discover, fetch_jwks, sign_in_tokens, token_error,
     },
-    jwt::{IdTokenExpectation, Jwks, access_token_expiry, validate_claims},
+    jwt::{IdTokenExpectation, Jwks, validate_claims},
     now_unix,
     storage::{TokenStore, target_name},
 };
@@ -193,8 +193,7 @@ impl Session {
             }
             return Err(error);
         }
-        let tokens: TokenResponse = serde_json::from_slice(response.body())
-            .map_err(|_| AuthError::InvalidResponse("token response is invalid".into()))?;
+        let tokens = TokenResponse::parse(response.body())?;
 
         if let Some(id_token) = tokens.id_token.as_deref() {
             if inner.jwks.is_none() {
@@ -231,12 +230,8 @@ impl Session {
             }
         }
 
-        let expires_in = tokens
-            .expires_in
-            .or_else(|| access_token_expiry(&tokens.access_token).map(|exp| exp - now_unix()))
-            .unwrap_or(300);
+        inner.access_expires_at = tokens.access_expires_at(now_unix());
         inner.access = Zeroizing::new(tokens.access_token);
-        inner.access_expires_at = now_unix() + expires_in;
         if let Some(rotated) = tokens.refresh_token {
             inner.refresh = Some(Zeroizing::new(rotated));
         }

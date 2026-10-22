@@ -21,6 +21,9 @@ use crate::{
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const REQUEST_HEAD_LIMIT: usize = 16 * 1024;
 const SCOPES: &str = "openid profile email offline_access";
+/// Access token lifetime assumed when the token response has no `expires_in` and the access
+/// token carries no readable `exp`.
+const DEFAULT_ACCESS_TOKEN_LIFETIME: i64 = 300;
 
 #[derive(Clone, Debug)]
 pub struct Discovery {
@@ -102,6 +105,22 @@ pub(crate) struct TokenResponse {
     pub refresh_token: Option<String>,
     #[serde(default)]
     pub expires_in: Option<i64>,
+}
+
+impl TokenResponse {
+    pub(crate) fn parse(body: &[u8]) -> Result<Self> {
+        serde_json::from_slice(body)
+            .map_err(|_| AuthError::InvalidResponse("token response is invalid".into()))
+    }
+
+    /// Unix time the access token expires: `expires_in`, else the access token's `exp`, else
+    /// [`DEFAULT_ACCESS_TOKEN_LIFETIME`].
+    pub(crate) fn access_expires_at(&self, now: i64) -> i64 {
+        now + self
+            .expires_in
+            .or_else(|| access_token_expiry(&self.access_token).map(|exp| exp - now))
+            .unwrap_or(DEFAULT_ACCESS_TOKEN_LIFETIME)
+    }
 }
 
 /// Maps a non-200 token endpoint reply. `invalid_grant` means the refresh token is no longer valid.
@@ -212,8 +231,7 @@ where
     if !response.status().is_success() {
         return Err(token_error(response.body()));
     }
-    let tokens: TokenResponse = serde_json::from_slice(response.body())
-        .map_err(|_| AuthError::InvalidResponse("token response is invalid".into()))?;
+    let tokens = TokenResponse::parse(response.body())?;
     let id_token = tokens
         .id_token
         .as_deref()
@@ -228,11 +246,7 @@ where
             now: now_unix(),
         },
     )?;
-    let access_expires_at = now_unix()
-        + tokens
-            .expires_in
-            .or_else(|| access_token_expiry(&tokens.access_token).map(|exp| exp - now_unix()))
-            .unwrap_or(300);
+    let access_expires_at = tokens.access_expires_at(now_unix());
     Ok(SignedInTokens {
         discovery,
         jwks,
@@ -398,4 +412,49 @@ pub fn open_in_browser(_url: &Url) -> Result<()> {
     Err(AuthError::Browser(
         "no system browser launcher on this platform".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unsigned_jwt(payload: &str) -> String {
+        format!(
+            "{}.{}.sig",
+            URL_SAFE_NO_PAD.encode(br#"{"alg":"none"}"#),
+            URL_SAFE_NO_PAD.encode(payload)
+        )
+    }
+
+    fn tokens(access_token: String, expires_in: Option<i64>) -> TokenResponse {
+        TokenResponse {
+            access_token,
+            id_token: None,
+            refresh_token: None,
+            expires_in,
+        }
+    }
+
+    #[test]
+    fn parse_rejects_invalid_token_responses() {
+        let parsed = TokenResponse::parse(br#"{"access_token":"a","expires_in":60}"#).unwrap();
+        assert_eq!(parsed.access_token, "a");
+        assert_eq!(parsed.expires_in, Some(60));
+        assert!(matches!(
+            TokenResponse::parse(b"{}"),
+            Err(AuthError::InvalidResponse(message)) if message == "token response is invalid"
+        ));
+    }
+
+    #[test]
+    fn access_expiry_prefers_expires_in_then_jwt_exp_then_default() {
+        let now = 1_000;
+        let jwt = unsigned_jwt(r#"{"exp":1600}"#);
+        assert_eq!(tokens(jwt.clone(), Some(60)).access_expires_at(now), 1_060);
+        assert_eq!(tokens(jwt, None).access_expires_at(now), 1_600);
+        assert_eq!(
+            tokens("opaque".into(), None).access_expires_at(now),
+            now + DEFAULT_ACCESS_TOKEN_LIFETIME
+        );
+    }
 }
