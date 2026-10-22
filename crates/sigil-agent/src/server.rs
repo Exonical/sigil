@@ -3,7 +3,7 @@ use std::{collections::HashMap, pin::Pin, sync::Arc, time::Duration};
 use futures_util::Stream;
 use sigil_app::CredentialService;
 use sigil_core::{
-    Application, CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
+    CredentialError, DeviceId, ManagedPivInitializationOutcome, ManagementKey,
     ManagementKeyAlgorithm, PinPolicy, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk,
     PivSlot, Result as CoreResult, Secret, TouchPolicy,
 };
@@ -1008,7 +1008,12 @@ impl v1::agent_server::Agent for AgentService {
         let mut input = request.into_inner();
         let device_id = input.id.clone();
         let expected_serial = input.expected_serial.clone();
-        let usb = match applications_from_proto(input.usb_enabled) {
+        let usb = match input
+            .usb_enabled
+            .into_iter()
+            .map(sigil_proto::application_from_proto)
+            .collect::<CoreResult<Vec<_>>>()
+        {
             Ok(applications) => applications,
             Err(error) => {
                 return Err(audit_device_error(
@@ -1022,7 +1027,12 @@ impl v1::agent_server::Agent for AgentService {
             }
         };
         let nfc = if input.set_nfc {
-            match applications_from_proto(input.nfc_enabled) {
+            match input
+                .nfc_enabled
+                .into_iter()
+                .map(sigil_proto::application_from_proto)
+                .collect::<CoreResult<Vec<_>>>()
+            {
                 Ok(applications) => Some(applications),
                 Err(error) => {
                     return Err(audit_device_error(
@@ -3226,28 +3236,6 @@ fn audit_device_error(
         &Err(status.clone()),
     );
     status
-}
-
-fn applications_from_proto(values: Vec<i32>) -> CoreResult<Vec<Application>> {
-    values
-        .into_iter()
-        .map(|value| {
-            match v1::Application::try_from(value).map_err(|_| {
-                CredentialError::SmartCardOperation("invalid application value".into())
-            })? {
-                v1::Application::Piv => Ok(Application::Piv),
-                v1::Application::Fido2 => Ok(Application::Fido2),
-                v1::Application::U2f => Ok(Application::U2f),
-                v1::Application::Otp => Ok(Application::Otp),
-                v1::Application::OpenPgp => Ok(Application::OpenPgp),
-                v1::Application::Oath => Ok(Application::Oath),
-                v1::Application::YubiHsmAuth => Ok(Application::YubiHsmAuth),
-                v1::Application::Unspecified => Err(CredentialError::SmartCardOperation(
-                    "unspecified application value".into(),
-                )),
-            }
-        })
-        .collect()
 }
 
 fn piv_slot(slot_byte: u32) -> CoreResult<PivSlot> {

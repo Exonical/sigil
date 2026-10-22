@@ -41,7 +41,8 @@ fn transport_from_proto(value: i32) -> core::Result<core::Transport> {
     }
 }
 
-fn application_to_proto(value: &core::Application) -> i32 {
+/// Converts a domain [`core::Application`] to its agent protocol value.
+pub fn application_to_proto(value: &core::Application) -> i32 {
     match value {
         core::Application::Piv => v1::Application::Piv as i32,
         core::Application::Fido2 => v1::Application::Fido2 as i32,
@@ -53,7 +54,10 @@ fn application_to_proto(value: &core::Application) -> i32 {
     }
 }
 
-fn application_from_proto(value: i32) -> core::Result<core::Application> {
+/// Converts an agent protocol application value to a domain [`core::Application`].
+///
+/// Unknown and unspecified values are rejected as invalid protocol values.
+pub fn application_from_proto(value: i32) -> core::Result<core::Application> {
     match v1::Application::try_from(value).map_err(|_| invalid_proto(value))? {
         v1::Application::Piv => Ok(core::Application::Piv),
         v1::Application::Fido2 => Ok(core::Application::Fido2),
@@ -928,6 +932,30 @@ mod tests {
             core::DeviceInfo::try_from(v1::DeviceInfo::from(&value)).unwrap(),
             value
         );
+    }
+
+    #[test]
+    fn application_round_trips_and_rejects_invalid_values() {
+        for application in [
+            Application::Piv,
+            Application::Fido2,
+            Application::U2f,
+            Application::Otp,
+            Application::OpenPgp,
+            Application::Oath,
+            Application::YubiHsmAuth,
+        ] {
+            assert_eq!(
+                application_from_proto(application_to_proto(&application)).unwrap(),
+                application
+            );
+        }
+        for value in [v1::Application::Unspecified as i32, 99] {
+            assert!(matches!(
+                application_from_proto(value),
+                Err(core::CredentialError::SmartCardOperation(_))
+            ));
+        }
     }
 
     #[test]

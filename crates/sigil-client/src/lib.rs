@@ -1058,12 +1058,12 @@ impl DeviceManagement for AgentClient {
                     .set_enabled_applications(v1::SetEnabledApplicationsRequest {
                         id: id.0.clone(),
                         expected_serial: expected_serial.to_owned(),
-                        usb_enabled: usb.iter().map(application_to_proto).collect(),
+                        usb_enabled: usb.iter().map(sigil_proto::application_to_proto).collect(),
                         set_nfc: nfc.is_some(),
                         nfc_enabled: nfc
                             .unwrap_or_default()
                             .iter()
-                            .map(application_to_proto)
+                            .map(sigil_proto::application_to_proto)
                             .collect(),
                         lock_code: lock_code
                             .map(|code| code.expose().to_vec())
@@ -1072,18 +1072,6 @@ impl DeviceManagement for AgentClient {
             )
             .map(|_| ())
             .map_err(Self::map_status)
-    }
-}
-
-fn application_to_proto(application: &Application) -> i32 {
-    match application {
-        Application::Piv => v1::Application::Piv as i32,
-        Application::Fido2 => v1::Application::Fido2 as i32,
-        Application::U2f => v1::Application::U2f as i32,
-        Application::Otp => v1::Application::Otp as i32,
-        Application::OpenPgp => v1::Application::OpenPgp as i32,
-        Application::Oath => v1::Application::Oath as i32,
-        Application::YubiHsmAuth => v1::Application::YubiHsmAuth as i32,
     }
 }
 
