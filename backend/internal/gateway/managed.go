@@ -92,42 +92,28 @@ func (s *Server) AuthorizeManagedOperation(
 		return nil, status.Error(codes.FailedPrecondition, "managed escrow is not configured")
 	}
 
-	tx, err := s.store.Pool.Begin(ctx)
+	tx, err := s.beginAuditTx(ctx)
 	if err != nil {
 		s.logger.Error("begin managed operation transaction failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not authorize managed operation")
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
-	reject := func(code codes.Code, outcome, reason string, detail map[string]any) error {
-		if detail == nil {
-			detail = map[string]any{}
-		}
-		detail["operation"] = operationName
-		detail["reason"] = reason
-		if err := appendAudit(ctx, tx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, outcome, detail); err != nil {
-			return status.Error(codes.Internal, "could not record managed-operation decision")
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return status.Error(codes.Internal, "could not record managed-operation decision")
-		}
-		committed = true
-		return status.Error(code, reason)
+	defer tx.rollbackUnlessCommitted(ctx)
+	decision := auditDecision{
+		tx: tx, actorType: "user", actorID: authorization.principal.UserID, action: "AuthorizeManagedOperation",
+		targetType: "token", targetID: request.TokenSerial,
+		detail:  map[string]any{"operation": operationName},
+		failure: "could not record managed-operation decision",
 	}
 
 	token, err := db.LockToken(ctx, tx, request.TokenVendor, request.TokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, reject(codes.PermissionDenied, "denied", "token is not in inventory", nil)
+		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", "token is not in inventory", nil)
 	}
 	if err != nil {
 		s.logger.Error("lock managed token failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not look up token inventory")
 	}
-	decision := s.policy.Authorize(policy.Request{
+	policyDecision := s.policy.Authorize(policy.Request{
 		Roles:                 rolesFor(authorization.principal.Groups, s.config.OIDC.RoleGroups),
 		Station:               authorization.station,
 		Token:                 &token,
@@ -135,11 +121,11 @@ func (s *Server) AuthorizeManagedOperation(
 		UserID:                authorization.principal.UserID,
 		SelfServiceOperations: s.config.Policy.SelfServiceOperations,
 	})
-	if !decision.Allowed {
-		return nil, reject(codes.PermissionDenied, "denied", decision.Reason, map[string]any{"station": authorization.station.ID})
+	if !policyDecision.Allowed {
+		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", policyDecision.Reason, map[string]any{"station": authorization.station.ID})
 	}
 	authorization.token = token
-	authorization.decision = decision
+	authorization.decision = policyDecision
 
 	plaintexts := make([][]byte, 0, len(plan.current)+len(plan.new))
 	defer func() {
@@ -149,7 +135,7 @@ func (s *Server) AuthorizeManagedOperation(
 	}()
 	response := &backendv1.AuthorizeManagedOperationResponse{}
 	defer func() {
-		if committed {
+		if tx.committed {
 			return
 		}
 		for _, secret := range []*backendv1.EscrowedSecret{
@@ -165,7 +151,7 @@ func (s *Server) AuthorizeManagedOperation(
 	for _, kind := range plan.current {
 		record, err := db.ActiveEscrowSecret(ctx, tx, token.ID, kind)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, reject(codes.FailedPrecondition, "denied", "token is not managed by Sigil", map[string]any{"kind": kind})
+			return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", "token is not managed by Sigil", map[string]any{"kind": kind})
 		}
 		if err != nil {
 			s.logger.Error("read active escrow secret failed", "error", err)
@@ -180,7 +166,7 @@ func (s *Server) AuthorizeManagedOperation(
 		})
 		if err != nil {
 			s.logger.Error("decrypt active escrow secret failed", "kind", kind, "version", record.Version)
-			return nil, reject(codes.Internal, "error", "managed token secret could not be decrypted", map[string]any{
+			return nil, decision.deny(ctx, codes.Internal, "error", "managed token secret could not be decrypted", map[string]any{
 				"kind": kind, "version": record.Version,
 			})
 		}
@@ -247,7 +233,7 @@ func (s *Server) AuthorizeManagedOperation(
 		CallerOSUser: request.CallerOsUser,
 		PIVSlot:      request.PivSlot,
 		Lifetime:     timeSeconds(s.config.Grants.LifetimeSeconds),
-		PolicyReason: decision.Reason,
+		PolicyReason: policyDecision.Reason,
 	}, "AuthorizeManagedOperation")
 	if err != nil {
 		s.logger.Error("issue managed operation grant failed", "error", err)
@@ -302,7 +288,6 @@ func (s *Server) AuthorizeManagedOperation(
 		s.logger.Error("commit managed operation failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not commit managed operation")
 	}
-	committed = true
 	return response, nil
 }
 
@@ -320,43 +305,26 @@ func (s *Server) CompleteRotation(
 		}
 		return nil, status.Error(codes.InvalidArgument, "rotation ID is required")
 	}
-	tx, err := s.store.Pool.Begin(ctx)
+	tx, err := s.beginAuditTx(ctx)
 	if err != nil {
 		s.logger.Error("begin rotation completion failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not complete secret rotation")
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
+	defer tx.rollbackUnlessCommitted(ctx)
+	decision := auditDecision{
+		tx: tx, actorType: "station", actorID: station.ID, action: "CompleteRotation",
+		targetType: "rotation", targetID: request.RotationId,
+		detail:  map[string]any{"applied": request.Applied},
+		failure: "could not record rotation completion",
+	}
+	finish := func(state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
+		if err := decision.record(ctx, "success", map[string]any{"state": string(state)}); err != nil {
+			return nil, err
 		}
-	}()
-	finish := func(outcome string, state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
-		if err := appendAudit(ctx, tx, "station", station.ID, "CompleteRotation", "rotation", request.RotationId, outcome, map[string]any{
-			"applied": request.Applied,
-			"state":   string(state),
-		}); err != nil {
-			return nil, status.Error(codes.Internal, "could not record rotation completion")
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, status.Error(codes.Internal, "could not record rotation completion")
-		}
-		committed = true
 		return &backendv1.CompleteRotationResponse{}, nil
 	}
-	reject := func(code codes.Code, outcome, reason string, state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
-		if err := appendAudit(ctx, tx, "station", station.ID, "CompleteRotation", "rotation", request.RotationId, outcome, map[string]any{
-			"applied": request.Applied,
-			"reason":  reason,
-			"state":   string(state),
-		}); err != nil {
-			return nil, status.Error(codes.Internal, "could not record rotation completion")
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return nil, status.Error(codes.Internal, "could not record rotation completion")
-		}
-		committed = true
-		return nil, status.Error(code, reason)
+	reject := func(code codes.Code, reason string, state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
+		return nil, decision.deny(ctx, code, "denied", reason, map[string]any{"state": string(state)})
 	}
 
 	secrets, err := db.EscrowRotation(ctx, tx, request.RotationId)
@@ -365,19 +333,19 @@ func (s *Server) CompleteRotation(
 		return nil, status.Error(codes.Internal, "could not look up secret rotation")
 	}
 	if len(secrets) == 0 {
-		return reject(codes.NotFound, "denied", "secret rotation was not found", rotationMissing)
+		return reject(codes.NotFound, "secret rotation was not found", rotationMissing)
 	}
 	for _, secret := range secrets {
 		if secret.StationID != station.ID {
-			return reject(codes.PermissionDenied, "denied", "rotation belongs to a different station", rotationStatus(secret.State))
+			return reject(codes.PermissionDenied, "rotation belongs to a different station", rotationStatus(secret.State))
 		}
 	}
 	state := rotationState(secrets)
 	if request.Applied && state == rotationApplied || !request.Applied && state == rotationAbandoned {
-		return finish("success", state)
+		return finish(state)
 	}
 	if state != rotationPending {
-		return reject(codes.FailedPrecondition, "denied", "secret rotation is no longer pending", state)
+		return reject(codes.FailedPrecondition, "secret rotation is no longer pending", state)
 	}
 	if request.Applied {
 		now := s.now
@@ -396,19 +364,19 @@ func (s *Server) CompleteRotation(
 				s.logger.Error("mark expired rotation unconfirmed failed", "error", err)
 				return nil, status.Error(codes.Internal, "could not record rotation state")
 			}
-			return reject(codes.FailedPrecondition, "denied", "pending secret rotation is older than 15 minutes", rotationUnconfirmed)
+			return reject(codes.FailedPrecondition, "pending secret rotation is older than 15 minutes", rotationUnconfirmed)
 		}
 		if err := db.ActivateEscrowRotation(ctx, tx, secrets); err != nil {
 			s.logger.Error("activate escrow rotation failed", "error", err)
 			return nil, status.Error(codes.Internal, "could not activate secret rotation")
 		}
-		return finish("success", rotationApplied)
+		return finish(rotationApplied)
 	}
 	if err := db.UpdateEscrowRotationState(ctx, tx, request.RotationId, db.EscrowPending, db.EscrowAbandoned); err != nil {
 		s.logger.Error("abandon escrow rotation failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not abandon secret rotation")
 	}
-	return finish("success", rotationAbandoned)
+	return finish(rotationAbandoned)
 }
 
 func (s *Server) ReportAudit(
@@ -435,17 +403,12 @@ func (s *Server) ReportAudit(
 		}
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].Sequence < events[j].Sequence })
-	tx, err := s.store.Pool.Begin(ctx)
+	tx, err := s.beginAuditTx(ctx)
 	if err != nil {
 		s.logger.Error("begin agent audit import failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not record agent audit events")
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer tx.rollbackUnlessCommitted(ctx)
 	cursor, err := db.LockStationAuditCursor(ctx, tx, station.ID)
 	if err != nil {
 		s.logger.Error("lock station audit cursor failed", "error", err)
@@ -487,7 +450,6 @@ func (s *Server) ReportAudit(
 		s.logger.Error("commit agent audit import failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not record agent audit events")
 	}
-	committed = true
 	return &backendv1.ReportAuditResponse{AcceptedThrough: uint64(cursor)}, nil
 }
 

@@ -35,12 +35,7 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, reque
 	if err != nil {
 		return nil, fmt.Errorf("begin grant transaction: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(ctx)
-		}
-	}()
+	defer func() { _ = tx.Rollback(ctx) }()
 	signed, err := IssueInTx(ctx, tx, signer, request, "RequestGrant")
 	if err != nil {
 		return nil, err
@@ -48,7 +43,6 @@ func Issue(ctx context.Context, pool *pgxpool.Pool, signer signing.Signer, reque
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit grant transaction: %w", err)
 	}
-	committed = true
 	return signed, nil
 }
 
