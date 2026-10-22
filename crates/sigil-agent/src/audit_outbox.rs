@@ -13,13 +13,13 @@ use std::{
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sigil_proto::backend::v1::AgentAuditEvent;
-use tracing::{
-    Event, Subscriber,
-    field::{Field, Visit},
-};
+use tracing::{Event, Subscriber};
 use tracing_subscriber::{Layer, layer::Context as SubscriberContext};
 
-use crate::secure_path::{self, ProtectedFileMode};
+use crate::{
+    audit,
+    secure_path::{self, ProtectedFileMode},
+};
 
 pub const MAX_OUTBOX_EVENTS: usize = 100_000;
 
@@ -357,52 +357,16 @@ impl AuditOutboxLayer {
 
 impl<S: Subscriber> Layer<S> for AuditOutboxLayer {
     fn on_event(&self, event: &Event<'_>, _context: SubscriberContext<'_, S>) {
-        if event.metadata().target() != "sigil::audit" {
+        if event.metadata().target() != audit::TARGET {
             return;
         }
-        let mut visitor = AuditVisitor::default();
-        event.record(&mut visitor);
-        let fields = visitor.fields;
-        let rpc = field_string(&fields, "rpc");
-        if rpc == "AuditOverflow" {
-            return;
-        }
-        let outcome = match field_string(&fields, "outcome") {
-            outcome if outcome.is_empty() => "error".to_owned(),
-            outcome => outcome,
-        };
-        let session_text = field_string(&fields, "session_id");
-        let session_id = session_text
-            .strip_prefix("Some(")
-            .and_then(|value| value.strip_suffix(')'))
-            .unwrap_or(&session_text)
-            .parse()
-            .unwrap_or_default();
         let event = AgentAuditEvent {
-            sequence: 0,
             occurred_at_unix_ms: unix_time_millis(),
-            rpc: if rpc.is_empty() {
-                "AgentEvent".into()
-            } else {
-                rpc
-            },
-            operation: field_string(&fields, "operation"),
-            device_id: field_string(&fields, "device_id"),
-            token_serial: {
-                let serial = field_string(&fields, "token_serial");
-                if serial.is_empty() {
-                    field_string(&fields, "serial")
-                } else {
-                    serial
-                }
-            },
-            caller_os_user: field_string(&fields, "caller_os_user"),
-            caller_session_id: session_id,
-            outcome,
-            code: field_string(&fields, "code"),
-            grant_id: field_string(&fields, "grant_id"),
-            rotation_id: field_string(&fields, "rotation_id"),
+            ..audit::decode(event)
         };
+        if event.rpc == "AuditOverflow" {
+            return;
+        }
         let rpc = event.rpc.clone();
         let operation = event.operation.clone();
         if let Err(error) = self.outbox.enqueue(event) {
@@ -415,55 +379,6 @@ impl<S: Subscriber> Layer<S> for AuditOutboxLayer {
             );
         }
     }
-}
-
-#[derive(Default)]
-struct AuditVisitor {
-    fields: std::collections::HashMap<String, String>,
-}
-
-impl Visit for AuditVisitor {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        self.fields.insert(
-            field.name().to_owned(),
-            normalize_debug(&format!("{value:?}")),
-        );
-    }
-
-    fn record_str(&mut self, field: &Field, value: &str) {
-        self.fields
-            .insert(field.name().to_owned(), value.to_owned());
-    }
-
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        self.fields
-            .insert(field.name().to_owned(), value.to_string());
-    }
-
-    fn record_i64(&mut self, field: &Field, value: i64) {
-        self.fields
-            .insert(field.name().to_owned(), value.to_string());
-    }
-}
-
-fn field_string(fields: &std::collections::HashMap<String, String>, name: &str) -> String {
-    fields.get(name).cloned().unwrap_or_default()
-}
-
-fn normalize_debug(value: &str) -> String {
-    if value == "None" {
-        return String::new();
-    }
-    if let Some(value) = value
-        .strip_prefix("Some(")
-        .and_then(|value| value.strip_suffix(')'))
-    {
-        return value.to_owned();
-    }
-    if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
-        return value[1..value.len() - 1].to_owned();
-    }
-    value.to_owned()
 }
 
 fn take_sequence(cursor: &mut OutboxCursor) -> u64 {

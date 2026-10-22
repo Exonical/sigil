@@ -1212,3 +1212,32 @@ async fn oversized_managed_tokens_are_rejected_before_reaching_the_backend() {
     assert_eq!(status.message(), "managed access token exceeds 16 KiB");
     assert_eq!(backend.authorize_calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn invalid_slot_bytes_are_reported_the_same_way_by_every_piv_rpc() {
+    let (_mock, credentials) = mock_service();
+    let service = agent_service(credentials, None, None);
+    for (slot_byte, detail) in [(0x00, "00"), (0x9b, "9b"), (0x1ff, "511")] {
+        let read = Agent::get_piv_certificate(
+            &service,
+            with_caller(Request::new(v1::GetPivCertificateRequest {
+                id: "mock-yubikey-12345678".into(),
+                slot_byte,
+            })),
+        )
+        .await
+        .unwrap_err();
+        let mut generate = generate_request(PivSlot::AUTHENTICATION, None);
+        generate.slot_byte = slot_byte;
+        let mutation = Agent::generate_piv_key(&service, with_caller(Request::new(generate)))
+            .await
+            .unwrap_err();
+        for status in [read, mutation] {
+            assert_eq!(status.code(), tonic::Code::InvalidArgument);
+            assert!(matches!(
+                error_from_status(&status),
+                sigil_core::CredentialError::InvalidSlot(ref value) if value == detail
+            ));
+        }
+    }
+}

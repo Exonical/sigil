@@ -1,5 +1,6 @@
 //! Privileged local agent for Sigil hardware operations.
 
+pub mod audit;
 pub mod audit_outbox;
 pub mod backend;
 pub mod caller;
@@ -28,6 +29,7 @@ use tokio::{
 };
 
 use crate::{
+    audit::{AuditOutcome, AuditRecord},
     audit_outbox::{AuditOutbox, PendingCompletion},
     backend::{GrpcBackend, ManagedAuthority, observed_token},
     caller::CallerPolicy,
@@ -260,15 +262,7 @@ fn expire_if_stale(outbox: &AuditOutbox, completion: &PendingCompletion) -> anyh
         return Ok(false);
     }
     outbox.remove_completion(&completion.rotation_id)?;
-    tracing::error!(
-        target: "sigil::audit",
-        rpc = "CompleteRotation",
-        operation = "rotation_completion",
-        rotation_id = %completion.rotation_id,
-        outcome = "error",
-        code = "completion_expired",
-        "pending rotation completion expired before backend confirmation"
-    );
+    audit_completion_expired(&completion.rotation_id);
     Ok(true)
 }
 
@@ -341,6 +335,26 @@ fn spawn_completion_reporter(
             }
         }
     })
+}
+
+fn audit_completion_expired(rotation_id: &str) {
+    audit::emit(&AuditRecord {
+        rpc: "CompleteRotation",
+        operation: "rotation_completion",
+        device_id: "",
+        token_serial: "",
+        piv_slot: None,
+        caller: None,
+        outcome: AuditOutcome::Error,
+        code: "completion_expired",
+        grant_id: "",
+        rotation_id,
+    });
+    tracing::error!(
+        target: "sigil::agent",
+        rotation_id,
+        "pending rotation completion expired before backend confirmation"
+    );
 }
 
 pub async fn retry_pending_completions_once(
