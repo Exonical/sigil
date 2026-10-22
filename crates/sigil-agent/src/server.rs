@@ -17,7 +17,10 @@ use crate::enrollment;
 use crate::grant::{GrantExpectation, GrantProvider, GrantVerifier, Unconfigured};
 use crate::{
     audit_outbox::{AuditOutbox, PendingCompletion},
-    backend::{ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret, token_identity},
+    backend::{
+        MAX_ACCESS_TOKEN_BYTES, ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret,
+        token_identity,
+    },
     caller::{self, CallerIdentity, CallerPolicy},
 };
 
@@ -133,11 +136,10 @@ impl AgentService {
         self
     }
 
-    fn caller<T>(
+    fn authorized_identity<T>(
         &self,
         request: &Request<T>,
-        rpc: &'static str,
-        device_id: &str,
+        on_reject: impl FnOnce(&CallerIdentity, &Status),
     ) -> std::result::Result<CallerIdentity, Status> {
         let identity = request
             .extensions()
@@ -146,23 +148,21 @@ impl AgentService {
             .unwrap_or_else(CallerIdentity::rejected);
         if let Err(error) = caller::authorize(&identity, self.policy) {
             let status = status_from_error(&error);
-            audit_static(&identity, rpc, device_id, false, Some(&status));
+            on_reject(&identity, &status);
             return Err(status);
         }
         Ok(identity)
     }
 
-    async fn ensure_device_serial(&self, id: &DeviceId) -> std::result::Result<(), Status> {
-        let credentials = self.credentials.clone();
-        let device_id = id.clone();
-        let info = blocking(move || credentials.device(&device_id)).await?;
-        if info.serial.is_some() {
-            Ok(())
-        } else {
-            Err(status_from_error(&CredentialError::OperationUnauthorized(
-                "the device serial number is unavailable".into(),
-            )))
-        }
+    fn caller<T>(
+        &self,
+        request: &Request<T>,
+        rpc: &'static str,
+        device_id: &str,
+    ) -> std::result::Result<CallerIdentity, Status> {
+        self.authorized_identity(request, |identity, status| {
+            audit_static(identity, rpc, device_id, false, Some(status));
+        })
     }
 
     fn caller_piv<T>(
@@ -173,15 +173,9 @@ impl AgentService {
         operation: &'static str,
         slot: Option<u8>,
     ) -> std::result::Result<CallerIdentity, Status> {
-        let identity = request
-            .extensions()
-            .get::<CallerIdentity>()
-            .cloned()
-            .unwrap_or_else(CallerIdentity::rejected);
-        if let Err(error) = caller::authorize(&identity, self.policy) {
-            let status = status_from_error(&error);
+        self.authorized_identity(request, |identity, status| {
             PivAudit {
-                caller: &identity,
+                caller: identity,
                 rpc,
                 device_id,
                 operation,
@@ -191,9 +185,7 @@ impl AgentService {
                 rotation_id: None,
             }
             .record::<()>(&Err(status.clone()));
-            return Err(status);
-        }
-        Ok(identity)
+        })
     }
 
     fn caller_device<T>(
@@ -203,35 +195,23 @@ impl AgentService {
         device_id: &str,
         operation: &'static str,
     ) -> std::result::Result<CallerIdentity, Status> {
-        let identity = request
-            .extensions()
-            .get::<CallerIdentity>()
-            .cloned()
-            .unwrap_or_else(CallerIdentity::rejected);
-        if let Err(error) = caller::authorize(&identity, self.policy) {
-            let status = status_from_error(&error);
+        self.authorized_identity(request, |identity, status| {
             audit_device::<()>(
-                &identity,
+                identity,
                 rpc,
                 device_id,
                 operation,
                 "",
                 &Err(status.clone()),
             );
-            return Err(status);
-        }
-        Ok(identity)
+        })
     }
 
     async fn device_serial(&self, id: &DeviceId) -> std::result::Result<String, Status> {
         let credentials = self.credentials.clone();
         let device_id = id.clone();
         let device = blocking(move || credentials.device(&device_id)).await?;
-        device.serial.ok_or_else(|| {
-            status_from_error(&CredentialError::OperationUnauthorized(
-                "the device serial number is unavailable".into(),
-            ))
-        })
+        device.serial.ok_or_else(serial_unavailable)
     }
 
     async fn ensure_expected_serial(
@@ -246,6 +226,18 @@ impl AgentService {
         Ok(actual)
     }
 
+    async fn preflight_serial(
+        &self,
+        device_id: &str,
+        expected_serial: &str,
+        on_reject: impl FnOnce(&Status),
+    ) -> std::result::Result<String, Status> {
+        let id = DeviceId(device_id.to_owned());
+        self.ensure_expected_serial(&id, expected_serial)
+            .await
+            .inspect_err(on_reject)
+    }
+
     async fn preflight_device_serial(
         &self,
         caller: &CallerIdentity,
@@ -254,21 +246,17 @@ impl AgentService {
         operation: &'static str,
         expected_serial: &str,
     ) -> std::result::Result<String, Status> {
-        let id = DeviceId(device_id.to_owned());
-        match self.ensure_expected_serial(&id, expected_serial).await {
-            Ok(serial) => Ok(serial),
-            Err(status) => {
-                audit_device::<()>(
-                    caller,
-                    rpc,
-                    device_id,
-                    operation,
-                    expected_serial,
-                    &Err(status.clone()),
-                );
-                Err(status)
-            }
-        }
+        self.preflight_serial(device_id, expected_serial, |status| {
+            audit_device::<()>(
+                caller,
+                rpc,
+                device_id,
+                operation,
+                expected_serial,
+                &Err(status.clone()),
+            );
+        })
+        .await
     }
 
     async fn preflight_piv_serial(
@@ -280,24 +268,20 @@ impl AgentService {
         slot: Option<u8>,
         expected_serial: &str,
     ) -> std::result::Result<String, Status> {
-        let id = DeviceId(device_id.to_owned());
-        match self.ensure_expected_serial(&id, expected_serial).await {
-            Ok(serial) => Ok(serial),
-            Err(status) => {
-                PivAudit {
-                    caller,
-                    rpc,
-                    device_id,
-                    operation,
-                    slot,
-                    serial: expected_serial,
-                    grant_id: None,
-                    rotation_id: None,
-                }
-                .record::<()>(&Err(status.clone()));
-                Err(status)
+        self.preflight_serial(device_id, expected_serial, |status| {
+            PivAudit {
+                caller,
+                rpc,
+                device_id,
+                operation,
+                slot,
+                serial: expected_serial,
+                grant_id: None,
+                rotation_id: None,
             }
-        }
+            .record::<()>(&Err(status.clone()));
+        })
+        .await
     }
 
     async fn authorize_managed(
@@ -310,21 +294,8 @@ impl AgentService {
         mut managed: v1::ManagedAuthorization,
     ) -> std::result::Result<(ManagedGrant, String), Status> {
         let access_token = Zeroizing::new(std::mem::take(&mut managed.access_token));
-        let Some(backend) = &self.backend else {
-            return Err(status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            )));
-        };
-        if access_token.is_empty() {
-            return Err(status_from_error(&CredentialError::BackendRejected(
-                "managed access token is required".into(),
-            )));
-        }
-        if access_token.len() > 16 * 1024 {
-            return Err(Status::invalid_argument(
-                "managed access token exceeds 16 KiB",
-            ));
-        }
+        let backend = self.require_backend()?;
+        validate_managed_token(&access_token)?;
         let id = DeviceId(device_id.to_owned());
         let credentials = self.credentials.clone();
         let device = blocking(move || credentials.device(&id)).await?;
@@ -376,11 +347,13 @@ impl AgentService {
         Ok((authorization, grant_id))
     }
 
+    fn require_backend(&self) -> std::result::Result<&Arc<dyn ManagedAuthority>, Status> {
+        self.backend.as_ref().ok_or_else(backend_unavailable)
+    }
+
     fn missing_managed_authorization_status(&self) -> Status {
         if self.backend.is_none() {
-            status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            ))
+            backend_unavailable()
         } else {
             status_from_error(&CredentialError::BackendRejected(
                 "managed authorization is required".into(),
@@ -393,11 +366,7 @@ impl AgentService {
         rotation_id: &str,
         applied: bool,
     ) -> std::result::Result<(), Status> {
-        let Some(backend) = &self.backend else {
-            return Err(status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            )));
-        };
+        let backend = self.require_backend()?;
         let mut last_error = None;
         for delay in [
             Duration::ZERO,
@@ -595,6 +564,32 @@ impl AgentService {
     }
 }
 
+fn backend_unavailable() -> Status {
+    status_from_error(&CredentialError::BackendUnavailable(
+        "backend is not configured".into(),
+    ))
+}
+
+fn serial_unavailable() -> Status {
+    status_from_error(&CredentialError::OperationUnauthorized(
+        "the device serial number is unavailable".into(),
+    ))
+}
+
+fn validate_managed_token(access_token: &str) -> std::result::Result<(), Status> {
+    if access_token.is_empty() {
+        return Err(status_from_error(&CredentialError::BackendRejected(
+            "managed access token is required".into(),
+        )));
+    }
+    if access_token.len() > MAX_ACCESS_TOKEN_BYTES {
+        return Err(Status::invalid_argument(
+            "managed access token exceeds 16 KiB",
+        ));
+    }
+    Ok(())
+}
+
 fn map_backend_status(status: Status) -> Status {
     match status.code() {
         tonic::Code::Unauthenticated
@@ -744,24 +739,12 @@ impl AgentService {
         ),
         Status,
     > {
-        let backend = self.backend.clone().ok_or_else(|| {
-            status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            ))
-        })?;
-        if managed.access_token.is_empty() {
-            return Err(status_from_error(&CredentialError::BackendRejected(
-                "managed access token is required".into(),
-            )));
-        }
+        let backend = self.require_backend()?;
+        validate_managed_token(&managed.access_token)?;
         let id = DeviceId(device_id.to_owned());
         let credentials = self.credentials.clone();
         let info = blocking(move || credentials.device(&id)).await?;
-        let (vendor, serial) = token_identity(&info).ok_or_else(|| {
-            status_from_error(&CredentialError::OperationUnauthorized(
-                "the device serial number is unavailable".into(),
-            ))
-        })?;
+        let (vendor, serial) = token_identity(&info).ok_or_else(serial_unavailable)?;
         let profiles = backend
             .list_certificate_profiles(sigil_proto::backend::v1::ListProfilesRequest {
                 access_token: managed.access_token.clone(),
@@ -867,11 +850,7 @@ impl AgentService {
         .into_inner()
         .csr_der;
         drop(pin);
-        let backend = self.backend.clone().ok_or_else(|| {
-            status_from_error(&CredentialError::BackendUnavailable(
-                "backend is not configured".into(),
-            ))
-        })?;
+        let backend = self.require_backend()?;
         let issued = backend
             .issue_certificate(sigil_proto::backend::v1::IssueCertificateRequest {
                 access_token: managed.0.access_token.clone(),
@@ -1154,7 +1133,7 @@ impl v1::agent_server::Agent for AgentService {
         let input = request.into_inner();
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
-        self.ensure_device_serial(&id).await.inspect_err(|status| {
+        self.device_serial(&id).await.inspect_err(|status| {
             audit_static(
                 &caller,
                 "EnrollFingerprint",
@@ -1225,7 +1204,7 @@ impl v1::agent_server::Agent for AgentService {
         let input = request.into_inner();
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
-        self.ensure_device_serial(&id).await.inspect_err(|status| {
+        self.device_serial(&id).await.inspect_err(|status| {
             audit_static(
                 &caller,
                 "RemoveFingerprint",

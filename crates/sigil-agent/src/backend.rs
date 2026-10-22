@@ -25,7 +25,7 @@ use zeroize::Zeroizing;
 use crate::config::{AgentConfig, BackendCertificateStore, BackendConfig};
 
 const BACKEND_TIMEOUT: Duration = Duration::from_secs(15);
-const MAX_ACCESS_TOKEN_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_ACCESS_TOKEN_BYTES: usize = 16 * 1024;
 
 pub struct ManagedRequest {
     pub access_token: Zeroizing<String>,
