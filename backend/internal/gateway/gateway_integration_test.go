@@ -601,6 +601,18 @@ func TestManagedEscrowRotationsAndStationAuditCursor(t *testing.T) {
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("managed PIV_SET_RETRIES status = %v, want InvalidArgument", status.Code(err))
 	}
+	var setRetriesDenials int
+	if err := store.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_events
+		WHERE action='AuthorizeManagedOperation' AND target_id=$1 AND outcome='denied'
+		  AND detail->>'operation'='PIV_SET_RETRIES'
+		  AND detail->>'reason'='PIV_SET_RETRIES is not supported in managed mode'
+	`, managedTestSerial).Scan(&setRetriesDenials); err != nil {
+		t.Fatal(err)
+	}
+	if setRetriesDenials != 1 {
+		t.Fatalf("managed PIV_SET_RETRIES denial audit rows = %d, want 1", setRetriesDenials)
+	}
 
 	auditEvents := []*backendv1.AgentAuditEvent{
 		{

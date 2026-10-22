@@ -64,32 +64,26 @@ func (s *Server) AuthorizeManagedOperation(
 		return nil, err
 	}
 	operationName := agentv1.Operation_name[int32(request.Operation)]
+	decision := auditDecision{
+		actorType: "user", actorID: authorization.principal.UserID, action: "AuthorizeManagedOperation",
+		targetType: "token", targetID: request.TokenSerial,
+		detail:  map[string]any{"operation": operationName},
+		failure: "could not record managed-operation decision",
+	}
 	if request.Operation == agentv1.Operation_PIV_SET_RETRIES {
-		reason := "PIV_SET_RETRIES is not supported in managed mode"
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeDenied, reason); auditErr != nil {
-			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
-		}
-		return nil, status.Error(codes.InvalidArgument, reason)
+		return nil, decision.denyStandalone(ctx, s.store.Pool, codes.InvalidArgument, "PIV_SET_RETRIES is not supported in managed mode")
 	}
 	plan, ok := planManagedOperation(request.Operation)
 	if !ok {
-		reason := "operation is not supported by managed escrow"
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeDenied, reason); auditErr != nil {
-			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
-		}
-		return nil, status.Error(codes.InvalidArgument, reason)
+		return nil, decision.denyStandalone(ctx, s.store.Pool, codes.InvalidArgument, "operation is not supported by managed escrow")
 	}
 	if s.escrowErr != nil {
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeError, "escrow key configuration is invalid"); auditErr != nil {
-			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
-		}
-		return nil, status.Error(codes.Internal, "managed escrow is unavailable")
+		return nil, decision.failStandalone(ctx, s.store.Pool, "escrow key configuration is invalid",
+			status.Error(codes.Internal, "managed escrow is unavailable"))
 	}
 	if s.escrow == nil {
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeError, "escrow is not configured"); auditErr != nil {
-			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
-		}
-		return nil, status.Error(codes.FailedPrecondition, "managed escrow is not configured")
+		return nil, decision.failStandalone(ctx, s.store.Pool, "escrow is not configured",
+			status.Error(codes.FailedPrecondition, "managed escrow is not configured"))
 	}
 
 	tx, err := s.beginAuditTx(ctx)
@@ -98,12 +92,7 @@ func (s *Server) AuthorizeManagedOperation(
 		return nil, status.Error(codes.Internal, "could not authorize managed operation")
 	}
 	defer tx.rollbackUnlessCommitted(ctx)
-	decision := auditDecision{
-		tx: tx, actorType: "user", actorID: authorization.principal.UserID, action: "AuthorizeManagedOperation",
-		targetType: "token", targetID: request.TokenSerial,
-		detail:  map[string]any{"operation": operationName},
-		failure: "could not record managed-operation decision",
-	}
+	decision.tx = tx
 
 	token, err := db.LockToken(ctx, tx, request.TokenVendor, request.TokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
