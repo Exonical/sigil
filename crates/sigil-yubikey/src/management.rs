@@ -25,7 +25,7 @@ pub const TAG_FIPS_APPROVED: u8 = 0x15;
 pub const TAG_PIN_COMPLEXITY: u8 = 0x16;
 const INS_WRITE_CONFIG: u8 = 0x1c;
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
-const MAX_INFO_PAGES: u8 = 4;
+pub const MAX_INFO_PAGES: u8 = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {

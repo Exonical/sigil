@@ -36,7 +36,7 @@ impl CardTransport for PcscTransport<'_, '_> {
     }
 }
 
-fn map_pcsc_error(error: PcscError) -> CredentialError {
+pub(super) fn map_pcsc_error(error: PcscError) -> CredentialError {
     match error {
         PcscError::RemovedCard | PcscError::ResetCard | PcscError::NoSmartcard => {
             CredentialError::DeviceRemoved
