@@ -316,24 +316,36 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
         }
         _ => true,
     };
+    let form = PivForm {
+        action,
+        fips,
+        current_secret_known: current_secret_default || managed_mode,
+        current: Zeroizing::new(current.read().to_string()),
+        new_secret: Zeroizing::new(new_secret.read().to_string()),
+        confirmation: Zeroizing::new(confirmation.read().to_string()),
+        subject: subject.read().clone(),
+        input_path: input_path.read().clone(),
+        output_path: output_path.read().clone(),
+        format: *format.read(),
+        algorithm: *algorithm.read(),
+        pin_policy: if capabilities.pin_touch_policy {
+            *pin_policy.read()
+        } else {
+            PinPolicy::Default
+        },
+        touch_policy: if capabilities.pin_touch_policy {
+            *touch_policy.read()
+        } else {
+            TouchPolicy::Default
+        },
+        generated_key: Zeroizing::new(generated_key.read().to_string()),
+        have_stored_key: have_stored_key(),
+        destructive_confirmed: destructive_confirmed(),
+    };
     let can_submit = action_capability_supported
         && algorithm_capability_supported
         && slot_capability_supported
-        && validate_form(
-            action,
-            fips,
-            current_secret_default || managed_mode,
-            current.read().as_str(),
-            new_secret.read().as_str(),
-            confirmation.read().as_str(),
-            subject.read().as_str(),
-            input_path.read().as_ref(),
-            output_path.read().as_ref(),
-            *pin_policy.read(),
-            have_stored_key(),
-            !generated_key.read().is_empty(),
-            destructive_confirmed(),
-        );
+        && form.check().is_ok();
     let label = action_button(action);
     let live_validation = code_validation(
         new_secret.read().as_str(),
@@ -401,26 +413,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                             let id = device.id.clone();
                             let serial = device.serial.clone().unwrap_or_default();
                             let info = info.clone();
-                            let mut current = Zeroizing::new(current.read().to_string());
-                            let mut new_secret = Zeroizing::new(new_secret.read().to_string());
-                            let mut confirmation = Zeroizing::new(confirmation.read().to_string());
-                            let subject = subject.read().clone();
-                            let input_path = input_path.read().clone();
-                            let output_path = output_path.read().clone();
-                            let mut generated_key = Zeroizing::new(generated_key.read().to_string());
-                            let current_format = *format.read();
-                            let current_algorithm = *algorithm.read();
-                            let current_pin_policy = if capabilities.pin_touch_policy {
-                                *pin_policy.read()
-                            } else {
-                                PinPolicy::Default
-                            };
-                            let current_touch_policy = if capabilities.pin_touch_policy {
-                                *touch_policy.read()
-                            } else {
-                                TouchPolicy::Default
-                            };
-                            let destructive_confirmed = destructive_confirmed();
+                            let mut form = form;
                             let mut busy = busy;
                             let mut error = error;
                             let mut toast = toast_signal;
@@ -446,11 +439,11 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                     let operation = match action {
                                         PivAction::GenerateKey(_) => SlotOperation::GenerateKey(PivKeyConfiguration {
                                             slot,
-                                            algorithm: current_algorithm,
-                                            pin_policy: current_pin_policy,
-                                            touch_policy: current_touch_policy,
+                                            algorithm: form.algorithm,
+                                            pin_policy: form.pin_policy,
+                                            touch_policy: form.touch_policy,
                                         }),
-                                        PivAction::ImportCertificate(_) => match input_path.as_ref().map(std::fs::read) {
+                                        PivAction::ImportCertificate(_) => match form.input_path.as_ref().map(std::fs::read) {
                                             Some(Ok(der)) => SlotOperation::ImportCertificate(
                                                 der,
                                                 generated_piv_spki
@@ -522,24 +515,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                     });
                                     return;
                                 }
-                                let operation = prepare_operation(
-                                    action,
-                                    info.as_ref(),
-                                    fips,
-                                    &current,
-                                    &new_secret,
-                                    &confirmation,
-                                    &subject,
-                                    input_path.as_ref(),
-                                    output_path.as_ref(),
-                                    current_format,
-                                    current_algorithm,
-                                    current_pin_policy,
-                                    current_touch_policy,
-                                    &generated_key,
-                                    destructive_confirmed,
-                                );
-                                let operation = match operation {
+                                let operation = match prepare_operation(&form, info.as_ref()) {
                                     Ok(operation) => operation,
                                     Err(message) => {
                                         error.set_live(Some(message));
@@ -562,10 +538,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
                                 {
                                     keys.remove(&(id.clone(), configuration.slot));
                                 }
-                                current.zeroize();
-                                new_secret.zeroize();
-                                confirmation.zeroize();
-                                generated_key.zeroize();
+                                form.zeroize_secrets();
                                 busy.set_live(true);
                                 error.set_live(None);
                                 let service = service.clone();
@@ -743,14 +716,19 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                             let id = device.id.clone();
                             let serial = device.serial.clone().unwrap_or_default();
                             let info = info.clone();
-                            let mut current_pin = Zeroizing::new(current_pin.read().to_string());
-                            let mut current_puk = Zeroizing::new(current_puk.read().to_string());
-                            let mut current_management_key = Zeroizing::new(current_management_input.read().to_string());
-                            let mut pin = Zeroizing::new(pin.read().to_string());
-                            let mut pin_confirmation = Zeroizing::new(pin_confirmation.read().to_string());
-                            let mut puk = Zeroizing::new(puk.read().to_string());
-                            let mut puk_confirmation = Zeroizing::new(puk_confirmation.read().to_string());
-                            let mut management_key = Zeroizing::new(management_key.read().to_string());
+                            let mut form = FipsSetupForm {
+                                pin_default,
+                                puk_default,
+                                management_key_default,
+                                current_pin: Zeroizing::new(current_pin.read().to_string()),
+                                current_puk: Zeroizing::new(current_puk.read().to_string()),
+                                current_management_key: Zeroizing::new(current_management_input.read().to_string()),
+                                new_pin: Zeroizing::new(pin.read().to_string()),
+                                pin_confirmation: Zeroizing::new(pin_confirmation.read().to_string()),
+                                new_puk: Zeroizing::new(puk.read().to_string()),
+                                puk_confirmation: Zeroizing::new(puk_confirmation.read().to_string()),
+                                new_management_key: Zeroizing::new(management_key.read().to_string()),
+                            };
                             let mut busy = busy;
                             let mut error = error;
                             let mut results = results;
@@ -759,34 +737,14 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                             let mut piv_slots = piv_slots_signal;
                             move |_| {
                                 if busy() { return; }
-                                let secrets = match prepare_fips_setup(
-                                    info.as_ref(),
-                                    pin_default,
-                                    puk_default,
-                                    management_key_default,
-                                    &current_pin,
-                                    &current_puk,
-                                    &current_management_key,
-                                    &pin,
-                                    &pin_confirmation,
-                                    &puk,
-                                    &puk_confirmation,
-                                    &management_key,
-                                ) {
+                                let secrets = match prepare_fips_setup(&form, info.as_ref()) {
                                     Ok(secrets) => secrets,
                                     Err(message) => {
                                         error.set_live(Some(message));
                                         return;
                                     }
                                 };
-                                pin.zeroize();
-                                pin_confirmation.zeroize();
-                                puk.zeroize();
-                                puk_confirmation.zeroize();
-                                current_pin.zeroize();
-                                current_puk.zeroize();
-                                current_management_key.zeroize();
-                                management_key.zeroize();
+                                form.zeroize_secrets();
                                 busy.set_live(true);
                                 error.set_live(None);
                                 let service = service.clone();
@@ -1210,111 +1168,149 @@ fn action_destructive(action: PivAction) -> bool {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn validate_form(
+/// Snapshot of the PIV dialog inputs. `check` holds the per-action rules
+/// that gate the submit button, and `prepare_operation` runs them again
+/// before it builds the operation, so the two cannot disagree.
+struct PivForm {
     action: PivAction,
     fips: bool,
-    current_secret_default: bool,
-    current: &str,
-    new_secret: &str,
-    confirmation: &str,
-    subject: &str,
-    input_path: Option<&PathBuf>,
-    output_path: Option<&PathBuf>,
-    pin_policy: PinPolicy,
-    have_stored_key: bool,
-    generated_key: bool,
-    destructive_confirmed: bool,
-) -> bool {
-    let management_entry_valid =
-        !action_needs_management_key(action) || current_secret_default || !current.is_empty();
-    let current_code_valid = match action {
-        PivAction::ChangePin | PivAction::CreateCsr(_) => {
-            current_secret_default || !current.is_empty()
-        }
-        PivAction::ChangePuk | PivAction::UnblockPin => {
-            current_secret_default || !current.is_empty()
-        }
-        _ => true,
-    };
-    let code_valid = match action {
-        PivAction::ChangePin | PivAction::UnblockPin => {
-            validate_code(new_secret, "PIN", fips).is_ok() && new_secret == confirmation
-        }
-        PivAction::ChangePuk => {
-            validate_code(new_secret, "PUK", fips).is_ok() && new_secret == confirmation
-        }
-        PivAction::CreateCsr(_) => !subject.trim().is_empty(),
-        _ => true,
-    };
-    let output_valid = match action {
-        PivAction::ImportCertificate(_) => input_path.is_some(),
-        PivAction::ExportCertificate(_) | PivAction::CreateCsr(_) | PivAction::Attest(_) => {
-            output_path.is_some()
-        }
-        _ => true,
-    };
-    let new_key_valid =
-        action != PivAction::ChangeManagementKey || (generated_key && have_stored_key);
-    let destructive_valid = !action_destructive(action) || destructive_confirmed;
-    management_entry_valid
-        && current_code_valid
-        && code_valid
-        && output_valid
-        && new_key_valid
-        && destructive_valid
-        && (!fips || pin_policy != PinPolicy::Never)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn prepare_operation(
-    action: PivAction,
-    info: Option<&sigil_core::PivInfo>,
-    fips: bool,
-    current: &str,
-    new_secret: &str,
-    confirmation: &str,
-    subject: &str,
-    input_path: Option<&PathBuf>,
-    output_path: Option<&PathBuf>,
+    /// The current secret is the factory default or held by Sigil, so the
+    /// user does not have to enter it.
+    current_secret_known: bool,
+    current: Zeroizing<String>,
+    new_secret: Zeroizing<String>,
+    confirmation: Zeroizing<String>,
+    subject: String,
+    input_path: Option<PathBuf>,
+    output_path: Option<PathBuf>,
     format: CertificateFormat,
     algorithm: PivKeyAlgorithm,
     pin_policy: PinPolicy,
     touch_policy: TouchPolicy,
-    generated_key: &str,
+    generated_key: Zeroizing<String>,
+    have_stored_key: bool,
     destructive_confirmed: bool,
-) -> Result<PivOperation, String> {
+}
+
+impl PivForm {
+    fn check(&self) -> Result<(), String> {
+        if action_destructive(self.action) && !self.destructive_confirmed {
+            return Err(match self.action {
+                PivAction::GenerateKey(_) => "Confirm key generation for this slot.",
+                PivAction::ImportCertificate(_) => "Confirm certificate import for this slot.",
+                PivAction::DeleteCertificate(_) => "Confirm certificate deletion.",
+                _ => "Confirm key deletion.",
+            }
+            .into());
+        }
+        match self.action {
+            PivAction::ChangePin | PivAction::UnblockPin => {
+                self.check_new_code("PIN", "PIV PINs do not match.")?;
+            }
+            PivAction::ChangePuk => self.check_new_code("PUK", "PIV PUKs do not match.")?,
+            PivAction::ChangeManagementKey => {
+                if self.generated_key.is_empty() || !self.have_stored_key {
+                    return Err("Store the new management key somewhere safe.".into());
+                }
+            }
+            PivAction::ImportCertificate(_) => {
+                self.certificate_file()?;
+            }
+            PivAction::ExportCertificate(_) | PivAction::Attest(_) => {
+                self.output_file()?;
+            }
+            PivAction::CreateCsr(_) => {
+                self.output_file()?;
+                self.csr_subject()?;
+            }
+            PivAction::GenerateKey(_)
+            | PivAction::DeleteCertificate(_)
+            | PivAction::DeleteKey(_) => {}
+        }
+        if let Some(kind) = current_secret_kind(self.action)
+            && !self.current_secret_known
+            && self.current.is_empty()
+        {
+            return Err(format!("Enter the current {kind}."));
+        }
+        if self.fips && self.pin_policy == PinPolicy::Never {
+            return Err("This FIPS key does not allow PIN policy Never.".into());
+        }
+        Ok(())
+    }
+
+    fn check_new_code(&self, kind: &str, mismatch: &str) -> Result<(), String> {
+        if *self.new_secret != *self.confirmation {
+            return Err(mismatch.into());
+        }
+        validate_code(&self.new_secret, kind, self.fips)
+    }
+
+    fn certificate_file(&self) -> Result<PathBuf, String> {
+        self.input_path
+            .clone()
+            .ok_or_else(|| "Choose a certificate file.".to_owned())
+    }
+
+    fn output_file(&self) -> Result<PathBuf, String> {
+        self.output_path.clone().ok_or_else(|| {
+            match self.action {
+                PivAction::CreateCsr(_) => "Choose a file to save the CSR.",
+                PivAction::Attest(_) => "Choose a file to save the attestation.",
+                _ => "Choose a file to save the certificate.",
+            }
+            .to_owned()
+        })
+    }
+
+    fn csr_subject(&self) -> Result<String, String> {
+        let subject = self.subject.trim();
+        if subject.is_empty() {
+            return Err("Enter a CSR subject.".into());
+        }
+        Ok(subject.to_owned())
+    }
+
+    fn zeroize_secrets(&mut self) {
+        self.current.zeroize();
+        self.new_secret.zeroize();
+        self.confirmation.zeroize();
+        self.generated_key.zeroize();
+    }
+}
+
+/// The secret the user enters as the "current" value for `action`, if any.
+fn current_secret_kind(action: PivAction) -> Option<&'static str> {
     match action {
-        PivAction::ChangePin => {
-            if new_secret != confirmation {
-                return Err("PIV PINs do not match.".into());
-            }
-            Ok(PivOperation::ChangePin(
-                current_pin(info, current)?,
-                make_pin(new_secret, fips)?,
-            ))
-        }
-        PivAction::ChangePuk => {
-            if new_secret != confirmation {
-                return Err("PIV PUKs do not match.".into());
-            }
-            Ok(PivOperation::ChangePuk(
-                current_puk(info, current)?,
-                make_puk(new_secret, fips)?,
-            ))
-        }
-        PivAction::UnblockPin => {
-            if new_secret != confirmation {
-                return Err("PIV PINs do not match.".into());
-            }
-            Ok(PivOperation::UnblockPin(
-                current_puk(info, current)?,
-                make_pin(new_secret, fips)?,
-            ))
-        }
+        PivAction::ChangePin | PivAction::CreateCsr(_) => Some("PIV PIN"),
+        PivAction::ChangePuk | PivAction::UnblockPin => Some("PIV PUK"),
+        action if action_needs_management_key(action) => Some("management key"),
+        _ => None,
+    }
+}
+
+fn prepare_operation(
+    form: &PivForm,
+    info: Option<&sigil_core::PivInfo>,
+) -> Result<PivOperation, String> {
+    form.check()?;
+    let current = form.current.as_str();
+    match form.action {
+        PivAction::ChangePin => Ok(PivOperation::ChangePin(
+            current_pin(info, current)?,
+            make_pin(&form.new_secret, form.fips)?,
+        )),
+        PivAction::ChangePuk => Ok(PivOperation::ChangePuk(
+            current_puk(info, current)?,
+            make_puk(&form.new_secret, form.fips)?,
+        )),
+        PivAction::UnblockPin => Ok(PivOperation::UnblockPin(
+            current_puk(info, current)?,
+            make_pin(&form.new_secret, form.fips)?,
+        )),
         PivAction::ChangeManagementKey => {
             let current = current_management_key(info, current)?;
-            let mut new_bytes = parse_hex(generated_key)?;
+            let mut new_bytes = parse_hex(&form.generated_key)?;
             let new = ManagementKey::new(
                 ManagementKeyAlgorithm::Aes256,
                 std::mem::take(&mut *new_bytes),
@@ -1322,80 +1318,40 @@ fn prepare_operation(
             .map_err(|error| error.to_string())?;
             Ok(PivOperation::ChangeManagementKey(current, new))
         }
-        PivAction::GenerateKey(slot) => {
-            if !destructive_confirmed {
-                return Err("Confirm key generation for this slot.".into());
-            }
-            if fips && pin_policy == PinPolicy::Never {
-                return Err("This FIPS key does not allow PIN policy Never.".into());
-            }
-            Ok(PivOperation::GenerateKey(
-                current_management_key(info, current)?,
-                PivKeyConfiguration {
-                    slot,
-                    algorithm,
-                    pin_policy,
-                    touch_policy,
-                },
-            ))
-        }
-        PivAction::ImportCertificate(slot) => {
-            if !destructive_confirmed {
-                return Err("Confirm certificate import for this slot.".into());
-            }
-            Ok(PivOperation::ImportCertificate(
-                current_management_key(info, current)?,
-                input_path
-                    .cloned()
-                    .ok_or_else(|| "Choose a certificate file.".to_owned())?,
+        PivAction::GenerateKey(slot) => Ok(PivOperation::GenerateKey(
+            current_management_key(info, current)?,
+            PivKeyConfiguration {
                 slot,
-            ))
-        }
+                algorithm: form.algorithm,
+                pin_policy: form.pin_policy,
+                touch_policy: form.touch_policy,
+            },
+        )),
+        PivAction::ImportCertificate(slot) => Ok(PivOperation::ImportCertificate(
+            current_management_key(info, current)?,
+            form.certificate_file()?,
+            slot,
+        )),
         PivAction::ExportCertificate(slot) => Ok(PivOperation::ExportCertificate(
             slot,
-            output_path
-                .cloned()
-                .ok_or_else(|| "Choose a file to save the certificate.".to_owned())?,
-            format,
+            form.output_file()?,
+            form.format,
         )),
-        PivAction::CreateCsr(slot) => {
-            let path = output_path
-                .cloned()
-                .ok_or_else(|| "Choose a file to save the CSR.".to_owned())?;
-            if subject.trim().is_empty() {
-                return Err("Enter a CSR subject.".into());
-            }
-            Ok(PivOperation::CreateCsr(
-                current_pin(info, current)?,
-                slot,
-                subject.trim().to_owned(),
-                path,
-            ))
-        }
-        PivAction::Attest(slot) => Ok(PivOperation::Attest(
+        PivAction::CreateCsr(slot) => Ok(PivOperation::CreateCsr(
+            current_pin(info, current)?,
             slot,
-            output_path
-                .cloned()
-                .ok_or_else(|| "Choose a file to save the attestation.".to_owned())?,
+            form.csr_subject()?,
+            form.output_file()?,
         )),
-        PivAction::DeleteCertificate(slot) => {
-            if !destructive_confirmed {
-                return Err("Confirm certificate deletion.".into());
-            }
-            Ok(PivOperation::DeleteCertificate(
-                current_management_key(info, current)?,
-                slot,
-            ))
-        }
-        PivAction::DeleteKey(slot) => {
-            if !destructive_confirmed {
-                return Err("Confirm key deletion.".into());
-            }
-            Ok(PivOperation::DeleteKey(
-                current_management_key(info, current)?,
-                slot,
-            ))
-        }
+        PivAction::Attest(slot) => Ok(PivOperation::Attest(slot, form.output_file()?)),
+        PivAction::DeleteCertificate(slot) => Ok(PivOperation::DeleteCertificate(
+            current_management_key(info, current)?,
+            slot,
+        )),
+        PivAction::DeleteKey(slot) => Ok(PivOperation::DeleteKey(
+            current_management_key(info, current)?,
+            slot,
+        )),
     }
 }
 
@@ -1520,38 +1476,54 @@ fn execute_operation(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn prepare_fips_setup(
-    info: Option<&sigil_core::PivInfo>,
+struct FipsSetupForm {
     pin_default: bool,
     puk_default: bool,
     management_key_default: bool,
-    current_pin_text: &str,
-    current_puk_text: &str,
-    current_management_text: &str,
-    new_pin_text: &str,
-    pin_confirmation: &str,
-    new_puk_text: &str,
-    puk_confirmation: &str,
-    new_management_text: &str,
+    current_pin: Zeroizing<String>,
+    current_puk: Zeroizing<String>,
+    current_management_key: Zeroizing<String>,
+    new_pin: Zeroizing<String>,
+    pin_confirmation: Zeroizing<String>,
+    new_puk: Zeroizing<String>,
+    puk_confirmation: Zeroizing<String>,
+    new_management_key: Zeroizing<String>,
+}
+
+impl FipsSetupForm {
+    fn zeroize_secrets(&mut self) {
+        self.current_pin.zeroize();
+        self.current_puk.zeroize();
+        self.current_management_key.zeroize();
+        self.new_pin.zeroize();
+        self.pin_confirmation.zeroize();
+        self.new_puk.zeroize();
+        self.puk_confirmation.zeroize();
+        self.new_management_key.zeroize();
+    }
+}
+
+fn prepare_fips_setup(
+    form: &FipsSetupForm,
+    info: Option<&sigil_core::PivInfo>,
 ) -> Result<FipsSetupSecrets, String> {
-    if new_pin_text != pin_confirmation {
+    if *form.new_pin != *form.pin_confirmation {
         return Err("PIV PINs do not match.".into());
     }
-    if new_puk_text != puk_confirmation {
+    if *form.new_puk != *form.puk_confirmation {
         return Err("PIV PUKs do not match.".into());
     }
-    let current_pin = if pin_default {
+    let current_pin = if form.pin_default {
         PivPin::new(DEFAULT_PIN.to_vec()).map_err(|error| error.to_string())?
     } else {
-        make_pin(current_pin_text, false)?
+        make_pin(&form.current_pin, false)?
     };
-    let current_puk = if puk_default {
+    let current_puk = if form.puk_default {
         PivPuk::new(DEFAULT_PUK.to_vec()).map_err(|error| error.to_string())?
     } else {
-        make_puk(current_puk_text, false)?
+        make_puk(&form.current_puk, false)?
     };
-    let current_management_key = if management_key_default {
+    let current_management_key = if form.management_key_default {
         let algorithm = info
             .and_then(|info| info.management_key.as_ref())
             .map_or(Ok(ManagementKeyAlgorithm::Aes192), |status| {
@@ -1561,11 +1533,11 @@ fn prepare_fips_setup(
         ManagementKey::new(algorithm, DEFAULT_MANAGEMENT_KEY.to_vec())
             .map_err(|error| error.to_string())?
     } else {
-        current_management_key(info, current_management_text)?
+        current_management_key(info, &form.current_management_key)?
     };
-    let new_pin = make_pin(new_pin_text, true)?;
-    let new_puk = make_puk(new_puk_text, true)?;
-    let mut new_management_key = parse_hex(new_management_text)?;
+    let new_pin = make_pin(&form.new_pin, true)?;
+    let new_puk = make_puk(&form.new_puk, true)?;
+    let mut new_management_key = parse_hex(&form.new_management_key)?;
     let new_management_key = ManagementKey::new(
         ManagementKeyAlgorithm::Aes256,
         std::mem::take(&mut *new_management_key),
@@ -1585,5 +1557,188 @@ fn step_result(result: &sigil_core::Result<()>) -> String {
     match result {
         Ok(()) => "Complete".into(),
         Err(error) => error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn form(action: PivAction) -> PivForm {
+        PivForm {
+            action,
+            fips: false,
+            current_secret_known: false,
+            current: Zeroizing::new("123456".into()),
+            new_secret: Zeroizing::new("654321".into()),
+            confirmation: Zeroizing::new("654321".into()),
+            subject: "CN=Example".into(),
+            input_path: Some(PathBuf::from("in.pem")),
+            output_path: Some(PathBuf::from("out.pem")),
+            format: CertificateFormat::Pem,
+            algorithm: PivKeyAlgorithm::EccP256,
+            pin_policy: PinPolicy::Once,
+            touch_policy: TouchPolicy::Default,
+            generated_key: Zeroizing::new("00".into()),
+            have_stored_key: true,
+            destructive_confirmed: true,
+        }
+    }
+
+    fn error(form: &PivForm) -> String {
+        form.check().expect_err("form should be rejected")
+    }
+
+    #[test]
+    fn complete_forms_pass_for_every_action() {
+        let slot = PivSlot::AUTHENTICATION;
+        for action in [
+            PivAction::ChangePin,
+            PivAction::ChangePuk,
+            PivAction::UnblockPin,
+            PivAction::ChangeManagementKey,
+            PivAction::GenerateKey(slot),
+            PivAction::ImportCertificate(slot),
+            PivAction::ExportCertificate(slot),
+            PivAction::CreateCsr(slot),
+            PivAction::Attest(slot),
+            PivAction::DeleteCertificate(slot),
+            PivAction::DeleteKey(slot),
+        ] {
+            assert_eq!(form(action).check(), Ok(()), "{action:?}");
+        }
+    }
+
+    #[test]
+    fn new_codes_must_match_and_be_valid() {
+        let mut change = form(PivAction::ChangePuk);
+        change.confirmation = Zeroizing::new("654320".into());
+        assert_eq!(error(&change), "PIV PUKs do not match.");
+
+        let mut unblock = form(PivAction::UnblockPin);
+        unblock.confirmation = Zeroizing::new("654320".into());
+        assert_eq!(error(&unblock), "PIV PINs do not match.");
+
+        let mut fips = form(PivAction::ChangePin);
+        fips.fips = true;
+        assert_eq!(error(&fips), "This FIPS key requires an 8-character PIN.");
+    }
+
+    #[test]
+    fn current_secret_is_required_unless_known() {
+        let slot = PivSlot::SIGNATURE;
+        for (action, message) in [
+            (PivAction::ChangePin, "Enter the current PIV PIN."),
+            (PivAction::CreateCsr(slot), "Enter the current PIV PIN."),
+            (PivAction::UnblockPin, "Enter the current PIV PUK."),
+            (
+                PivAction::DeleteKey(slot),
+                "Enter the current management key.",
+            ),
+        ] {
+            let mut empty = form(action);
+            empty.current = Zeroizing::new(String::new());
+            assert_eq!(error(&empty), message, "{action:?}");
+            empty.current_secret_known = true;
+            assert_eq!(empty.check(), Ok(()), "{action:?}");
+        }
+        let mut export = form(PivAction::ExportCertificate(slot));
+        export.current = Zeroizing::new(String::new());
+        assert_eq!(export.check(), Ok(()));
+    }
+
+    #[test]
+    fn destructive_actions_need_confirmation() {
+        let slot = PivSlot::KEY_MANAGEMENT;
+        for (action, message) in [
+            (
+                PivAction::GenerateKey(slot),
+                "Confirm key generation for this slot.",
+            ),
+            (
+                PivAction::ImportCertificate(slot),
+                "Confirm certificate import for this slot.",
+            ),
+            (
+                PivAction::DeleteCertificate(slot),
+                "Confirm certificate deletion.",
+            ),
+            (PivAction::DeleteKey(slot), "Confirm key deletion."),
+        ] {
+            let mut unconfirmed = form(action);
+            unconfirmed.destructive_confirmed = false;
+            assert_eq!(error(&unconfirmed), message, "{action:?}");
+        }
+        let mut export = form(PivAction::ExportCertificate(slot));
+        export.destructive_confirmed = false;
+        assert_eq!(export.check(), Ok(()));
+    }
+
+    #[test]
+    fn files_subject_and_stored_key_are_required() {
+        let slot = PivSlot::CARD_AUTHENTICATION;
+        let mut import = form(PivAction::ImportCertificate(slot));
+        import.input_path = None;
+        assert_eq!(error(&import), "Choose a certificate file.");
+
+        for (action, message) in [
+            (
+                PivAction::ExportCertificate(slot),
+                "Choose a file to save the certificate.",
+            ),
+            (PivAction::CreateCsr(slot), "Choose a file to save the CSR."),
+            (
+                PivAction::Attest(slot),
+                "Choose a file to save the attestation.",
+            ),
+        ] {
+            let mut missing = form(action);
+            missing.output_path = None;
+            assert_eq!(error(&missing), message, "{action:?}");
+        }
+
+        let mut csr = form(PivAction::CreateCsr(slot));
+        csr.subject = "  ".into();
+        assert_eq!(error(&csr), "Enter a CSR subject.");
+
+        let mut unstored = form(PivAction::ChangeManagementKey);
+        unstored.have_stored_key = false;
+        assert!(unstored.check().is_err());
+        let mut ungenerated = form(PivAction::ChangeManagementKey);
+        ungenerated.generated_key = Zeroizing::new(String::new());
+        assert!(ungenerated.check().is_err());
+    }
+
+    #[test]
+    fn fips_keys_reject_pin_policy_never() {
+        let mut generate = form(PivAction::GenerateKey(PivSlot::AUTHENTICATION));
+        generate.pin_policy = PinPolicy::Never;
+        assert_eq!(generate.check(), Ok(()));
+        generate.fips = true;
+        assert_eq!(
+            error(&generate),
+            "This FIPS key does not allow PIN policy Never."
+        );
+    }
+
+    #[test]
+    fn prepare_operation_runs_the_same_checks() {
+        let mut unconfirmed = form(PivAction::DeleteKey(PivSlot::AUTHENTICATION));
+        unconfirmed.destructive_confirmed = false;
+        assert_eq!(
+            prepare_operation(&unconfirmed, None).err().as_deref(),
+            Some("Confirm key deletion.")
+        );
+
+        let mut csr = form(PivAction::CreateCsr(PivSlot::SIGNATURE));
+        csr.subject = "  CN=Example User  ".into();
+        match prepare_operation(&csr, None) {
+            Ok(PivOperation::CreateCsr(_, slot, subject, path)) => {
+                assert_eq!(slot, PivSlot::SIGNATURE);
+                assert_eq!(subject, "CN=Example User");
+                assert_eq!(path, PathBuf::from("out.pem"));
+            }
+            _ => panic!("expected a CSR operation"),
+        }
     }
 }
