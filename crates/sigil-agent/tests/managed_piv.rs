@@ -1175,3 +1175,40 @@ async fn enrollment_stops_before_issuance_when_the_attestation_does_not_verify()
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn oversized_managed_tokens_are_rejected_before_reaching_the_backend() {
+    let oversized = ManagedAuthorization {
+        access_token: "a".repeat(16 * 1024 + 1),
+    };
+
+    let (_mock, credentials) = mock_service();
+    let backend = Arc::new(FakeAuthority::new());
+    backend.enable_enrollment(
+        enrollment_profile(),
+        test_root_authority("Sigil Test Issuing Root"),
+    );
+    let service = agent_service(credentials, Some(backend.clone()), None);
+    let status = Agent::list_certificate_profiles(
+        &service,
+        with_caller(Request::new(v1::ListCertificateProfilesRequest {
+            id: "mock-yubikey-12345678".into(),
+            managed: Some(oversized.clone()),
+        })),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(status.message(), "managed access token exceeds 16 KiB");
+
+    let retired = PivSlot::retired(1).unwrap();
+    let status = Agent::generate_piv_key(
+        &service,
+        with_caller(Request::new(generate_request(retired, Some(oversized)))),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(status.code(), tonic::Code::InvalidArgument);
+    assert_eq!(status.message(), "managed access token exceeds 16 KiB");
+    assert_eq!(backend.authorize_calls.load(Ordering::SeqCst), 0);
+}
