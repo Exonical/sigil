@@ -1,9 +1,11 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/Exonical/sigil/backend/gen/sigil/admin/v1/adminv1connect"
 	"github.com/Exonical/sigil/backend/internal/ca"
 	"github.com/Exonical/sigil/backend/internal/db"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // fakeRevoker is a test CA. It records revocations, can refuse specific serials, and can report serials as
@@ -441,5 +444,29 @@ func TestListCertificatesFiltersByStatusAndToken(t *testing.T) {
 	none, err := call(f, "helpdesk-token", adminv1connect.AdminServiceClient.ListCertificates, &adminv1.ListCertificatesRequest{TokenSerial: "40000001"})
 	if err != nil || len(none.Msg.Certificates) != 0 {
 		t.Fatalf("token filter = %v, %v", none, err)
+	}
+}
+
+func TestAuditErrorLogsAFailedAuditWrite(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	pool, err := pgxpool.New(context.Background(), "postgres://sigil@localhost:1/sigil")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+	service := &Service{store: &db.Store{Pool: pool}}
+
+	ctx := context.WithValue(context.Background(), principalKey{}, principal{userID: "operator-1"})
+	service.auditError(ctx, "DeleteKey", "token", "12345678", "1 certificate revocations failed")
+
+	logged := logs.String()
+	for _, want := range []string{`"level":"ERROR"`, `"msg":"audit error event failed"`, `"actor":"operator-1"`, `"action":"DeleteKey"`, `"target_type":"token"`, `"target_id":"12345678"`, `"error":`} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log line %q is missing %s", logged, want)
+		}
 	}
 }

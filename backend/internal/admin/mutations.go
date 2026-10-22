@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -97,7 +98,9 @@ func userEvent(ctx context.Context, action, targetType, targetID, outcome string
 }
 
 func (s *Service) auditError(ctx context.Context, action, targetType, targetID, reason string) {
-	_ = audit.AppendStandalone(ctx, s.store.Pool, userEvent(ctx, action, targetType, targetID, "error", map[string]any{"reason": reason}))
+	if err := audit.AppendStandalone(ctx, s.store.Pool, userEvent(ctx, action, targetType, targetID, "error", map[string]any{"reason": reason})); err != nil {
+		slog.ErrorContext(ctx, "audit error event failed", "actor", actorID(ctx), "action", action, "target_type", targetType, "target_id", targetID, "error", err)
+	}
 }
 
 // AssignToken assigns a signed-in user to an inventory token and marks it active.
