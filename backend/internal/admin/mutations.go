@@ -110,7 +110,7 @@ func (s *Service) AssignToken(ctx context.Context, req *connect.Request[adminv1.
 	if name == "" {
 		return nil, invalid("a username or email is required")
 	}
-	err = s.mutate(ctx, "AssignToken", "token", serial, map[string]any{"user": name}, func(tx pgx.Tx) error {
+	err = s.mutate(ctx, audit.ActionAssignToken, "token", serial, map[string]any{"user": name}, func(tx pgx.Tx) error {
 		userID, err := s.store.FindUserByName(ctx, tx, name)
 		if err != nil {
 			return failed(err.Error())
@@ -132,7 +132,7 @@ func (s *Service) UnassignToken(ctx context.Context, req *connect.Request[adminv
 	if err != nil {
 		return nil, err
 	}
-	err = s.mutate(ctx, "UnassignToken", "token", serial, nil, func(tx pgx.Tx) error {
+	err = s.mutate(ctx, audit.ActionUnassignToken, "token", serial, nil, func(tx pgx.Tx) error {
 		if _, err := s.store.UnassignToken(ctx, tx, vendor, serial); err != nil {
 			return failed(err.Error())
 		}
@@ -418,7 +418,7 @@ func (s *Service) AddStation(ctx context.Context, req *connect.Request[adminv1.A
 	if req.Msg.Mode != "station" && req.Msg.Mode != "user" {
 		return nil, invalid("mode must be station or user")
 	}
-	err := s.mutate(ctx, "AddStation", "station", dns, map[string]any{"mode": req.Msg.Mode}, func(tx pgx.Tx) error {
+	err := s.mutate(ctx, audit.ActionAddStation, "station", dns, map[string]any{"mode": req.Msg.Mode}, func(tx pgx.Tx) error {
 		err := s.store.AddStation(ctx, tx, db.Station{ID: dns, DNSName: dns, DisplayName: dns, Mode: req.Msg.Mode})
 		if isUniqueViolation(err) {
 			return connect.NewError(connect.CodeAlreadyExists, errors.New("a station with that name already exists"))
@@ -443,7 +443,7 @@ func (s *Service) SetStationStatus(ctx context.Context, req *connect.Request[adm
 	if id == "" {
 		return nil, invalid("a station id is required")
 	}
-	err := s.mutate(ctx, "SetStationStatus", "station", id, map[string]any{"status": req.Msg.Status}, func(tx pgx.Tx) error {
+	err := s.mutate(ctx, audit.ActionSetStationStatus, "station", id, map[string]any{"status": req.Msg.Status}, func(tx pgx.Tx) error {
 		switch req.Msg.Status {
 		case "disabled":
 			if err := s.store.DisableStation(ctx, tx, id); err != nil {
