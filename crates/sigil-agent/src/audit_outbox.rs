@@ -367,15 +367,9 @@ impl<S: Subscriber> Layer<S> for AuditOutboxLayer {
         if rpc == "AuditOverflow" {
             return;
         }
-        let result = field_string(&fields, "result");
-        let outcome_value = field_string(&fields, "outcome");
-        let outcome = match outcome_value.as_str() {
-            "success" => "success",
-            "denied" => "denied",
-            "error" => "error",
-            "" if result == "ok" => "success",
-            "" => "error",
-            other => other,
+        let outcome = match field_string(&fields, "outcome") {
+            outcome if outcome.is_empty() => "error".to_owned(),
+            outcome => outcome,
         };
         let session_text = field_string(&fields, "session_id");
         let session_id = session_text
@@ -404,7 +398,7 @@ impl<S: Subscriber> Layer<S> for AuditOutboxLayer {
             },
             caller_os_user: field_string(&fields, "caller_os_user"),
             caller_session_id: session_id,
-            outcome: outcome.into(),
+            outcome,
             code: field_string(&fields, "code"),
             grant_id: field_string(&fields, "grant_id"),
             rotation_id: field_string(&fields, "rotation_id"),
