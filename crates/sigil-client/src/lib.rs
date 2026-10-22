@@ -12,11 +12,12 @@ use std::{
 use sigil_core::{
     Application, AttestationInspection, CredentialError, DeviceDiscovery, DeviceEvent, DeviceId,
     DeviceInfo, DeviceManagement, DiscoverableCredential, FidoInspection, FidoStatus, Fingerprint,
-    FingerprintProgress, ManagementKey, ManagementKeyAlgorithm, PinPolicy, PivAttestation,
-    PivCertificate, PivInfo, PivInspection, PivKeyConfiguration, PivManagement, PivPin, PivPuk,
-    PivSlot, PivSlotInfo, Result, Secret, TouchPolicy,
+    FingerprintProgress, ManagementKey, PivAttestation, PivCertificate, PivInfo, PivInspection,
+    PivKeyConfiguration, PivManagement, PivPin, PivPuk, PivSlot, PivSlotInfo, Result, Secret,
 };
-use sigil_proto::v1;
+use sigil_proto::{
+    management_key_algorithm_to_proto, pin_policy_to_proto, touch_policy_to_proto, v1,
+};
 use tonic::transport::{Channel, Endpoint};
 use tower::service_fn;
 
@@ -1090,34 +1091,6 @@ impl DeviceManagement for AgentClient {
 fn managed_authorization(access_token: &str) -> v1::ManagedAuthorization {
     v1::ManagedAuthorization {
         access_token: access_token.to_owned(),
-    }
-}
-
-fn management_key_algorithm_to_proto(algorithm: ManagementKeyAlgorithm) -> i32 {
-    match algorithm {
-        ManagementKeyAlgorithm::Aes128 => v1::ManagementKeyAlgorithm::Aes128 as i32,
-        ManagementKeyAlgorithm::Aes192 => v1::ManagementKeyAlgorithm::Aes192 as i32,
-        ManagementKeyAlgorithm::Aes256 => v1::ManagementKeyAlgorithm::Aes256 as i32,
-    }
-}
-
-fn pin_policy_to_proto(policy: PinPolicy) -> i32 {
-    match policy {
-        PinPolicy::Default => v1::PinPolicy::Default as i32,
-        PinPolicy::Never => v1::PinPolicy::Never as i32,
-        PinPolicy::Once => v1::PinPolicy::Once as i32,
-        PinPolicy::Always => v1::PinPolicy::Always as i32,
-        PinPolicy::MatchOnce => v1::PinPolicy::MatchOnce as i32,
-        PinPolicy::MatchAlways => v1::PinPolicy::MatchAlways as i32,
-    }
-}
-
-fn touch_policy_to_proto(policy: TouchPolicy) -> i32 {
-    match policy {
-        TouchPolicy::Default => v1::TouchPolicy::Default as i32,
-        TouchPolicy::Never => v1::TouchPolicy::Never as i32,
-        TouchPolicy::Always => v1::TouchPolicy::Always as i32,
-        TouchPolicy::Cached => v1::TouchPolicy::Cached as i32,
     }
 }
 

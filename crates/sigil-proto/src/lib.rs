@@ -399,7 +399,7 @@ fn algorithm_from_proto(value: v1::PivAlgorithm) -> core::Result<core::PivAlgori
     )
 }
 
-fn pin_policy_to_proto(value: core::PinPolicy) -> i32 {
+pub fn pin_policy_to_proto(value: core::PinPolicy) -> i32 {
     use core::PinPolicy as P;
     match value {
         P::Default => v1::PinPolicy::Default as i32,
@@ -426,7 +426,7 @@ pub fn pin_policy_from_proto(value: i32) -> core::Result<core::PinPolicy> {
     )
 }
 
-fn touch_policy_to_proto(value: core::TouchPolicy) -> i32 {
+pub fn touch_policy_to_proto(value: core::TouchPolicy) -> i32 {
     use core::TouchPolicy as P;
     match value {
         P::Default => v1::TouchPolicy::Default as i32,
@@ -447,6 +447,15 @@ pub fn touch_policy_from_proto(value: i32) -> core::Result<core::TouchPolicy> {
             v1::TouchPolicy::Unspecified => return Err(invalid_proto("unspecified touch policy")),
         },
     )
+}
+
+pub fn management_key_algorithm_to_proto(value: core::ManagementKeyAlgorithm) -> i32 {
+    use core::ManagementKeyAlgorithm as A;
+    match value {
+        A::Aes128 => v1::ManagementKeyAlgorithm::Aes128 as i32,
+        A::Aes192 => v1::ManagementKeyAlgorithm::Aes192 as i32,
+        A::Aes256 => v1::ManagementKeyAlgorithm::Aes256 as i32,
+    }
 }
 
 pub fn management_key_algorithm_from_proto(
@@ -1075,6 +1084,7 @@ mod tests {
                 management_key_algorithm_from_proto(value as i32).unwrap(),
                 expected
             );
+            assert_eq!(management_key_algorithm_to_proto(expected), value as i32);
         }
         for (value, expected) in [
             (
