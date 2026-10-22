@@ -722,9 +722,21 @@ impl DeviceDiscovery for AgentClient {
         let mut stream = response.into_inner();
         let (sender, receiver) = mpsc::channel();
         self.runtime.handle().spawn(async move {
-            while let Ok(Some(event)) = stream.message().await {
-                let Ok(event) = DeviceEvent::try_from(event) else {
-                    continue;
+            loop {
+                let event = match stream.message().await {
+                    Ok(Some(event)) => event,
+                    Ok(None) => break,
+                    Err(status) => {
+                        tracing::warn!(%status, "agent device watch stream failed");
+                        break;
+                    }
+                };
+                let event = match DeviceEvent::try_from(event) {
+                    Ok(event) => event,
+                    Err(error) => {
+                        tracing::warn!(%error, "dropping undecodable agent device event");
+                        continue;
+                    }
                 };
                 if sender.send(event).is_err() {
                     break;
