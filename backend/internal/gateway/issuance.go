@@ -14,7 +14,6 @@ import (
 
 	backendv1 "github.com/Exonical/sigil/backend/gen/sigil/backend/v1"
 	"github.com/Exonical/sigil/backend/internal/attestation"
-	"github.com/Exonical/sigil/backend/internal/authn"
 	"github.com/Exonical/sigil/backend/internal/ca"
 	"github.com/Exonical/sigil/backend/internal/config"
 	"github.com/Exonical/sigil/backend/internal/db"
@@ -46,21 +45,19 @@ func (s *Server) ListProfiles(
 	if err != nil {
 		return nil, err
 	}
-	principal, err := s.auth.Authenticate(ctx, request.AccessToken)
+	principal, err := s.authenticatePrincipal(ctx, actorID, "ListProfiles", request.TokenSerial, request.AccessToken)
 	if err != nil {
-		if auditErr := s.auditEvent(ctx, "station", actorID, "ListProfiles", "token", request.TokenSerial, "denied", "OIDC access token rejected"); auditErr != nil {
-			return nil, status.Error(codes.Internal, "could not record profile listing")
-		}
-		if errors.Is(err, authn.ErrUserStore) {
-			return nil, status.Error(codes.Internal, "could not record authenticated user")
-		}
-		return nil, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
+		return nil, err
 	}
 	roles := rolesFor(principal.Groups, s.config.OIDC.RoleGroups)
 	var token *db.Token
 	if request.TokenSerial != "" {
 		found, err := s.inventory.FindToken(ctx, request.TokenVendor, request.TokenSerial)
 		if errors.Is(err, pgx.ErrNoRows) {
+			if auditErr := s.auditEvent(ctx, "user", principal.UserID, "ListProfiles", "token", request.TokenSerial, "denied", "token is not in inventory"); auditErr != nil {
+				s.logger.Error("audit unknown token decision failed", "error", auditErr)
+				return nil, status.Error(codes.Internal, "could not record profile listing")
+			}
 			return nil, status.Error(codes.PermissionDenied, "token is not in inventory")
 		}
 		if err != nil {
@@ -111,15 +108,9 @@ func (s *Server) IssueCertificate(
 	if err != nil {
 		return nil, err
 	}
-	principal, err := s.auth.Authenticate(ctx, request.AccessToken)
+	principal, err := s.authenticatePrincipal(ctx, actorID, "IssueCertificate", request.TokenSerial, request.AccessToken)
 	if err != nil {
-		if auditErr := s.auditEvent(ctx, "station", actorID, "IssueCertificate", "token", request.TokenSerial, "denied", "OIDC access token rejected"); auditErr != nil {
-			return nil, status.Error(codes.Internal, "could not record certificate decision")
-		}
-		if errors.Is(err, authn.ErrUserStore) {
-			return nil, status.Error(codes.Internal, "could not record authenticated user")
-		}
-		return nil, status.Error(codes.Unauthenticated, "OIDC access token is invalid")
+		return nil, err
 	}
 	profile, ok := s.profileByName(request.Profile)
 

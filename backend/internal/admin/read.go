@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -54,7 +55,7 @@ func (s *Service) GetDashboard(ctx context.Context, _ *connect.Request[adminv1.E
 			count(*) FILTER (WHERE status = 'active' AND not_after > now() AND not_after <= now() + interval '30 days')
 		FROM certificates
 	`).Scan(&response.ActiveCertificates, &response.CertificatesExpiring_30Days); err != nil {
-		return nil, internal("could not count certificates", err)
+		return nil, internal(ctx, "could not count certificates", err)
 	}
 	if err := s.store.Pool.QueryRow(ctx, `
 		SELECT count(DISTINCT t.id)
@@ -62,7 +63,7 @@ func (s *Service) GetDashboard(ctx context.Context, _ *connect.Request[adminv1.E
 		JOIN certificates c ON c.token_id = t.id AND c.status = 'active'
 		WHERE t.status = 'lost'
 	`).Scan(&response.LostTokensPendingRevocation); err != nil {
-		return nil, internal("could not count lost tokens", err)
+		return nil, internal(ctx, "could not count lost tokens", err)
 	}
 	return connect.NewResponse(response), nil
 }
@@ -70,19 +71,19 @@ func (s *Service) GetDashboard(ctx context.Context, _ *connect.Request[adminv1.E
 func (s *Service) countByStatus(ctx context.Context, into map[string]int64, query string) error {
 	rows, err := s.store.Pool.Query(ctx, query)
 	if err != nil {
-		return internal("could not count by status", err)
+		return internal(ctx, "could not count by status", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var status string
 		var count int64
 		if err := rows.Scan(&status, &count); err != nil {
-			return internal("could not read counts", err)
+			return internal(ctx, "could not read counts", err)
 		}
 		into[status] = count
 	}
 	if err := rows.Err(); err != nil {
-		return internal("could not read counts", err)
+		return internal(ctx, "could not read counts", err)
 	}
 	return nil
 }
@@ -102,20 +103,20 @@ func (s *Service) ListTokens(ctx context.Context, req *connect.Request[adminv1.L
 		ORDER BY t.serial
 		LIMIT $3 OFFSET $4`), pattern, req.Msg.Status, limit, offset)
 	if err != nil {
-		return nil, internal("could not list tokens", err)
+		return nil, internal(ctx, "could not list tokens", err)
 	}
 	defer rows.Close()
 	response := &adminv1.ListTokensResponse{}
 	for rows.Next() {
 		token, total, err := scanToken(rows)
 		if err != nil {
-			return nil, internal("could not read tokens", err)
+			return nil, internal(ctx, "could not read tokens", err)
 		}
 		response.Tokens = append(response.Tokens, token)
 		response.Total = total
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read tokens", err)
+		return nil, internal(ctx, "could not read tokens", err)
 	}
 	if len(response.Tokens) == 0 && offset == 0 {
 		response.Total = 0
@@ -176,18 +177,18 @@ func (s *Service) GetToken(ctx context.Context, req *connect.Request[adminv1.Tok
 	}
 	rows, err := s.store.Pool.Query(ctx, tokenSummaryQuery(`WHERE t.vendor = $1 AND t.serial = $2`), vendor, req.Msg.Serial)
 	if err != nil {
-		return nil, internal("could not read the token", err)
+		return nil, internal(ctx, "could not read the token", err)
 	}
 	defer rows.Close()
 	if !rows.Next() {
 		if err := rows.Err(); err != nil {
-			return nil, internal("could not read the token", err)
+			return nil, internal(ctx, "could not read the token", err)
 		}
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("the token is not in inventory"))
 	}
 	token, _, err := scanToken(rows)
 	if err != nil {
-		return nil, internal("could not read the token", err)
+		return nil, internal(ctx, "could not read the token", err)
 	}
 	rows.Close()
 
@@ -221,7 +222,7 @@ func (s *Service) certificatesFor(ctx context.Context, tokenID string) ([]*admin
 		LIMIT $2
 	`, tokenID, certificateRows)
 	if err != nil {
-		return nil, internal("could not list certificates", err)
+		return nil, internal(ctx, "could not list certificates", err)
 	}
 	defer rows.Close()
 	var out []*adminv1.CertificateSummary
@@ -229,12 +230,12 @@ func (s *Service) certificatesFor(ctx context.Context, tokenID string) ([]*admin
 		var c adminv1.CertificateSummary
 		if err := rows.Scan(&c.Id, &c.TokenSerial, &c.Slot, &c.Profile, &c.UserDisplay, &c.SerialNumber, &c.Subject,
 			&c.NotBeforeUnix, &c.NotAfterUnix, &c.Status, &c.RevokedAtUnix, &c.RevocationReason); err != nil {
-			return nil, internal("could not read certificates", err)
+			return nil, internal(ctx, "could not read certificates", err)
 		}
 		out = append(out, &c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read certificates", err)
+		return nil, internal(ctx, "could not read certificates", err)
 	}
 	if err := s.attachAttestations(ctx, out); err != nil {
 		return nil, err
@@ -251,7 +252,7 @@ func (s *Service) escrowFor(ctx context.Context, tokenID string) ([]*adminv1.Esc
 		ORDER BY kind, version
 	`, tokenID)
 	if err != nil {
-		return nil, internal("could not list escrow metadata", err)
+		return nil, internal(ctx, "could not list escrow metadata", err)
 	}
 	defer rows.Close()
 	var out []*adminv1.EscrowVersion
@@ -259,17 +260,18 @@ func (s *Service) escrowFor(ctx context.Context, tokenID string) ([]*adminv1.Esc
 		var e adminv1.EscrowVersion
 		var version int32
 		if err := rows.Scan(&e.Kind, &version, &e.State, &e.CreatedAtUnix, &e.ActivatedAtUnix); err != nil {
-			return nil, internal("could not read escrow metadata", err)
+			return nil, internal(ctx, "could not read escrow metadata", err)
 		}
 		e.Version = version
 		out = append(out, &e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read escrow metadata", err)
+		return nil, internal(ctx, "could not read escrow metadata", err)
 	}
 	return out, nil
 }
 
+// auditFor matches both the serial and the token UUID: older CLI records used the UUID as target_id.
 func (s *Service) auditFor(ctx context.Context, serial, tokenID string) ([]*adminv1.AuditEvent, error) {
 	rows, err := s.store.Pool.Query(ctx, `
 		SELECT seq, EXTRACT(EPOCH FROM occurred_at)::bigint, actor_type, actor_id, action, target_type, target_id,
@@ -280,7 +282,7 @@ func (s *Service) auditFor(ctx context.Context, serial, tokenID string) ([]*admi
 		LIMIT $2
 	`, []string{serial, tokenID}, auditDetailRows)
 	if err != nil {
-		return nil, internal("could not read the audit trail", err)
+		return nil, internal(ctx, "could not read the audit trail", err)
 	}
 	defer rows.Close()
 	var out []*adminv1.AuditEvent
@@ -288,17 +290,18 @@ func (s *Service) auditFor(ctx context.Context, serial, tokenID string) ([]*admi
 		var e adminv1.AuditEvent
 		if err := rows.Scan(&e.Seq, &e.OccurredAtUnix, &e.ActorType, &e.ActorId, &e.Action, &e.TargetType, &e.TargetId,
 			&e.Outcome, &e.DetailJson); err != nil {
-			return nil, internal("could not read the audit trail", err)
+			return nil, internal(ctx, "could not read the audit trail", err)
 		}
 		out = append(out, &e)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read the audit trail", err)
+		return nil, internal(ctx, "could not read the audit trail", err)
 	}
 	return out, nil
 }
 
-// internal returns a generic client error. The cause is not sent to the browser.
-func internal(message string, _ error) error {
+// internal logs the cause server-side and returns a generic client error. The cause is not sent to the browser.
+func internal(ctx context.Context, message string, cause error) error {
+	slog.ErrorContext(ctx, message, "actor", actorID(ctx), "error", cause)
 	return connect.NewError(connect.CodeInternal, errors.New(message))
 }

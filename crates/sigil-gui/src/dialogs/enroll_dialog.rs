@@ -9,7 +9,7 @@ use crate::{
     state::{AppState, SetLive},
 };
 
-use super::managed_dialog::pin_length_ok;
+use super::managed_dialog::{pin_length_hint, pin_length_message, pin_length_ok};
 
 const STEPS: [&str; 4] = [
     "Generating key",
@@ -47,13 +47,8 @@ pub fn EnrollDialog(device: DeviceInfo, preselected: Option<PivSlot>) -> Element
     });
     let length_ok = pin_length_ok(pin.read().as_str(), fips);
     let can_submit = !busy() && result.read().is_none() && selected.is_some() && length_ok;
-    let live_message = (!pin.read().is_empty() && !length_ok).then(|| {
-        if fips {
-            "This FIPS key requires an 8-character PIN.".to_owned()
-        } else {
-            "The PIN must be 6-8 characters.".to_owned()
-        }
-    });
+    let live_message = pin_length_message(pin.read().as_str(), fips);
+    let length_hint = pin_length_hint(fips);
 
     rsx! {
         div { class: "modal-backdrop", tabindex: "-1", autofocus: true,
@@ -111,7 +106,7 @@ pub fn EnrollDialog(device: DeviceInfo, preselected: Option<PivSlot>) -> Element
                                 }
                             }
                             div { class: "modal-field",
-                                label { r#for: "enroll-pin", if fips { "PIV PIN (8 characters)" } else { "PIV PIN (6-8 characters)" } }
+                                label { r#for: "enroll-pin", "PIV PIN ({length_hint})" }
                                 input {
                                     id: "enroll-pin",
                                     r#type: "password",

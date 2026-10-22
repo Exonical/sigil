@@ -10,9 +10,9 @@ use clap::{Subcommand, ValueEnum};
 use sigil_app::CredentialService;
 use sigil_connect::{ManagedPivAgent, ManagedSecret};
 use sigil_core::{
-    CertificateFormat, CredentialError, DeviceId, KeyStatus, ManagementKey, ManagementKeyAlgorithm,
-    PinPolicy, PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, PivSlotInfo,
-    TouchPolicy,
+    CertificateFormat, CredentialError, DeviceId, HexError, KeyStatus, ManagementKey,
+    ManagementKeyAlgorithm, PinPolicy, PivInfo, PivKeyAlgorithm, PivKeyConfiguration, PivPin,
+    PivPuk, PivSlot, PivSlotInfo, TouchPolicy, encode_hex,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -903,7 +903,7 @@ fn management_key<P: SecretPrompter>(
         )?);
     }
     let mut value = Zeroizing::new(prompter.password("Current PIV management key (hex): ")?);
-    let mut key = parse_hex(&value)?;
+    let mut key = parse_management_key_hex(&value)?;
     value.zeroize();
     Ok(ManagementKey::new(algorithm, std::mem::take(&mut *key))?)
 }
@@ -969,26 +969,15 @@ fn validate_code_length(value: &str, kind: &str, fips: bool) -> Result<()> {
     Ok(())
 }
 
-fn parse_hex(value: &str) -> Result<Zeroizing<Vec<u8>>> {
-    let value = value.trim();
-    ensure!(
-        !value.is_empty() && value.len().is_multiple_of(2),
-        "management key must be even-length hexadecimal"
-    );
-    let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() / 2));
-    let (pairs, _) = value.as_bytes().as_chunks::<2>();
-    for pair in pairs {
-        let digits = std::str::from_utf8(pair)?;
-        bytes.push(
-            u8::from_str_radix(digits, 16)
-                .map_err(|_| anyhow::anyhow!("management key must be hexadecimal"))?,
-        );
-    }
-    Ok(bytes)
-}
-
-fn encode_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+fn parse_management_key_hex(value: &str) -> Result<Zeroizing<Vec<u8>>> {
+    sigil_core::parse_hex(value).map_err(|error| match error {
+        HexError::InvalidLength => {
+            anyhow::anyhow!("management key must be even-length hexadecimal")
+        }
+        HexError::NonAscii | HexError::InvalidDigit => {
+            anyhow::anyhow!("management key must be hexadecimal")
+        }
+    })
 }
 
 fn mutation_output(json: bool, json_value: serde_json::Value, plain: String) -> Result<String> {
@@ -1300,5 +1289,23 @@ mod tests {
             "This FIPS key requires an 8-character PUK"
         );
         assert_eq!(prompter.prompts, ["New PIV PUK: "]);
+    }
+
+    #[test]
+    fn management_key_hex_errors_use_management_key_messages() {
+        assert_eq!(
+            parse_management_key_hex(" 0a1B ").unwrap().as_slice(),
+            [0x0a, 0x1b]
+        );
+        for (value, message) in [
+            ("abc", "management key must be even-length hexadecimal"),
+            ("zz", "management key must be hexadecimal"),
+            ("é", "management key must be hexadecimal"),
+        ] {
+            assert_eq!(
+                parse_management_key_hex(value).unwrap_err().to_string(),
+                message
+            );
+        }
     }
 }

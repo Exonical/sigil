@@ -180,7 +180,7 @@ func stationAdd(args []string) error {
 	if _, err := audit.Append(ctx, tx, audit.Event{
 		ActorType:  "system",
 		ActorID:    "sigil-server-cli",
-		Action:     "StationAdd",
+		Action:     audit.ActionAddStation,
 		TargetType: "station",
 		TargetID:   *id,
 		Outcome:    "success",
@@ -227,11 +227,11 @@ func stationDisable(args []string) error {
 	if _, err := audit.Append(ctx, tx, audit.Event{
 		ActorType:  "system",
 		ActorID:    "sigil-server-cli",
-		Action:     "StationDisable",
+		Action:     audit.ActionSetStationStatus,
 		TargetType: "station",
 		TargetID:   *id,
 		Outcome:    "success",
-		Detail:     map[string]any{"reason": "disabled by operator"},
+		Detail:     map[string]any{"status": "disabled", "reason": "disabled by operator"},
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		return err

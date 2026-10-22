@@ -16,12 +16,11 @@ use ctap_hid_fido2::{Cfg, FidoKeyHid, FidoKeyHidFactory, HidParam};
 use pcsc::{Context, Error as PcscError, Protocols, ReaderState, Scope, ShareMode, State};
 use sigil_core::{
     Application, CredentialError, DeviceEvent, DeviceId, DeviceInfo, DiscoverableCredential,
-    FidoStatus, Fingerprint, FingerprintProgress, FirmwareVersion, MetadataAccess, Result,
-    Transport,
+    FidoStatus, Fingerprint, FingerprintProgress, MetadataAccess, Result, Transport,
 };
 use sigil_piv::vendor::PivVendor;
 use sigil_thales::ThalesPiv;
-use sigil_yubikey::management::{self, MAX_INFO_PAGES, ManagementInfo, TAG_MORE_DATA, Tags};
+use sigil_yubikey::management::{self, ManagementInfo};
 use sigil_yubikey::product::{key_type_for_pid, product_name};
 use sigil_yubikey::vendor::YubiKeyPiv;
 use windows_sys::Win32::{
@@ -41,8 +40,6 @@ use crate::{FidoHidResolution, reconcile};
 mod ctap;
 mod fido_resolver;
 pub(super) mod piv;
-
-const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
 
 pub(super) fn list() -> Result<Vec<DeviceInfo>> {
     match establish() {
@@ -140,10 +137,13 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
                         continue;
                     }
                 };
-                let details = read_management_info(&mut card);
-                if details.is_none() {
-                    tracing::debug!(reader = %name, "YubiKey management information unavailable");
-                }
+                let details = match read_management_info(&mut card) {
+                    Ok(details) => Some(details),
+                    Err(error) => {
+                        tracing::debug!(reader = %name, error = %error, "YubiKey management information unavailable");
+                        None
+                    }
+                };
                 devices.push(device_for_reader(&name, details, Transport::UsbSmartCard));
             }
             ReaderKind::Other => {
@@ -154,9 +154,14 @@ fn scan(context: &Context) -> Result<Vec<DeviceInfo>> {
                         continue;
                     }
                 };
-                if let Some(details) = read_management_info(&mut card) {
-                    devices.push(device_for_reader(&name, Some(details), Transport::Nfc));
-                    continue;
+                match read_management_info(&mut card) {
+                    Ok(details) => {
+                        devices.push(device_for_reader(&name, Some(details), Transport::Nfc));
+                        continue;
+                    }
+                    Err(error) => {
+                        tracing::debug!(reader = %name, error = %error, "smart card has no readable YubiKey management applet");
+                    }
                 }
                 // TODO: other SP 800-73 PIV cards need a generic vendor identity before they can be listed.
                 match thales_device(&name, &mut card) {
@@ -1029,50 +1034,10 @@ fn device_for_reader(
 
 // Hold a transaction so another process cannot select a different applet
 // between the SELECT and the GET DEVICE INFO pages.
-fn read_management_info(card: &mut pcsc::Card) -> Option<ManagementInfo> {
-    let transaction = card.transaction().ok()?;
-    let card: &pcsc::Card = &transaction;
-    let mut select = vec![0x00, 0xa4, 0x04, 0x00, MANAGEMENT_AID.len() as u8];
-    select.extend_from_slice(&MANAGEMENT_AID);
-    let select_response = send_read_only(card, &select)?;
-    let select_version = parse_select_version(&select_response);
-    let mut all_tags = Tags::new();
-    let mut page = 0;
-    loop {
-        if page >= MAX_INFO_PAGES {
-            return None;
-        }
-        let encoded = send_read_only(card, &management::read_config_command(page))?;
-        let mut tags = management::parse_page(&encoded).ok()?;
-        let more = tags
-            .remove(&TAG_MORE_DATA)
-            .is_some_and(|value| value.iter().any(|byte| *byte != 0));
-        all_tags.append(&mut tags);
-        if !more {
-            break;
-        }
-        page += 1;
-    }
-    ManagementInfo::from_tags(&all_tags, select_version).ok()
-}
-
-fn send_read_only(card: &pcsc::Card, command: &[u8]) -> Option<Vec<u8>> {
-    let mut buffer = [0u8; 1024];
-    let response = card.transmit(command, &mut buffer).ok()?;
-    if response.len() < 2 || response[response.len() - 2..] != [0x90, 0x00] {
-        return None;
-    }
-    Some(response[..response.len() - 2].to_vec())
-}
-
-fn parse_select_version(response: &[u8]) -> Option<FirmwareVersion> {
-    let text = std::str::from_utf8(response).ok()?;
-    let mut parts = text.split('.');
-    Some(FirmwareVersion {
-        major: parts.next()?.parse().ok()?,
-        minor: parts.next()?.parse().ok()?,
-        patch: parts.next()?.parse().ok()?,
-    })
+fn read_management_info(card: &mut pcsc::Card) -> Result<ManagementInfo> {
+    let transaction = card.transaction().map_err(piv::map_pcsc_error)?;
+    let mut transport = piv::PcscTransport::new(&transaction);
+    management::read_info(&mut transport)
 }
 
 // Return to the supervisor when PC/SC stops so HID monitoring can continue.
@@ -1150,7 +1115,7 @@ fn presence_changed(current: State, event: State) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sigil_core::Application;
+    use sigil_core::{Application, FirmwareVersion};
 
     #[test]
     fn thales_piv_is_discovered_without_yubikey_application_configuration() {

@@ -9,7 +9,7 @@ import (
 // never response data, so the chain records who looked at what without copying it.
 func (s *Service) auditRead(ctx context.Context, action, targetType, targetID string, detail map[string]any) error {
 	if err := auditStandalone(ctx, s, action, targetType, targetID, detail); err != nil {
-		return internal("could not record the read", err)
+		return internal(ctx, "could not record the read", err)
 	}
 	return nil
 }

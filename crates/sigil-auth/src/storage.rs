@@ -119,8 +119,11 @@ impl TokenStore for CredentialManagerStore {
     }
 
     fn save(&self, target: &str, value: &str) -> Result<()> {
-        use windows_sys::Win32::Security::Credentials::{
-            CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
+        use windows_sys::Win32::{
+            Foundation::GetLastError,
+            Security::Credentials::{
+                CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredWriteW,
+            },
         };
 
         let mut target = wide_target(target);
@@ -134,7 +137,11 @@ impl TokenStore for CredentialManagerStore {
         credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
         // SAFETY: credential and the buffers it references (target, blob) outlive the call.
         if unsafe { CredWriteW(&credential, 0) } == 0 {
-            return Err(AuthError::Storage("Credential Manager write failed".into()));
+            // SAFETY: GetLastError reads the error from the immediately preceding call.
+            let error = unsafe { GetLastError() };
+            return Err(AuthError::Storage(format!(
+                "Credential Manager write failed ({error})"
+            )));
         }
         Ok(())
     }

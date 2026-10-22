@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use dioxus::prelude::*;
 use sigil_app::CredentialService;
 use sigil_core::{
-    CertificateFormat, DeviceInfo, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
-    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, TouchPolicy,
+    CertificateFormat, DeviceInfo, HexError, ManagementKey, ManagementKeyAlgorithm, PinPolicy,
+    PivKeyAlgorithm, PivKeyConfiguration, PivPin, PivPuk, PivSlot, TouchPolicy, encode_hex,
 };
 use zeroize::{Zeroize, Zeroizing};
 
@@ -14,6 +14,8 @@ use crate::{
     managed::{self, SlotOperation},
     state::{AppState, PivAction},
 };
+
+use super::managed_dialog::pin_length_hint;
 
 const DEFAULT_PIN: &[u8] = b"123456";
 const DEFAULT_PUK: &[u8] = b"12345678";
@@ -111,7 +113,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             } else {
                 {secret_field("Current PIV PIN", "Current PIN", current)}
             }
-            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", if fips { "8 characters" } else { "6-8 characters" }, new_secret, confirmation)}
+            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", pin_length_hint(fips), new_secret, confirmation)}
             {fips_code_note(fips, "PIN")}
         },
         PivAction::ChangePuk => rsx! {
@@ -120,7 +122,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             } else {
                 {secret_field("Current PIV PUK", "Current PUK", current)}
             }
-            {new_code_fields("New PIV PUK", "Confirm new PIV PUK", if fips { "8 characters" } else { "6-8 characters" }, new_secret, confirmation)}
+            {new_code_fields("New PIV PUK", "Confirm new PIV PUK", pin_length_hint(fips), new_secret, confirmation)}
             {fips_code_note(fips, "PUK")}
         },
         PivAction::UnblockPin => rsx! {
@@ -129,7 +131,7 @@ pub fn PivDialog(device: DeviceInfo, action: PivAction) -> Element {
             } else {
                 {secret_field("PIV PUK", "Current PUK", current)}
             }
-            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", if fips { "8 characters" } else { "6-8 characters" }, new_secret, confirmation)}
+            {new_code_fields("New PIV PIN", "Confirm new PIV PIN", pin_length_hint(fips), new_secret, confirmation)}
             {fips_code_note(fips, "PIN")}
         },
         PivAction::ChangeManagementKey => rsx! {
@@ -706,8 +708,8 @@ pub fn FipsSetupDialog(device: DeviceInfo) -> Element {
                     if !pin_default { {secret_field("Current PIV PIN", "Current PIN", current_pin)} }
                     if !puk_default { {secret_field("Current PIV PUK", "Current PUK", current_puk)} }
                     if !management_key_default { {secret_field("Current management key (hex)", "Current key in hex", current_management_input)} }
-                    {new_code_fields("New 8-character PIN", "Confirm new PIN", "8 characters", pin, pin_confirmation)}
-                    {new_code_fields("New 8-character PUK", "Confirm new PUK", "8 characters", puk, puk_confirmation)}
+                    {new_code_fields("New 8-character PIN", "Confirm new PIN", pin_length_hint(true), pin, pin_confirmation)}
+                    {new_code_fields("New 8-character PUK", "Confirm new PUK", pin_length_hint(true), puk, puk_confirmation)}
                     {generated_key_view(management_key, have_stored_key, generation_error, toast_signal)}
                     if let Some(message) = current_pin_error { div { class: "modal-error", "{message}" } }
                     if let Some(message) = current_puk_error { div { class: "modal-error", "{message}" } }
@@ -1021,22 +1023,13 @@ fn generated_aes256_key() -> Result<Zeroizing<String>, String> {
     Ok(Zeroizing::new(encode_hex(key.as_bytes())))
 }
 
-fn encode_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 fn parse_hex(value: &str) -> Result<Zeroizing<Vec<u8>>, String> {
-    let value = value.trim();
-    if value.is_empty() || !value.len().is_multiple_of(2) || !value.is_ascii() {
-        return Err("Enter an even-length hexadecimal value.".into());
-    }
-    let mut bytes = Zeroizing::new(Vec::with_capacity(value.len() / 2));
-    let (pairs, _) = value.as_bytes().as_chunks::<2>();
-    for pair in pairs {
-        let pair = std::str::from_utf8(pair).map_err(|_| "Invalid hexadecimal value")?;
-        bytes.push(u8::from_str_radix(pair, 16).map_err(|_| "Invalid hexadecimal value")?);
-    }
-    Ok(bytes)
+    sigil_core::parse_hex(value).map_err(|error| match error {
+        HexError::InvalidLength | HexError::NonAscii => {
+            "Enter an even-length hexadecimal value.".into()
+        }
+        HexError::InvalidDigit => "Invalid hexadecimal value".into(),
+    })
 }
 
 fn current_management_key(

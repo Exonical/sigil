@@ -15,6 +15,15 @@ import (
 
 const chainLock int64 = 0x534947494c415544
 
+// Action names shared by every writer of the same operation (admin RPCs and the sigil-server CLI).
+// Token events use the token serial as TargetID; station events use the station ID.
+const (
+	ActionAssignToken      = "AssignToken"
+	ActionUnassignToken    = "UnassignToken"
+	ActionAddStation       = "AddStation"
+	ActionSetStationStatus = "SetStationStatus"
+)
+
 type Event struct {
 	OccurredAt time.Time
 	ActorType  string

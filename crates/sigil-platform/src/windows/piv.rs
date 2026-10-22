@@ -36,7 +36,7 @@ impl CardTransport for PcscTransport<'_, '_> {
     }
 }
 
-fn map_pcsc_error(error: PcscError) -> CredentialError {
+pub(super) fn map_pcsc_error(error: PcscError) -> CredentialError {
     match error {
         PcscError::RemovedCard | PcscError::ResetCard | PcscError::NoSmartcard => {
             CredentialError::DeviceRemoved
@@ -85,14 +85,16 @@ fn vendor_for(device: &DeviceInfo) -> Result<&'static dyn PivVendor> {
     }
 }
 
-/// Runs `operation` in one shared card transaction. The serial the caller requires is verified first; when none is
-/// given, the serial embedded in the device identifier is checked. The verified serial is passed to `operation`, or
-/// is empty when nothing was checked.
-fn session<T>(
-    id: &DeviceId,
-    expected_serial: Option<&str>,
-    operation: impl FnOnce(&mut dyn CardTransport, &dyn PivVendor, &DeviceInfo, &str) -> Result<T>,
-) -> Result<T> {
+/// A discovered token whose identifier and serial match what the caller asked for.
+struct Target {
+    device: DeviceInfo,
+    reader_name: String,
+    serial_in_id: Option<String>,
+}
+
+/// Finds the token for `id`. When the caller requires a serial, an empty or conflicting serial in the identifier, or
+/// a token that is no longer present, is reported as a device mismatch.
+fn locate(id: &DeviceId, expected_serial: Option<&str>) -> Result<Target> {
     let (reader_name, serial_in_id) = parse_device_id(id)?;
     if let Some(expected) = expected_serial
         && (expected.is_empty()
@@ -106,7 +108,18 @@ fn session<T>(
         Some(_) => CredentialError::DeviceMismatch,
         None => error,
     })?;
-    let vendor = vendor_for(&device)?;
+    Ok(Target {
+        device,
+        reader_name,
+        serial_in_id,
+    })
+}
+
+/// Connects to `reader_name` in shared mode and runs `operation` inside one card transaction.
+fn open_transaction<T>(
+    reader_name: String,
+    operation: impl FnOnce(&mut dyn CardTransport) -> Result<T>,
+) -> Result<T> {
     let context =
         establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
     let reader = CString::new(reader_name).map_err(|_| {
@@ -115,12 +128,31 @@ fn session<T>(
     let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
     let transaction = card.transaction().map_err(map_pcsc_error)?;
     let mut transport = PcscTransport::new(&transaction);
-    let verify_against = expected_serial.map(str::to_owned).or(serial_in_id);
-    let verified = match verify_against {
-        Some(serial) => vendor.verify_serial(&mut transport, &serial)?,
-        None => String::new(),
-    };
-    operation(&mut transport, vendor, &device, &verified)
+    operation(&mut transport)
+}
+
+/// Runs `operation` in one shared card transaction. The serial the caller requires is verified first; when none is
+/// given, the serial embedded in the device identifier is checked. The verified serial is passed to `operation`, or
+/// is empty when nothing was checked.
+fn session<T>(
+    id: &DeviceId,
+    expected_serial: Option<&str>,
+    operation: impl FnOnce(&mut dyn CardTransport, &dyn PivVendor, &DeviceInfo, &str) -> Result<T>,
+) -> Result<T> {
+    let Target {
+        device,
+        reader_name,
+        serial_in_id,
+    } = locate(id, expected_serial)?;
+    let vendor = vendor_for(&device)?;
+    open_transaction(reader_name, |transport| {
+        let verify_against = expected_serial.map(str::to_owned).or(serial_in_id);
+        let verified = match verify_against {
+            Some(serial) => vendor.verify_serial(transport, &serial)?,
+            None => String::new(),
+        };
+        operation(transport, vendor, &device, &verified)
+    })
 }
 
 /// Application settings live in the YubiKey management applet, not in PIV, so only YubiKeys support them.
@@ -131,35 +163,25 @@ pub(crate) fn set_enabled_applications(
     nfc: Option<&[Application]>,
     lock_code: Option<&Secret>,
 ) -> Result<()> {
-    let device = find_device(id)?;
+    let Target {
+        device,
+        reader_name,
+        ..
+    } = locate(id, Some(expected_serial))?;
     if device.vendor != "Yubico" {
         return Err(CredentialError::UnsupportedOperation(format!(
             "application settings are not supported on {} tokens",
             device.vendor
         )));
     }
-    let (reader_name, serial_in_id) = parse_device_id(id)?;
-    if expected_serial.is_empty()
-        || serial_in_id
-            .as_deref()
-            .is_some_and(|serial| serial != expected_serial)
-    {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    let context =
-        establish().map_err(|error| CredentialError::PcscUnavailable(error.to_string()))?;
-    let reader = CString::new(reader_name).map_err(|_| {
-        CredentialError::SmartCardOperation("reader name contains a NUL byte".into())
-    })?;
-    let mut card: Card = connect_shared(&context, &reader).map_err(map_pcsc_error)?;
-    let transaction = card.transaction().map_err(map_pcsc_error)?;
-    let mut transport = PcscTransport::new(&transaction);
-    let info = yubikey_management::read_info(&mut transport)?;
-    if info.serial.as_deref() != Some(expected_serial) {
-        return Err(CredentialError::DeviceMismatch);
-    }
-    // Do not query the card after a successful rebooting write; discovery events refresh it.
-    yubikey_management::write_config(&mut transport, usb, nfc, lock_code)
+    open_transaction(reader_name, |transport| {
+        let info = yubikey_management::read_info(transport)?;
+        if info.serial.as_deref() != Some(expected_serial) {
+            return Err(CredentialError::DeviceMismatch);
+        }
+        // Do not query the card after a successful rebooting write; discovery events refresh it.
+        yubikey_management::write_config(transport, usb, nfc, lock_code)
+    })
 }
 
 pub(crate) fn piv_serial(id: &DeviceId, expected_serial: &str) -> Result<String> {
@@ -348,6 +370,23 @@ mod tests {
         );
         assert!(matches!(
             parse_device_id(&DeviceId("windows-hid:device".into())),
+            Err(CredentialError::UnsupportedOperation(_))
+        ));
+    }
+
+    #[test]
+    fn locate_rejects_a_required_serial_that_conflicts_with_the_identifier() {
+        let id = DeviceId("windows-pcsc:Reader:12345678".into());
+        assert!(matches!(
+            locate(&id, Some("87654321")),
+            Err(CredentialError::DeviceMismatch)
+        ));
+        assert!(matches!(
+            locate(&id, Some("")),
+            Err(CredentialError::DeviceMismatch)
+        ));
+        assert!(matches!(
+            locate(&DeviceId("windows-hid:device".into()), Some("12345678")),
             Err(CredentialError::UnsupportedOperation(_))
         ));
     }
