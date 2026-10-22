@@ -56,8 +56,8 @@ enum AbandonFailure {
 }
 
 impl<'a> ManagedCall<'a> {
-    fn audit(self, grant_id: Option<&'a str>, rotation_id: Option<&'a str>) -> PivAudit<'a> {
-        PivAudit {
+    fn audit(self, grant_id: Option<&'a str>, rotation_id: Option<&'a str>) -> RpcAudit<'a> {
+        RpcAudit {
             caller: self.caller,
             rpc: self.rpc,
             device_id: self.device_id,
@@ -170,7 +170,7 @@ impl AgentService {
         device_id: &str,
     ) -> std::result::Result<CallerIdentity, Status> {
         self.authorized_identity(request, |identity, status| {
-            audit_static(identity, rpc, device_id, false, Some(status));
+            RpcAudit::new(identity, rpc, device_id).record_status(Some(status));
         })
     }
 
@@ -183,7 +183,7 @@ impl AgentService {
         slot: Option<u8>,
     ) -> std::result::Result<CallerIdentity, Status> {
         self.authorized_identity(request, |identity, status| {
-            PivAudit {
+            RpcAudit {
                 caller: identity,
                 rpc,
                 device_id,
@@ -193,7 +193,7 @@ impl AgentService {
                 grant_id: None,
                 rotation_id: None,
             }
-            .record::<()>(&Err(status.clone()));
+            .record_status(Some(status));
         })
     }
 
@@ -205,14 +205,7 @@ impl AgentService {
         operation: &'static str,
     ) -> std::result::Result<CallerIdentity, Status> {
         self.authorized_identity(request, |identity, status| {
-            audit_device::<()>(
-                identity,
-                rpc,
-                device_id,
-                operation,
-                "",
-                &Err(status.clone()),
-            );
+            RpcAudit::device(identity, rpc, device_id, operation, "").record_status(Some(status));
         })
     }
 
@@ -256,21 +249,15 @@ impl AgentService {
         expected_serial: &str,
     ) -> std::result::Result<String, Status> {
         self.preflight_serial(device_id, expected_serial, |status| {
-            audit_device::<()>(
-                caller,
-                rpc,
-                device_id,
-                operation,
-                expected_serial,
-                &Err(status.clone()),
-            );
+            RpcAudit::device(caller, rpc, device_id, operation, expected_serial)
+                .record_status(Some(status));
         })
         .await
     }
 
     async fn preflight_piv_serial(
         &self,
-        audit: PivAudit<'_>,
+        audit: RpcAudit<'_>,
     ) -> std::result::Result<String, Status> {
         self.preflight_serial(audit.device_id, audit.serial, |status| {
             audit.reject(status.clone());
@@ -468,7 +455,7 @@ impl AgentService {
         {
             Ok(authorization) => authorization,
             Err(status) => {
-                call.audit(None, None).record::<()>(&Err(status.clone()));
+                call.audit(None, None).record_status(Some(&status));
                 return Err(status);
             }
         };
@@ -478,7 +465,7 @@ impl AgentService {
                 None => {
                     let status = Status::internal(detail);
                     call.audit(Some(&grant_id), None)
-                        .record::<()>(&Err(status.clone()));
+                        .record_status(Some(&status));
                     return Err(status);
                 }
             }
@@ -499,7 +486,7 @@ impl AgentService {
                     )
                     .await;
                 call.audit(Some(&grant_id), rotation_id.as_deref())
-                    .record::<()>(&Err(status.clone()));
+                    .record_status(Some(&status));
                 return Err(status);
             }
         };
@@ -522,7 +509,7 @@ impl AgentService {
                     .abandon_rotation(call, rotation_id.as_deref(), call.abandon_failure, status)
                     .await;
                 call.audit(Some(&grant_id), rotation_id.as_deref())
-                    .record::<()>(&Err(status.clone()));
+                    .record_status(Some(&status));
                 Err(status)
             }
             Ok(ManagedCardOutcome::Partial) => {
@@ -543,7 +530,7 @@ impl AgentService {
                     )
                     .await;
                 call.audit(Some(&grant_id), rotation_id.as_deref())
-                    .record::<()>(&Err(status.clone()));
+                    .record_status(Some(&status));
                 Err(status)
             }
             Err(_) if rotation_id.is_some() => {
@@ -557,7 +544,7 @@ impl AgentService {
             Err(error) => {
                 let status = status_from_error(&error);
                 call.audit(Some(&grant_id), None)
-                    .record::<()>(&Err(status.clone()));
+                    .record_status(Some(&status));
                 Err(status)
             }
         }
@@ -680,42 +667,6 @@ fn card_failure_is_definite(error: &CredentialError) -> bool {
             | CredentialError::PinComplexity
             | CredentialError::PukComplexity
     )
-}
-
-fn audit<T>(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    result: &std::result::Result<T, Status>,
-) {
-    let (outcome, code) = match result {
-        Ok(_) => (AuditOutcome::Success, String::new()),
-        Err(status) => (AuditOutcome::Error, format!("{:?}", status.code())),
-    };
-    audit::emit(&AuditRecord {
-        rpc,
-        operation: "",
-        device_id,
-        token_serial: "",
-        piv_slot: None,
-        caller: Some(caller),
-        outcome,
-        code: &code,
-        grant_id: "",
-        rotation_id: "",
-    });
-}
-
-/// Outcome and code for an RPC that distinguishes denied from failed calls.
-fn audit_outcome<T>(result: &std::result::Result<T, Status>) -> (AuditOutcome, String) {
-    let (outcome, status) = match result {
-        Ok(_) => (AuditOutcome::Success, None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => {
-            (AuditOutcome::Denied, Some(status))
-        }
-        Err(status) => (AuditOutcome::Error, Some(status)),
-    };
-    (outcome, sigil_proto::audit_error_code(status))
 }
 
 /// Holds a managed authorization and zeroizes its access token when dropped, on every return path.
@@ -931,7 +882,7 @@ impl v1::agent_server::Agent for AgentService {
             }),
             log_location: self.log_location.clone(),
         };
-        audit_static(&caller, "GetAgentInfo", "", true, None);
+        RpcAudit::new(&caller, "GetAgentInfo", "").record_status(None);
         Ok(Response::new(response))
     }
 
@@ -942,7 +893,7 @@ impl v1::agent_server::Agent for AgentService {
         let caller = self.caller(&request, "ListDevices", "")?;
         let credentials = self.credentials.clone();
         let result = blocking(move || credentials.devices()).await;
-        audit(&caller, "ListDevices", "", &result);
+        RpcAudit::new(&caller, "ListDevices", "").record(&result);
         Ok(Response::new(v1::ListDevicesResponse {
             devices: result?.iter().map(v1::DeviceInfo::from).collect(),
         }))
@@ -957,7 +908,7 @@ impl v1::agent_server::Agent for AgentService {
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.device(&id)).await;
-        audit(&caller, "GetDevice", &device_id, &result);
+        RpcAudit::new(&caller, "GetDevice", &device_id).record(&result);
         result.map(|device| Response::new((&device).into()))
     }
 
@@ -983,14 +934,14 @@ impl v1::agent_server::Agent for AgentService {
         {
             Ok(applications) => applications,
             Err(error) => {
-                return Err(audit_device_error(
+                return Err(RpcAudit::device(
                     &caller,
                     "SetEnabledApplications",
                     &device_id,
                     "DEVICE_SET_ENABLED_APPLICATIONS",
                     &expected_serial,
-                    error,
-                ));
+                )
+                .record_error(error));
             }
         };
         let nfc = if input.set_nfc {
@@ -1002,14 +953,14 @@ impl v1::agent_server::Agent for AgentService {
             {
                 Ok(applications) => Some(applications),
                 Err(error) => {
-                    return Err(audit_device_error(
+                    return Err(RpcAudit::device(
                         &caller,
                         "SetEnabledApplications",
                         &device_id,
                         "DEVICE_SET_ENABLED_APPLICATIONS",
                         &expected_serial,
-                        error,
-                    ));
+                    )
+                    .record_error(error));
                 }
             }
         } else {
@@ -1041,14 +992,14 @@ impl v1::agent_server::Agent for AgentService {
             )
         })
         .await;
-        audit_device(
+        RpcAudit::device(
             &caller,
             "SetEnabledApplications",
             &device_id,
             "DEVICE_SET_ENABLED_APPLICATIONS",
             &serial,
-            &result,
-        );
+        )
+        .record(&result);
         result.map(|()| Response::new(v1::Empty {}))
     }
 
@@ -1059,7 +1010,7 @@ impl v1::agent_server::Agent for AgentService {
         let caller = self.caller(&request, "WatchDevices", "")?;
         let credentials = self.credentials.clone();
         let receiver = blocking(move || credentials.watch_devices()).await;
-        audit(&caller, "WatchDevices", "", &receiver);
+        RpcAudit::new(&caller, "WatchDevices", "").record(&receiver);
         let receiver = receiver?;
         let (sender, output) = mpsc::channel(64);
         task::spawn_blocking(move || {
@@ -1090,7 +1041,7 @@ impl v1::agent_server::Agent for AgentService {
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.fido_status(&id)).await;
-        audit(&caller, "GetFidoStatus", &device_id, &result);
+        RpcAudit::new(&caller, "GetFidoStatus", &device_id).record(&result);
         result.map(|status| Response::new((&status).into()))
     }
 
@@ -1105,7 +1056,7 @@ impl v1::agent_server::Agent for AgentService {
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.discoverable_credentials(&id, &pin)).await;
-        audit(&caller, "ListDiscoverableCredentials", &device_id, &result);
+        RpcAudit::new(&caller, "ListDiscoverableCredentials", &device_id).record(&result);
         result.map(|entries| {
             Response::new(v1::DiscoverableCredentialList {
                 credentials: entries
@@ -1127,7 +1078,7 @@ impl v1::agent_server::Agent for AgentService {
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.fingerprints(&id, &pin)).await;
-        audit(&caller, "ListFingerprints", &device_id, &result);
+        RpcAudit::new(&caller, "ListFingerprints", &device_id).record(&result);
         result.map(|fingerprints| {
             Response::new(v1::FingerprintList {
                 fingerprints: fingerprints.iter().map(v1::Fingerprint::from).collect(),
@@ -1145,13 +1096,7 @@ impl v1::agent_server::Agent for AgentService {
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
         self.device_serial(&id).await.inspect_err(|status| {
-            audit_static(
-                &caller,
-                "EnrollFingerprint",
-                &device_id,
-                false,
-                Some(status),
-            );
+            RpcAudit::new(&caller, "EnrollFingerprint", &device_id).record_status(Some(status));
         })?;
         let (sender, receiver) = mpsc::channel(32);
         let progress_sender = sender.clone();
@@ -1175,18 +1120,14 @@ impl v1::agent_server::Agent for AgentService {
                         )),
                     };
                     let _ = progress_sender.blocking_send(Ok(event));
-                    audit_static(&audit_caller, "EnrollFingerprint", &audit_id, true, None);
+                    RpcAudit::new(&audit_caller, "EnrollFingerprint", &audit_id)
+                        .record_status(None);
                 }
                 Err(error) => {
                     let status = status_from_error(&error);
                     let _ = progress_sender.blocking_send(Err(status.clone()));
-                    audit_static(
-                        &audit_caller,
-                        "EnrollFingerprint",
-                        &audit_id,
-                        false,
-                        Some(&status),
-                    );
+                    RpcAudit::new(&audit_caller, "EnrollFingerprint", &audit_id)
+                        .record_status(Some(&status));
                 }
             }
         });
@@ -1194,13 +1135,8 @@ impl v1::agent_server::Agent for AgentService {
             if let Err(error) = job.await {
                 let status = Status::internal(format!("blocking enrollment task failed: {error}"));
                 let _ = sender.send(Err(status.clone())).await;
-                audit_static(
-                    &caller,
-                    "EnrollFingerprint",
-                    &device_id,
-                    false,
-                    Some(&status),
-                );
+                RpcAudit::new(&caller, "EnrollFingerprint", &device_id)
+                    .record_status(Some(&status));
             }
         });
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
@@ -1216,19 +1152,13 @@ impl v1::agent_server::Agent for AgentService {
         let pin = Zeroizing::new(input.pin);
         let id = DeviceId(device_id.clone());
         self.device_serial(&id).await.inspect_err(|status| {
-            audit_static(
-                &caller,
-                "RemoveFingerprint",
-                &device_id,
-                false,
-                Some(status),
-            );
+            RpcAudit::new(&caller, "RemoveFingerprint", &device_id).record_status(Some(status));
         })?;
         let credentials = self.credentials.clone();
         let fingerprint_id = input.fingerprint_id;
         let result =
             blocking(move || credentials.remove_fingerprint(&id, &pin, &fingerprint_id)).await;
-        audit(&caller, "RemoveFingerprint", &device_id, &result);
+        RpcAudit::new(&caller, "RemoveFingerprint", &device_id).record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
 
@@ -1241,7 +1171,7 @@ impl v1::agent_server::Agent for AgentService {
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.piv_info(&id)).await;
-        audit(&caller, "GetPivInfo", &device_id, &result);
+        RpcAudit::new(&caller, "GetPivInfo", &device_id).record(&result);
         result.map(|info| Response::new((&info).into()))
     }
 
@@ -1254,7 +1184,7 @@ impl v1::agent_server::Agent for AgentService {
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.piv_slots(&id)).await;
-        audit(&caller, "ListPivSlots", &device_id, &result);
+        RpcAudit::new(&caller, "ListPivSlots", &device_id).record(&result);
         result.map(|slots| {
             Response::new(v1::PivSlotInfoList {
                 slots: slots.iter().map(v1::PivSlotInfo::from).collect(),
@@ -1273,20 +1203,15 @@ impl v1::agent_server::Agent for AgentService {
             Ok(slot) => slot,
             Err(error) => {
                 let status = status_from_error(&error);
-                audit_static(
-                    &caller,
-                    "GetPivCertificate",
-                    &device_id,
-                    false,
-                    Some(&status),
-                );
+                RpcAudit::new(&caller, "GetPivCertificate", &device_id)
+                    .record_status(Some(&status));
                 return Err(status);
             }
         };
         let credentials = self.credentials.clone();
         let id = DeviceId(device_id.clone());
         let result = blocking(move || credentials.piv_certificate(&id, slot)).await;
-        audit(&caller, "GetPivCertificate", &device_id, &result);
+        RpcAudit::new(&caller, "GetPivCertificate", &device_id).record(&result);
         result.map(|certificate| match certificate {
             Some(certificate) => Response::new(v1::GetPivCertificateResponse {
                 found: true,
@@ -1310,7 +1235,7 @@ impl v1::agent_server::Agent for AgentService {
             self.caller_piv(&request, "ChangePivPin", &device_id, "PIV_CHANGE_PIN", None)?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "ChangePivPin",
             device_id: &device_id,
@@ -1332,7 +1257,7 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        PivAudit {
+        RpcAudit {
             serial: &audit_serial,
             ..audit
         }
@@ -1349,7 +1274,7 @@ impl v1::agent_server::Agent for AgentService {
             self.caller_piv(&request, "ChangePivPuk", &device_id, "PIV_CHANGE_PUK", None)?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "ChangePivPuk",
             device_id: &device_id,
@@ -1410,7 +1335,7 @@ impl v1::agent_server::Agent for AgentService {
         let result =
             blocking(move || credentials.change_puk(&id, &expected_serial, &old_puk, &new_puk))
                 .await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -1432,7 +1357,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "UnblockPivPin",
             device_id: &device_id,
@@ -1487,7 +1412,7 @@ impl v1::agent_server::Agent for AgentService {
         let expected_serial = serial.clone();
         let result =
             blocking(move || credentials.unblock_pin(&id, &expected_serial, &puk, &new_pin)).await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -1509,7 +1434,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "ChangePivManagementKey",
             device_id: &device_id,
@@ -1590,7 +1515,7 @@ impl v1::agent_server::Agent for AgentService {
             credentials.change_management_key(&id, &expected_serial, &current, &new_key)
         })
         .await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -1623,7 +1548,7 @@ impl v1::agent_server::Agent for AgentService {
                         .collect::<std::result::Result<Vec<_>, Status>>()
                 });
         let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
-        PivAudit {
+        RpcAudit {
             caller: &caller,
             rpc: "ListCertificateProfiles",
             device_id: &device_id,
@@ -1653,7 +1578,7 @@ impl v1::agent_server::Agent for AgentService {
         let serial = input.expected_serial.clone();
         let result = self.enroll_certificate(&caller, &device_id, input).await;
         let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
-        PivAudit {
+        RpcAudit {
             caller: &caller,
             rpc: "EnrollPivCertificate",
             device_id: &device_id,
@@ -1682,7 +1607,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "GeneratePivKey",
             device_id: &device_id,
@@ -1777,7 +1702,7 @@ impl v1::agent_server::Agent for AgentService {
             )
         })
         .await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -1804,7 +1729,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let input = request.into_inner();
         let serial_hint = input.expected_serial;
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "AttestPivKey",
             device_id: &device_id,
@@ -1825,7 +1750,7 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        PivAudit {
+        RpcAudit {
             serial: &audit_serial,
             ..audit
         }
@@ -1848,7 +1773,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "SignPivCsr",
             device_id: &device_id,
@@ -1883,7 +1808,7 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        PivAudit {
+        RpcAudit {
             serial: &audit_serial,
             ..audit
         }
@@ -1906,7 +1831,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "ImportPivCertificate",
             device_id: &device_id,
@@ -1989,7 +1914,7 @@ impl v1::agent_server::Agent for AgentService {
             )
         })
         .await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -2012,7 +1937,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "DeletePivCertificate",
             device_id: &device_id,
@@ -2076,7 +2001,7 @@ impl v1::agent_server::Agent for AgentService {
             credentials.delete_certificate(&id, &expected_serial, &management_key, slot)
         })
         .await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -2099,7 +2024,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "DeletePivKey",
             device_id: &device_id,
@@ -2162,7 +2087,7 @@ impl v1::agent_server::Agent for AgentService {
         let result =
             blocking(move || credentials.delete_key(&id, &expected_serial, &management_key, slot))
                 .await;
-        PivAudit {
+        RpcAudit {
             serial: &serial,
             ..audit
         }
@@ -2188,7 +2113,7 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        PivAudit {
+        RpcAudit {
             caller: &caller,
             rpc: "ResetPiv",
             device_id: &device_id,
@@ -2216,7 +2141,7 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "InitializeManagedPiv",
             device_id: &device_id,
@@ -2295,7 +2220,7 @@ impl v1::agent_server::Agent for AgentService {
             Ok(kind) => kind,
             Err(_) => {
                 let status = Status::invalid_argument("managed secret kind is invalid");
-                PivAudit {
+                RpcAudit {
                     caller: &caller,
                     rpc: "RotateManagedPivSecret",
                     device_id: &device_id,
@@ -2305,7 +2230,7 @@ impl v1::agent_server::Agent for AgentService {
                     grant_id: None,
                     rotation_id: None,
                 }
-                .record::<()>(&Err(status.clone()));
+                .record_status(Some(&status));
                 return Err(status);
             }
         };
@@ -2317,7 +2242,7 @@ impl v1::agent_server::Agent for AgentService {
             ),
             v1::ManagedSecretKind::Unspecified => {
                 let status = Status::invalid_argument("managed secret kind is required");
-                PivAudit {
+                RpcAudit {
                     caller: &caller,
                     rpc: "RotateManagedPivSecret",
                     device_id: &device_id,
@@ -2327,13 +2252,13 @@ impl v1::agent_server::Agent for AgentService {
                     grant_id: None,
                     rotation_id: None,
                 }
-                .record::<()>(&Err(status.clone()));
+                .record_status(Some(&status));
                 return Err(status);
             }
         };
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = PivAudit {
+        let audit = RpcAudit {
             caller: &caller,
             rpc: "RotateManagedPivSecret",
             device_id: &device_id,
@@ -2407,33 +2332,8 @@ impl v1::agent_server::Agent for AgentService {
     }
 }
 
-fn audit_static(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    success: bool,
-    code: Option<&Status>,
-) {
-    audit::emit(&AuditRecord {
-        rpc,
-        operation: "",
-        device_id,
-        token_serial: "",
-        piv_slot: None,
-        caller: Some(caller),
-        outcome: if success {
-            AuditOutcome::Success
-        } else {
-            AuditOutcome::Error
-        },
-        code: &sigil_proto::audit_error_code(code),
-        grant_id: "",
-        rotation_id: "",
-    });
-}
-
 #[derive(Clone, Copy)]
-struct PivAudit<'a> {
+struct RpcAudit<'a> {
     caller: &'a CallerIdentity,
     rpc: &'static str,
     device_id: &'a str,
@@ -2444,7 +2344,7 @@ struct PivAudit<'a> {
     rotation_id: Option<&'a str>,
 }
 
-impl<'a> PivAudit<'a> {
+impl<'a> RpcAudit<'a> {
     fn audit_record<'b>(self, outcome: AuditOutcome, code: &'b str) -> AuditRecord<'b>
     where
         'a: 'b,
@@ -2463,8 +2363,47 @@ impl<'a> PivAudit<'a> {
         }
     }
 
+    /// A record for an RPC that is not tied to a PIV or device operation.
+    fn new(caller: &'a CallerIdentity, rpc: &'static str, device_id: &'a str) -> Self {
+        Self {
+            caller,
+            rpc,
+            device_id,
+            operation: "",
+            slot: None,
+            serial: "",
+            grant_id: None,
+            rotation_id: None,
+        }
+    }
+
+    /// A record for a device-level (non-PIV) operation.
+    fn device(
+        caller: &'a CallerIdentity,
+        rpc: &'static str,
+        device_id: &'a str,
+        operation: &'static str,
+        serial: &'a str,
+    ) -> Self {
+        Self {
+            operation,
+            serial,
+            ..Self::new(caller, rpc, device_id)
+        }
+    }
+
     fn record<T>(self, result: &std::result::Result<T, Status>) {
-        let (outcome, code) = audit_outcome(result);
+        self.record_status(result.as_ref().err());
+    }
+
+    /// Records success for `None`, otherwise `denied` for PermissionDenied and `error` for the rest.
+    fn record_status(self, failure: Option<&Status>) {
+        let outcome = match failure {
+            None => AuditOutcome::Success,
+            Some(status) if status.code() == tonic::Code::PermissionDenied => AuditOutcome::Denied,
+            Some(_) => AuditOutcome::Error,
+        };
+        let code = sigil_proto::audit_error_code(failure);
         audit::emit(&self.audit_record(outcome, &code));
     }
 
@@ -2474,7 +2413,7 @@ impl<'a> PivAudit<'a> {
 
     /// Audits `status` as this request's failure and returns it.
     fn reject(self, status: Status) -> Status {
-        self.record::<()>(&Err(status.clone()));
+        self.record_status(Some(&status));
         status
     }
 
@@ -2515,49 +2454,6 @@ impl<'a> PivAudit<'a> {
             "rotation_outcome_unknown",
         ));
     }
-}
-
-fn audit_device<T>(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    operation: &'static str,
-    serial: &str,
-    result: &std::result::Result<T, Status>,
-) {
-    let (outcome, code) = audit_outcome(result);
-    audit::emit(&AuditRecord {
-        rpc,
-        operation,
-        device_id,
-        token_serial: serial,
-        piv_slot: None,
-        caller: Some(caller),
-        outcome,
-        code: &code,
-        grant_id: "",
-        rotation_id: "",
-    });
-}
-
-fn audit_device_error(
-    caller: &CallerIdentity,
-    rpc: &'static str,
-    device_id: &str,
-    operation: &'static str,
-    serial: &str,
-    error: CredentialError,
-) -> Status {
-    let status = status_from_error(&error);
-    audit_device::<()>(
-        caller,
-        rpc,
-        device_id,
-        operation,
-        serial,
-        &Err(status.clone()),
-    );
-    status
 }
 
 fn piv_slot(slot_byte: u32) -> CoreResult<PivSlot> {
@@ -2607,7 +2503,7 @@ mod audit_tests {
         };
         let result: std::result::Result<(), Status> = Ok(());
         tracing::dispatcher::with_default(&subscriber, || {
-            PivAudit {
+            RpcAudit {
                 caller: &caller,
                 rpc: "InitializeManagedPiv",
                 device_id: "mock-device",
@@ -2659,7 +2555,7 @@ mod audit_tests {
             Err(Status::failed_precondition("plain failure"));
         let success: std::result::Result<(), Status> = Ok(());
         tracing::dispatcher::with_default(&subscriber, || {
-            PivAudit {
+            RpcAudit {
                 caller: &caller,
                 rpc: "ChangePivPin",
                 device_id: "mock-device",
@@ -2670,7 +2566,7 @@ mod audit_tests {
                 rotation_id: None,
             }
             .record(&complexity);
-            PivAudit {
+            RpcAudit {
                 caller: &caller,
                 rpc: "GeneratePivKey",
                 device_id: "mock-device",
@@ -2681,7 +2577,7 @@ mod audit_tests {
                 rotation_id: None,
             }
             .record(&generic);
-            PivAudit {
+            RpcAudit {
                 caller: &caller,
                 rpc: "ChangePivPin",
                 device_id: "mock-device",
@@ -2702,6 +2598,52 @@ mod audit_tests {
         assert_eq!(
             codes,
             ["PIN_COMPLEXITY_VIOLATION", "FailedPrecondition", ""]
+        );
+    }
+
+    #[test]
+    fn read_only_audit_uses_the_same_outcome_and_code_as_mutations() {
+        let directory = tempfile::tempdir().expect("audit directory");
+        let outbox = Arc::new(AuditOutbox::open(directory.path()).expect("open outbox"));
+        let subscriber = tracing::Dispatch::new(
+            tracing_subscriber::registry().with(AuditOutboxLayer::new(Arc::clone(&outbox))),
+        );
+        let caller = CallerIdentity {
+            os_user: "test-user".into(),
+            session_id: Some(7),
+            pid: 1,
+        };
+        let denied: std::result::Result<(), Status> = Err(Status::permission_denied("no"));
+        let not_found: std::result::Result<(), Status> = Err(status_from_error(
+            &CredentialError::DeviceNotFound("gone".into()),
+        ));
+        let success: std::result::Result<(), Status> = Ok(());
+        tracing::dispatcher::with_default(&subscriber, || {
+            RpcAudit::new(&caller, "GetPivInfo", "mock-device").record(&denied);
+            RpcAudit::new(&caller, "GetDevice", "mock-device").record(&not_found);
+            RpcAudit::new(&caller, "ListDevices", "").record(&success);
+        });
+        let events: Vec<(String, String, String)> = outbox
+            .batch(3)
+            .expect("read audit events")
+            .into_iter()
+            .map(|event| (event.rpc, event.outcome, event.code))
+            .collect();
+        assert_eq!(
+            events,
+            [
+                (
+                    "GetPivInfo".into(),
+                    "denied".into(),
+                    "PermissionDenied".into()
+                ),
+                (
+                    "GetDevice".into(),
+                    "error".into(),
+                    "ERROR_DEVICE_NOT_FOUND".into()
+                ),
+                ("ListDevices".into(), "success".into(), String::new()),
+            ]
         );
     }
 }
