@@ -35,13 +35,9 @@ pub type EnrollFingerprintStream = Pin<
 
 #[derive(Clone, Copy)]
 struct ManagedCall<'a> {
-    caller: &'a CallerIdentity,
-    rpc: &'static str,
-    device_id: &'a str,
-    operation_name: &'static str,
+    /// The request's audit record, with the serial read during preflight.
+    audit: RpcAudit<'a>,
     operation: v1::Operation,
-    slot: Option<u8>,
-    serial: &'a str,
     rotation_missing_detail: Option<&'static str>,
     abandon_failure: AbandonFailure,
 }
@@ -58,14 +54,9 @@ enum AbandonFailure {
 impl<'a> ManagedCall<'a> {
     fn audit(self, grant_id: Option<&'a str>, rotation_id: Option<&'a str>) -> RpcAudit<'a> {
         RpcAudit {
-            caller: self.caller,
-            rpc: self.rpc,
-            device_id: self.device_id,
-            operation: self.operation_name,
-            slot: self.slot,
-            serial: self.serial,
             grant_id,
             rotation_id,
+            ..self.audit
         }
     }
 }
@@ -183,17 +174,8 @@ impl AgentService {
         slot: Option<u8>,
     ) -> std::result::Result<CallerIdentity, Status> {
         self.authorized_identity(request, |identity, status| {
-            RpcAudit {
-                caller: identity,
-                rpc,
-                device_id,
-                operation,
-                slot,
-                serial: "",
-                grant_id: None,
-                rotation_id: None,
-            }
-            .record_status(Some(status));
+            RpcAudit::piv(identity, rpc, device_id, operation, slot, "")
+                .record_status(Some(status));
         })
     }
 
@@ -263,6 +245,72 @@ impl AgentService {
             audit.reject(status.clone());
         })
         .await
+    }
+
+    /// Runs a PIV mutation that needs the management key. With managed authorization the
+    /// backend releases the key for the preflighted serial; otherwise the caller supplies it.
+    /// Every rejection and the card result are audited through `audit`.
+    async fn management_key_mutation<T, Card>(
+        &self,
+        audit: RpcAudit<'_>,
+        operation: v1::Operation,
+        managed: Option<v1::ManagedAuthorization>,
+        management_key: Vec<u8>,
+        management_key_algorithm: i32,
+        card: Card,
+    ) -> std::result::Result<T, Status>
+    where
+        T: Send + 'static,
+        Card: FnOnce(&CredentialService, &DeviceId, &str, &ManagementKey) -> CoreResult<T>
+            + Send
+            + 'static,
+    {
+        let id = DeviceId(audit.device_id.to_owned());
+        let credentials = self.credentials.clone();
+        if let Some(managed) = managed {
+            audit.reject_mixed_management_key(&management_key, management_key_algorithm)?;
+            let serial = self.preflight_piv_serial(audit).await?;
+            let expected_serial = serial.clone();
+            return self
+                .run_managed(
+                    ManagedCall {
+                        audit: RpcAudit {
+                            serial: &serial,
+                            ..audit
+                        },
+                        operation,
+                        rotation_missing_detail: None,
+                        abandon_failure: AbandonFailure::KeepCallerStatus,
+                    },
+                    managed,
+                    |grant| {
+                        required_secret(
+                            grant.current_management_key.take(),
+                            "backend omitted the current management key",
+                        )
+                        .and_then(management_key_from_managed)
+                    },
+                    move |management_key| {
+                        card(&credentials, &id, &expected_serial, &management_key)
+                            .map(ManagedCardOutcome::Applied)
+                    },
+                )
+                .await;
+        }
+        let algorithm = audit.check(sigil_proto::management_key_algorithm_from_proto(
+            management_key_algorithm,
+        ))?;
+        let management_key = audit.check(ManagementKey::new(algorithm, management_key))?;
+        let serial = self.preflight_piv_serial(audit).await?;
+        let expected_serial = serial.clone();
+        let result =
+            blocking(move || card(&credentials, &id, &expected_serial, &management_key)).await;
+        RpcAudit {
+            serial: &serial,
+            ..audit
+        }
+        .record(&result);
+        result
     }
 
     async fn authorize_managed(
@@ -419,7 +467,7 @@ impl AgentService {
             AbandonFailure::KeepCallerStatus => {
                 tracing::warn!(
                     target: "sigil::agent",
-                    rpc = call.rpc,
+                    rpc = call.audit.rpc,
                     rotation_id,
                     code = ?completion.code(),
                     "could not record an abandoned managed rotation"
@@ -444,11 +492,11 @@ impl AgentService {
     {
         let (mut grant, grant_id) = match self
             .authorize_managed(
-                call.caller,
-                call.device_id,
-                call.serial,
+                call.audit.caller,
+                call.audit.device_id,
+                call.audit.serial,
                 call.operation,
-                call.slot,
+                call.audit.slot,
                 managed,
             )
             .await
@@ -1235,16 +1283,14 @@ impl v1::agent_server::Agent for AgentService {
             self.caller_piv(&request, "ChangePivPin", &device_id, "PIV_CHANGE_PIN", None)?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "ChangePivPin",
-            device_id: &device_id,
-            operation: "PIV_CHANGE_PIN",
-            slot: None,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "ChangePivPin",
+            &device_id,
+            "PIV_CHANGE_PIN",
+            None,
+            &serial_hint,
+        );
         let old_pin = audit.check(PivPin::new(std::mem::take(&mut input.old_pin)))?;
         let new_pin = audit.check(PivPin::new(std::mem::take(&mut input.new_pin)))?;
         let id = DeviceId(device_id.clone());
@@ -1274,16 +1320,14 @@ impl v1::agent_server::Agent for AgentService {
             self.caller_piv(&request, "ChangePivPuk", &device_id, "PIV_CHANGE_PUK", None)?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "ChangePivPuk",
-            device_id: &device_id,
-            operation: "PIV_CHANGE_PUK",
-            slot: None,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "ChangePivPuk",
+            &device_id,
+            "PIV_CHANGE_PUK",
+            None,
+            &serial_hint,
+        );
         if let Some(managed) = input.managed.take() {
             audit.reject_caller_secrets(
                 !input.old_puk.is_empty() || !input.new_puk.is_empty(),
@@ -1296,13 +1340,11 @@ impl v1::agent_server::Agent for AgentService {
             return self
                 .run_managed(
                     ManagedCall {
-                        caller: &caller,
-                        rpc: "ChangePivPuk",
-                        device_id: &device_id,
-                        operation_name: "PIV_CHANGE_PUK",
+                        audit: RpcAudit {
+                            serial: &serial,
+                            ..audit
+                        },
                         operation: v1::Operation::PivChangePuk,
-                        slot: None,
-                        serial: &serial,
                         rotation_missing_detail: Some("backend omitted the PUK rotation ID"),
                         abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
@@ -1357,16 +1399,14 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "UnblockPivPin",
-            device_id: &device_id,
-            operation: "PIV_UNBLOCK_PIN",
-            slot: None,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "UnblockPivPin",
+            &device_id,
+            "PIV_UNBLOCK_PIN",
+            None,
+            &serial_hint,
+        );
         if let Some(managed) = input.managed.take() {
             audit.reject_caller_secrets(!input.puk.is_empty(), "puk")?;
             let new_pin = audit.check(PivPin::new(std::mem::take(&mut input.new_pin)))?;
@@ -1377,13 +1417,11 @@ impl v1::agent_server::Agent for AgentService {
             return self
                 .run_managed(
                     ManagedCall {
-                        caller: &caller,
-                        rpc: "UnblockPivPin",
-                        device_id: &device_id,
-                        operation_name: "PIV_UNBLOCK_PIN",
+                        audit: RpcAudit {
+                            serial: &serial,
+                            ..audit
+                        },
                         operation: v1::Operation::PivUnblockPin,
-                        slot: None,
-                        serial: &serial,
                         rotation_missing_detail: None,
                         abandon_failure: AbandonFailure::KeepCallerStatus,
                     },
@@ -1434,16 +1472,14 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "ChangePivManagementKey",
-            device_id: &device_id,
-            operation: "PIV_CHANGE_MANAGEMENT_KEY",
-            slot: None,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "ChangePivManagementKey",
+            &device_id,
+            "PIV_CHANGE_MANAGEMENT_KEY",
+            None,
+            &serial_hint,
+        );
         if let Some(managed) = input.managed.take() {
             audit.reject_caller_secrets(
                 !input.current_management_key.is_empty()
@@ -1459,13 +1495,11 @@ impl v1::agent_server::Agent for AgentService {
             return self
                 .run_managed(
                     ManagedCall {
-                        caller: &caller,
-                        rpc: "ChangePivManagementKey",
-                        device_id: &device_id,
-                        operation_name: "PIV_CHANGE_MANAGEMENT_KEY",
+                        audit: RpcAudit {
+                            serial: &serial,
+                            ..audit
+                        },
                         operation: v1::Operation::PivChangeManagementKey,
-                        slot: None,
-                        serial: &serial,
                         rotation_missing_detail: Some(
                             "backend omitted the management-key rotation ID",
                         ),
@@ -1548,16 +1582,14 @@ impl v1::agent_server::Agent for AgentService {
                         .collect::<std::result::Result<Vec<_>, Status>>()
                 });
         let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
-        RpcAudit {
-            caller: &caller,
-            rpc: "ListCertificateProfiles",
-            device_id: &device_id,
-            operation: "PIV_ENROLL",
-            slot: None,
-            serial: "",
-            grant_id: None,
-            rotation_id: None,
-        }
+        RpcAudit::piv(
+            &caller,
+            "ListCertificateProfiles",
+            &device_id,
+            "PIV_ENROLL",
+            None,
+            "",
+        )
         .record(&outcome);
         result.map(|profiles| Response::new(v1::ListCertificateProfilesResponse { profiles }))
     }
@@ -1578,16 +1610,14 @@ impl v1::agent_server::Agent for AgentService {
         let serial = input.expected_serial.clone();
         let result = self.enroll_certificate(&caller, &device_id, input).await;
         let outcome = result.as_ref().map(|_| ()).map_err(Clone::clone);
-        RpcAudit {
-            caller: &caller,
-            rpc: "EnrollPivCertificate",
-            device_id: &device_id,
-            operation: "PIV_ENROLL",
-            slot: None,
-            serial: &serial,
-            grant_id: None,
-            rotation_id: None,
-        }
+        RpcAudit::piv(
+            &caller,
+            "EnrollPivCertificate",
+            &device_id,
+            "PIV_ENROLL",
+            None,
+            &serial,
+        )
         .record(&outcome);
         result.map(Response::new)
     }
@@ -1605,109 +1635,39 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_GENERATE_KEY",
             slot_hint,
         )?;
-        let mut input = request.into_inner();
-        let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "GeneratePivKey",
-            device_id: &device_id,
-            operation: "PIV_GENERATE_KEY",
-            slot: slot_hint,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let input = request.into_inner();
+        let audit = RpcAudit::piv(
+            &caller,
+            "GeneratePivKey",
+            &device_id,
+            "PIV_GENERATE_KEY",
+            slot_hint,
+            &input.expected_serial,
+        );
         let slot = audit.check(piv_slot(input.slot_byte))?;
         let key_algorithm = audit.check(sigil_proto::piv_key_generation_algorithm_from_proto(
             input.algorithm,
         ))?;
         let pin_policy = audit.check(sigil_proto::pin_policy_from_proto(input.pin_policy))?;
         let touch_policy = audit.check(sigil_proto::touch_policy_from_proto(input.touch_policy))?;
-        if let Some(managed) = input.managed.take() {
-            audit.reject_mixed_management_key(
-                &input.management_key,
-                input.management_key_algorithm,
-            )?;
-            let serial = self.preflight_piv_serial(audit).await?;
-            let id = DeviceId(device_id.clone());
-            let credentials = self.credentials.clone();
-            let expected_serial = serial.clone();
-            return self
-                .run_managed(
-                    ManagedCall {
-                        caller: &caller,
-                        rpc: "GeneratePivKey",
-                        device_id: &device_id,
-                        operation_name: "PIV_GENERATE_KEY",
-                        operation: v1::Operation::PivGenerateKey,
-                        slot: Some(slot.byte()),
-                        serial: &serial,
-                        rotation_missing_detail: None,
-                        abandon_failure: AbandonFailure::KeepCallerStatus,
-                    },
-                    managed,
-                    |grant| {
-                        required_secret(
-                            grant.current_management_key.take(),
-                            "backend omitted the current management key",
-                        )
-                        .and_then(management_key_from_managed)
-                    },
-                    move |management_key| {
-                        credentials
-                            .generate_key(
-                                &id,
-                                &expected_serial,
-                                &management_key,
-                                PivKeyConfiguration {
-                                    slot,
-                                    algorithm: key_algorithm,
-                                    pin_policy,
-                                    touch_policy,
-                                },
-                            )
-                            .map(|subject_public_key_info| {
-                                ManagedCardOutcome::Applied(Response::new(
-                                    v1::GeneratePivKeyResponse {
-                                        subject_public_key_info,
-                                    },
-                                ))
-                            })
-                    },
-                )
-                .await;
-        }
-        let management_algorithm = audit.check(
-            sigil_proto::management_key_algorithm_from_proto(input.management_key_algorithm),
-        )?;
-        let management_key = audit.check(ManagementKey::new(
-            management_algorithm,
-            std::mem::take(&mut input.management_key),
-        ))?;
-        let id = DeviceId(device_id.clone());
-        let serial = self.preflight_piv_serial(audit).await?;
-        let credentials = self.credentials.clone();
-        let expected_serial = serial.clone();
-        let result = blocking(move || {
-            credentials.generate_key(
-                &id,
-                &expected_serial,
-                &management_key,
-                PivKeyConfiguration {
-                    slot,
-                    algorithm: key_algorithm,
-                    pin_policy,
-                    touch_policy,
-                },
-            )
-        })
-        .await;
-        RpcAudit {
-            serial: &serial,
-            ..audit
-        }
-        .record(&result);
-        result.map(|subject_public_key_info| {
+        let configuration = PivKeyConfiguration {
+            slot,
+            algorithm: key_algorithm,
+            pin_policy,
+            touch_policy,
+        };
+        self.management_key_mutation(
+            audit,
+            v1::Operation::PivGenerateKey,
+            input.managed,
+            input.management_key,
+            input.management_key_algorithm,
+            move |credentials, id, serial, management_key| {
+                credentials.generate_key(id, serial, management_key, configuration)
+            },
+        )
+        .await
+        .map(|subject_public_key_info| {
             Response::new(v1::GeneratePivKeyResponse {
                 subject_public_key_info,
             })
@@ -1729,16 +1689,14 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let input = request.into_inner();
         let serial_hint = input.expected_serial;
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "AttestPivKey",
-            device_id: &device_id,
-            operation: "PIV_ATTEST",
-            slot: slot_hint,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "AttestPivKey",
+            &device_id,
+            "PIV_ATTEST",
+            slot_hint,
+            &serial_hint,
+        );
         let slot = audit.check(piv_slot(input.slot_byte))?;
         let id = DeviceId(device_id.clone());
         let mut audit_serial = serial_hint.clone();
@@ -1773,16 +1731,14 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "SignPivCsr",
-            device_id: &device_id,
-            operation: "PIV_SIGN_CSR",
-            slot: slot_hint,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "SignPivCsr",
+            &device_id,
+            "PIV_SIGN_CSR",
+            slot_hint,
+            &serial_hint,
+        );
         let pin = audit.check(PivPin::new(std::mem::take(&mut input.pin)))?;
         let slot = audit.check(piv_slot(input.slot_byte))?;
         let subject_dn = input.subject_dn;
@@ -1829,97 +1785,38 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_IMPORT_CERTIFICATE",
             slot_hint,
         )?;
-        let mut input = request.into_inner();
-        let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "ImportPivCertificate",
-            device_id: &device_id,
-            operation: "PIV_IMPORT_CERTIFICATE",
-            slot: slot_hint,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
-        let expected_public_key = (!input.expected_public_key.is_empty())
-            .then(|| std::mem::take(&mut input.expected_public_key));
+        let input = request.into_inner();
+        let audit = RpcAudit::piv(
+            &caller,
+            "ImportPivCertificate",
+            &device_id,
+            "PIV_IMPORT_CERTIFICATE",
+            slot_hint,
+            &input.expected_serial,
+        );
+        let expected_public_key =
+            (!input.expected_public_key.is_empty()).then_some(input.expected_public_key);
         let slot = audit.check(piv_slot(input.slot_byte))?;
-        if let Some(managed) = input.managed.take() {
-            audit.reject_mixed_management_key(
-                &input.management_key,
-                input.management_key_algorithm,
-            )?;
-            let certificate_der = std::mem::take(&mut input.certificate_der);
-            let serial = self.preflight_piv_serial(audit).await?;
-            let id = DeviceId(device_id.clone());
-            let credentials = self.credentials.clone();
-            let expected_serial = serial.clone();
-            return self
-                .run_managed(
-                    ManagedCall {
-                        caller: &caller,
-                        rpc: "ImportPivCertificate",
-                        device_id: &device_id,
-                        operation_name: "PIV_IMPORT_CERTIFICATE",
-                        operation: v1::Operation::PivImportCertificate,
-                        slot: Some(slot.byte()),
-                        serial: &serial,
-                        rotation_missing_detail: None,
-                        abandon_failure: AbandonFailure::KeepCallerStatus,
-                    },
-                    managed,
-                    move |grant| {
-                        let management_key = required_secret(
-                            grant.current_management_key.take(),
-                            "backend omitted the current management key",
-                        )
-                        .and_then(management_key_from_managed)?;
-                        Ok((management_key, certificate_der))
-                    },
-                    move |(management_key, certificate_der)| {
-                        credentials
-                            .import_certificate(
-                                &id,
-                                &expected_serial,
-                                &management_key,
-                                slot,
-                                &certificate_der,
-                                expected_public_key.as_deref(),
-                            )
-                            .map(|()| ManagedCardOutcome::Applied(Response::new(v1::Empty {})))
-                    },
-                )
-                .await;
-        }
-        let algorithm = audit.check(sigil_proto::management_key_algorithm_from_proto(
-            input.management_key_algorithm,
-        ))?;
-        let management_key = audit.check(ManagementKey::new(
-            algorithm,
-            std::mem::take(&mut input.management_key),
-        ))?;
         let certificate_der = input.certificate_der;
-        let id = DeviceId(device_id.clone());
-        let serial = self.preflight_piv_serial(audit).await?;
-        let credentials = self.credentials.clone();
-        let expected_serial = serial.clone();
-        let result = blocking(move || {
-            credentials.import_certificate(
-                &id,
-                &expected_serial,
-                &management_key,
-                slot,
-                &certificate_der,
-                expected_public_key.as_deref(),
-            )
-        })
-        .await;
-        RpcAudit {
-            serial: &serial,
-            ..audit
-        }
-        .record(&result);
-        result.map(|_| Response::new(v1::Empty {}))
+        self.management_key_mutation(
+            audit,
+            v1::Operation::PivImportCertificate,
+            input.managed,
+            input.management_key,
+            input.management_key_algorithm,
+            move |credentials, id, serial, management_key| {
+                credentials.import_certificate(
+                    id,
+                    serial,
+                    management_key,
+                    slot,
+                    &certificate_der,
+                    expected_public_key.as_deref(),
+                )
+            },
+        )
+        .await
+        .map(|()| Response::new(v1::Empty {}))
     }
 
     async fn delete_piv_certificate(
@@ -1935,78 +1832,28 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_DELETE_CERTIFICATE",
             slot_hint,
         )?;
-        let mut input = request.into_inner();
-        let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "DeletePivCertificate",
-            device_id: &device_id,
-            operation: "PIV_DELETE_CERTIFICATE",
-            slot: slot_hint,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let input = request.into_inner();
+        let audit = RpcAudit::piv(
+            &caller,
+            "DeletePivCertificate",
+            &device_id,
+            "PIV_DELETE_CERTIFICATE",
+            slot_hint,
+            &input.expected_serial,
+        );
         let slot = audit.check(piv_slot(input.slot_byte))?;
-        if let Some(managed) = input.managed.take() {
-            audit.reject_mixed_management_key(
-                &input.management_key,
-                input.management_key_algorithm,
-            )?;
-            let serial = self.preflight_piv_serial(audit).await?;
-            let id = DeviceId(device_id.clone());
-            let credentials = self.credentials.clone();
-            let expected_serial = serial.clone();
-            return self
-                .run_managed(
-                    ManagedCall {
-                        caller: &caller,
-                        rpc: "DeletePivCertificate",
-                        device_id: &device_id,
-                        operation_name: "PIV_DELETE_CERTIFICATE",
-                        operation: v1::Operation::PivDeleteCertificate,
-                        slot: Some(slot.byte()),
-                        serial: &serial,
-                        rotation_missing_detail: None,
-                        abandon_failure: AbandonFailure::KeepCallerStatus,
-                    },
-                    managed,
-                    |grant| {
-                        required_secret(
-                            grant.current_management_key.take(),
-                            "backend omitted the current management key",
-                        )
-                        .and_then(management_key_from_managed)
-                    },
-                    move |management_key| {
-                        credentials
-                            .delete_certificate(&id, &expected_serial, &management_key, slot)
-                            .map(|()| ManagedCardOutcome::Applied(Response::new(v1::Empty {})))
-                    },
-                )
-                .await;
-        }
-        let algorithm = audit.check(sigil_proto::management_key_algorithm_from_proto(
+        self.management_key_mutation(
+            audit,
+            v1::Operation::PivDeleteCertificate,
+            input.managed,
+            input.management_key,
             input.management_key_algorithm,
-        ))?;
-        let management_key = audit.check(ManagementKey::new(
-            algorithm,
-            std::mem::take(&mut input.management_key),
-        ))?;
-        let id = DeviceId(device_id.clone());
-        let serial = self.preflight_piv_serial(audit).await?;
-        let credentials = self.credentials.clone();
-        let expected_serial = serial.clone();
-        let result = blocking(move || {
-            credentials.delete_certificate(&id, &expected_serial, &management_key, slot)
-        })
-        .await;
-        RpcAudit {
-            serial: &serial,
-            ..audit
-        }
-        .record(&result);
-        result.map(|_| Response::new(v1::Empty {}))
+            move |credentials, id, serial, management_key| {
+                credentials.delete_certificate(id, serial, management_key, slot)
+            },
+        )
+        .await
+        .map(|()| Response::new(v1::Empty {}))
     }
 
     async fn delete_piv_key(
@@ -2022,77 +1869,28 @@ impl v1::agent_server::Agent for AgentService {
             "PIV_DELETE_KEY",
             slot_hint,
         )?;
-        let mut input = request.into_inner();
-        let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "DeletePivKey",
-            device_id: &device_id,
-            operation: "PIV_DELETE_KEY",
-            slot: slot_hint,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let input = request.into_inner();
+        let audit = RpcAudit::piv(
+            &caller,
+            "DeletePivKey",
+            &device_id,
+            "PIV_DELETE_KEY",
+            slot_hint,
+            &input.expected_serial,
+        );
         let slot = audit.check(piv_slot(input.slot_byte))?;
-        if let Some(managed) = input.managed.take() {
-            audit.reject_mixed_management_key(
-                &input.management_key,
-                input.management_key_algorithm,
-            )?;
-            let serial = self.preflight_piv_serial(audit).await?;
-            let id = DeviceId(device_id.clone());
-            let credentials = self.credentials.clone();
-            let expected_serial = serial.clone();
-            return self
-                .run_managed(
-                    ManagedCall {
-                        caller: &caller,
-                        rpc: "DeletePivKey",
-                        device_id: &device_id,
-                        operation_name: "PIV_DELETE_KEY",
-                        operation: v1::Operation::PivDeleteKey,
-                        slot: Some(slot.byte()),
-                        serial: &serial,
-                        rotation_missing_detail: None,
-                        abandon_failure: AbandonFailure::KeepCallerStatus,
-                    },
-                    managed,
-                    |grant| {
-                        required_secret(
-                            grant.current_management_key.take(),
-                            "backend omitted the current management key",
-                        )
-                        .and_then(management_key_from_managed)
-                    },
-                    move |management_key| {
-                        credentials
-                            .delete_key(&id, &expected_serial, &management_key, slot)
-                            .map(|()| ManagedCardOutcome::Applied(Response::new(v1::Empty {})))
-                    },
-                )
-                .await;
-        }
-        let algorithm = audit.check(sigil_proto::management_key_algorithm_from_proto(
+        self.management_key_mutation(
+            audit,
+            v1::Operation::PivDeleteKey,
+            input.managed,
+            input.management_key,
             input.management_key_algorithm,
-        ))?;
-        let management_key = audit.check(ManagementKey::new(
-            algorithm,
-            std::mem::take(&mut input.management_key),
-        ))?;
-        let id = DeviceId(device_id.clone());
-        let serial = self.preflight_piv_serial(audit).await?;
-        let credentials = self.credentials.clone();
-        let expected_serial = serial.clone();
-        let result =
-            blocking(move || credentials.delete_key(&id, &expected_serial, &management_key, slot))
-                .await;
-        RpcAudit {
-            serial: &serial,
-            ..audit
-        }
-        .record(&result);
-        result.map(|_| Response::new(v1::Empty {}))
+            move |credentials, id, serial, management_key| {
+                credentials.delete_key(id, serial, management_key, slot)
+            },
+        )
+        .await
+        .map(|()| Response::new(v1::Empty {}))
     }
 
     async fn reset_piv(
@@ -2113,16 +1911,14 @@ impl v1::agent_server::Agent for AgentService {
             }
             Err(status) => Err(status),
         };
-        RpcAudit {
-            caller: &caller,
-            rpc: "ResetPiv",
-            device_id: &device_id,
-            operation: "PIV_RESET",
-            slot: None,
-            serial: &audit_serial,
-            grant_id: None,
-            rotation_id: None,
-        }
+        RpcAudit::piv(
+            &caller,
+            "ResetPiv",
+            &device_id,
+            "PIV_RESET",
+            None,
+            &audit_serial,
+        )
         .record(&result);
         result.map(|_| Response::new(v1::Empty {}))
     }
@@ -2141,16 +1937,14 @@ impl v1::agent_server::Agent for AgentService {
         )?;
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "InitializeManagedPiv",
-            device_id: &device_id,
-            operation: "PIV_MANAGED_INITIALIZE",
-            slot: None,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "InitializeManagedPiv",
+            &device_id,
+            "PIV_MANAGED_INITIALIZE",
+            None,
+            &serial_hint,
+        );
         let Some(managed) = input.managed.take() else {
             return Err(audit.reject(self.missing_managed_authorization_status()));
         };
@@ -2160,13 +1954,11 @@ impl v1::agent_server::Agent for AgentService {
         let expected_serial = serial.clone();
         self.run_managed(
             ManagedCall {
-                caller: &caller,
-                rpc: "InitializeManagedPiv",
-                device_id: &device_id,
-                operation_name: "PIV_MANAGED_INITIALIZE",
+                audit: RpcAudit {
+                    serial: &serial,
+                    ..audit
+                },
                 operation: v1::Operation::PivManagedInitialize,
-                slot: None,
-                serial: &serial,
                 rotation_missing_detail: Some("backend omitted the managed-initialize rotation ID"),
                 abandon_failure: AbandonFailure::ReportToCaller,
             },
@@ -2220,16 +2012,14 @@ impl v1::agent_server::Agent for AgentService {
             Ok(kind) => kind,
             Err(_) => {
                 let status = Status::invalid_argument("managed secret kind is invalid");
-                RpcAudit {
-                    caller: &caller,
-                    rpc: "RotateManagedPivSecret",
-                    device_id: &device_id,
-                    operation: "PIV_ROTATE_SECRET",
-                    slot: None,
-                    serial: &request.get_ref().expected_serial,
-                    grant_id: None,
-                    rotation_id: None,
-                }
+                RpcAudit::piv(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    "PIV_ROTATE_SECRET",
+                    None,
+                    &request.get_ref().expected_serial,
+                )
                 .record_status(Some(&status));
                 return Err(status);
             }
@@ -2242,32 +2032,28 @@ impl v1::agent_server::Agent for AgentService {
             ),
             v1::ManagedSecretKind::Unspecified => {
                 let status = Status::invalid_argument("managed secret kind is required");
-                RpcAudit {
-                    caller: &caller,
-                    rpc: "RotateManagedPivSecret",
-                    device_id: &device_id,
-                    operation: "PIV_ROTATE_SECRET",
-                    slot: None,
-                    serial: &request.get_ref().expected_serial,
-                    grant_id: None,
-                    rotation_id: None,
-                }
+                RpcAudit::piv(
+                    &caller,
+                    "RotateManagedPivSecret",
+                    &device_id,
+                    "PIV_ROTATE_SECRET",
+                    None,
+                    &request.get_ref().expected_serial,
+                )
                 .record_status(Some(&status));
                 return Err(status);
             }
         };
         let mut input = request.into_inner();
         let serial_hint = input.expected_serial.clone();
-        let audit = RpcAudit {
-            caller: &caller,
-            rpc: "RotateManagedPivSecret",
-            device_id: &device_id,
-            operation: operation_name,
-            slot: None,
-            serial: &serial_hint,
-            grant_id: None,
-            rotation_id: None,
-        };
+        let audit = RpcAudit::piv(
+            &caller,
+            "RotateManagedPivSecret",
+            &device_id,
+            operation_name,
+            None,
+            &serial_hint,
+        );
         let Some(managed) = input.managed.take() else {
             return Err(audit.reject(self.missing_managed_authorization_status()));
         };
@@ -2277,13 +2063,11 @@ impl v1::agent_server::Agent for AgentService {
         let expected_serial = serial.clone();
         self.run_managed(
             ManagedCall {
-                caller: &caller,
-                rpc: "RotateManagedPivSecret",
-                device_id: &device_id,
-                operation_name,
+                audit: RpcAudit {
+                    serial: &serial,
+                    ..audit
+                },
                 operation,
-                slot: None,
-                serial: &serial,
                 rotation_missing_detail: Some("backend omitted the secret rotation ID"),
                 abandon_failure: AbandonFailure::ReportToCaller,
             },
@@ -2389,6 +2173,21 @@ impl<'a> RpcAudit<'a> {
             operation,
             serial,
             ..Self::new(caller, rpc, device_id)
+        }
+    }
+
+    /// A record for a PIV operation, with the caller's slot and serial until they are verified.
+    fn piv(
+        caller: &'a CallerIdentity,
+        rpc: &'static str,
+        device_id: &'a str,
+        operation: &'static str,
+        slot: Option<u8>,
+        serial: &'a str,
+    ) -> Self {
+        Self {
+            slot,
+            ..Self::device(caller, rpc, device_id, operation, serial)
         }
     }
 
