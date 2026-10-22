@@ -194,14 +194,15 @@ fn authorized_piv_mutation_restores_factory_defaults() {
         .discovery
         .attest(&device.id, &serial, PivSlot::AUTHENTICATION)
         .expect("attest generated key");
-    sigil_yubikey::piv::verify_attestation(
-        &attestation.attestation_der,
-        &attestation.intermediate_der,
-        &public_spki,
-        &serial,
-        PivSlot::AUTHENTICATION,
-        PinPolicy::Once,
-        TouchPolicy::Never,
+    sigil_yubikey::attestation::check_expected(
+        &attestation.inspection,
+        &sigil_yubikey::attestation::ExpectedAttestation {
+            serial: serial.parse().expect("numeric YubiKey serial"),
+            slot: PivSlot::AUTHENTICATION,
+            pin_policy: PinPolicy::Once,
+            touch_policy: TouchPolicy::Never,
+            subject_public_key_info: &public_spki,
+        },
     )
     .expect("verify YubiKey attestation");
 
