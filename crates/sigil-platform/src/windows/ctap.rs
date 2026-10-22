@@ -5,9 +5,7 @@ use std::time::{Duration, Instant};
 
 use hidapi::HidDevice;
 use sigil_core::FirmwareVersion;
-use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
-
-use super::MAX_INFO_PAGES;
+use sigil_yubikey::management::{self, MAX_INFO_PAGES, ManagementInfo, TAG_MORE_DATA, Tags};
 
 const BROADCAST_CID: [u8; 4] = [0xff; 4];
 const CTAPHID_INIT: u8 = 0x06;

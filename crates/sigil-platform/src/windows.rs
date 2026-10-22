@@ -21,7 +21,7 @@ use sigil_core::{
 };
 use sigil_piv::vendor::PivVendor;
 use sigil_thales::ThalesPiv;
-use sigil_yubikey::management::{self, ManagementInfo, TAG_MORE_DATA, Tags};
+use sigil_yubikey::management::{self, MAX_INFO_PAGES, ManagementInfo, TAG_MORE_DATA, Tags};
 use sigil_yubikey::product::{key_type_for_pid, product_name};
 use sigil_yubikey::vendor::YubiKeyPiv;
 use windows_sys::Win32::{
@@ -43,7 +43,6 @@ mod fido_resolver;
 pub(super) mod piv;
 
 const MANAGEMENT_AID: [u8; 8] = [0xa0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x17];
-const MAX_INFO_PAGES: u8 = 4;
 
 pub(super) fn list() -> Result<Vec<DeviceInfo>> {
     match establish() {
@@ -1043,7 +1042,7 @@ fn read_management_info(card: &mut pcsc::Card) -> Option<ManagementInfo> {
         if page >= MAX_INFO_PAGES {
             return None;
         }
-        let encoded = send_read_only(card, &[0x00, 0x1d, page, 0x00, 0x00])?;
+        let encoded = send_read_only(card, &management::read_config_command(page))?;
         let mut tags = management::parse_page(&encoded).ok()?;
         let more = tags
             .remove(&TAG_MORE_DATA)
