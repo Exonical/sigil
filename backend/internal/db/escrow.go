@@ -9,13 +9,25 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// EscrowState is the persisted lifecycle state of an escrowed secret. The
+// values match the escrowed_secrets.state CHECK constraint.
+type EscrowState string
+
+const (
+	EscrowPending     EscrowState = "pending"
+	EscrowActive      EscrowState = "active"
+	EscrowSuperseded  EscrowState = "superseded"
+	EscrowAbandoned   EscrowState = "abandoned"
+	EscrowUnconfirmed EscrowState = "unconfirmed"
+)
+
 type EscrowSecret struct {
 	ID          string
 	TokenID     string
 	Kind        string
 	Algorithm   string
 	Version     int
-	State       string
+	State       EscrowState
 	KEKID       string
 	DEKNonce    []byte
 	WrappedDEK  []byte
@@ -172,7 +184,7 @@ func ActivateEscrowRotation(ctx context.Context, tx pgx.Tx, secrets []EscrowSecr
 	return nil
 }
 
-func UpdateEscrowRotationState(ctx context.Context, tx pgx.Tx, rotationID, from, to string) error {
+func UpdateEscrowRotationState(ctx context.Context, tx pgx.Tx, rotationID string, from, to EscrowState) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE escrowed_secrets SET state=$3
 		WHERE grant_id=$1 AND state=$2

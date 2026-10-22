@@ -331,10 +331,10 @@ func (s *Server) CompleteRotation(
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	finish := func(outcome, state string) (*backendv1.CompleteRotationResponse, error) {
+	finish := func(outcome string, state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
 		if err := appendAudit(ctx, tx, "station", station.ID, "CompleteRotation", "rotation", request.RotationId, outcome, map[string]any{
 			"applied": request.Applied,
-			"state":   state,
+			"state":   string(state),
 		}); err != nil {
 			return nil, status.Error(codes.Internal, "could not record rotation completion")
 		}
@@ -344,11 +344,11 @@ func (s *Server) CompleteRotation(
 		committed = true
 		return &backendv1.CompleteRotationResponse{}, nil
 	}
-	reject := func(code codes.Code, outcome, reason string, state string) (*backendv1.CompleteRotationResponse, error) {
+	reject := func(code codes.Code, outcome, reason string, state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
 		if err := appendAudit(ctx, tx, "station", station.ID, "CompleteRotation", "rotation", request.RotationId, outcome, map[string]any{
 			"applied": request.Applied,
 			"reason":  reason,
-			"state":   state,
+			"state":   string(state),
 		}); err != nil {
 			return nil, status.Error(codes.Internal, "could not record rotation completion")
 		}
@@ -365,18 +365,18 @@ func (s *Server) CompleteRotation(
 		return nil, status.Error(codes.Internal, "could not look up secret rotation")
 	}
 	if len(secrets) == 0 {
-		return reject(codes.NotFound, "denied", "secret rotation was not found", "missing")
+		return reject(codes.NotFound, "denied", "secret rotation was not found", rotationMissing)
 	}
 	for _, secret := range secrets {
 		if secret.StationID != station.ID {
-			return reject(codes.PermissionDenied, "denied", "rotation belongs to a different station", secret.State)
+			return reject(codes.PermissionDenied, "denied", "rotation belongs to a different station", rotationStatus(secret.State))
 		}
 	}
 	state := rotationState(secrets)
-	if request.Applied && state == "applied" || !request.Applied && state == "abandoned" {
+	if request.Applied && state == rotationApplied || !request.Applied && state == rotationAbandoned {
 		return finish("success", state)
 	}
-	if state != "pending" {
+	if state != rotationPending {
 		return reject(codes.FailedPrecondition, "denied", "secret rotation is no longer pending", state)
 	}
 	if request.Applied {
@@ -392,23 +392,23 @@ func (s *Server) CompleteRotation(
 			}
 		}
 		if expired {
-			if err := db.UpdateEscrowRotationState(ctx, tx, request.RotationId, "pending", "unconfirmed"); err != nil {
+			if err := db.UpdateEscrowRotationState(ctx, tx, request.RotationId, db.EscrowPending, db.EscrowUnconfirmed); err != nil {
 				s.logger.Error("mark expired rotation unconfirmed failed", "error", err)
 				return nil, status.Error(codes.Internal, "could not record rotation state")
 			}
-			return reject(codes.FailedPrecondition, "denied", "pending secret rotation is older than 15 minutes", "unconfirmed")
+			return reject(codes.FailedPrecondition, "denied", "pending secret rotation is older than 15 minutes", rotationUnconfirmed)
 		}
 		if err := db.ActivateEscrowRotation(ctx, tx, secrets); err != nil {
 			s.logger.Error("activate escrow rotation failed", "error", err)
 			return nil, status.Error(codes.Internal, "could not activate secret rotation")
 		}
-		return finish("success", "applied")
+		return finish("success", rotationApplied)
 	}
-	if err := db.UpdateEscrowRotationState(ctx, tx, request.RotationId, "pending", "abandoned"); err != nil {
+	if err := db.UpdateEscrowRotationState(ctx, tx, request.RotationId, db.EscrowPending, db.EscrowAbandoned); err != nil {
 		s.logger.Error("abandon escrow rotation failed", "error", err)
 		return nil, status.Error(codes.Internal, "could not abandon secret rotation")
 	}
-	return finish("success", "abandoned")
+	return finish("success", rotationAbandoned)
 }
 
 func (s *Server) ReportAudit(
@@ -559,22 +559,39 @@ func setNewSecret(response *backendv1.AuthorizeManagedOperationResponse, kind st
 	}
 }
 
-func rotationState(secrets []db.EscrowSecret) string {
+// rotationStatus summarizes the persisted states of all secrets in one rotation.
+type rotationStatus string
+
+const (
+	rotationPending     = rotationStatus(db.EscrowPending)
+	rotationAbandoned   = rotationStatus(db.EscrowAbandoned)
+	rotationUnconfirmed = rotationStatus(db.EscrowUnconfirmed)
+	// Derived only, never persisted.
+	rotationApplied rotationStatus = "applied"
+	rotationMixed   rotationStatus = "mixed"
+	rotationMissing rotationStatus = "missing"
+)
+
+func rotationState(secrets []db.EscrowSecret) rotationStatus {
 	state := secrets[0].State
-	if state == "active" || state == "superseded" {
+	if isAppliedEscrowState(state) {
 		for _, secret := range secrets[1:] {
-			if secret.State != "active" && secret.State != "superseded" {
-				return "mixed"
+			if !isAppliedEscrowState(secret.State) {
+				return rotationMixed
 			}
 		}
-		return "applied"
+		return rotationApplied
 	}
 	for _, secret := range secrets[1:] {
 		if secret.State != state {
-			return "mixed"
+			return rotationMixed
 		}
 	}
-	return state
+	return rotationStatus(state)
+}
+
+func isAppliedEscrowState(state db.EscrowState) bool {
+	return state == db.EscrowActive || state == db.EscrowSuperseded
 }
 
 func agentAuditOutcome(outcome string) string {
