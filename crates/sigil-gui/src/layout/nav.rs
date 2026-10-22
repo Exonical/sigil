@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 use sigil_core::DeviceId;
 
 use crate::{
-    capabilities::nav_pages,
+    capabilities::{nav_pages, page_after_device_change},
     icons::Icon,
     pages::home::firmware,
     state::{AppState, Page},
@@ -12,16 +12,8 @@ use crate::{
 pub fn LeftNav() -> Element {
     let state = use_context::<AppState>();
     let devices = state.devices.read().clone();
-    let selected = state
-        .selected_device
-        .read()
-        .clone()
-        .filter(|id| devices.iter().any(|device| &device.id == id))
-        .or_else(|| devices.first().map(|device| device.id.clone()));
-    let current = devices
-        .iter()
-        .find(|device| Some(&device.id) == selected.as_ref())
-        .cloned();
+    let current = state.current_device();
+    let selected = current.as_ref().map(|device| device.id.clone());
     let pages = nav_pages(current.as_ref());
     let collapsed = *state.nav_collapsed.read();
     let mut nav_collapsed = state.nav_collapsed;
@@ -68,8 +60,9 @@ pub fn LeftNav() -> Element {
                             onchange: move |event| {
                                 let id = DeviceId(event.value());
                                 let device = device_options.iter().find(|device| device.id == id);
-                                if !nav_pages(device).contains(&page()) {
-                                    page.set(Page::Home);
+                                let next_page = page_after_device_change(page(), device);
+                                if next_page != page() {
+                                    page.set(next_page);
                                 }
                                 selected_device.set(Some(id));
                                 selected_slot.set(None);
