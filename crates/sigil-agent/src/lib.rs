@@ -215,8 +215,8 @@ fn spawn_audit_reporter(
             }
             let events = match outbox.batch(200) {
                 Ok(events) => events,
-                Err(_) => {
-                    tracing::warn!(target: "sigil::agent", "could not read agent audit outbox");
+                Err(error) => {
+                    tracing::warn!(target: "sigil::agent", %error, "could not read agent audit outbox");
                     continue;
                 }
             };
@@ -226,8 +226,8 @@ fn spawn_audit_reporter(
             match backend.report_audit(events).await {
                 Ok(accepted_through) => match outbox.ack(accepted_through) {
                     Ok(()) => backoff = Duration::from_secs(5),
-                    Err(_) => {
-                        tracing::warn!(target: "sigil::agent", "could not compact agent audit outbox");
+                    Err(error) => {
+                        tracing::warn!(target: "sigil::agent", %error, "could not compact agent audit outbox");
                     }
                 },
                 Err(error) => {
@@ -257,8 +257,8 @@ fn spawn_completion_reporter(
             schedule.tick().await;
             let completions = match outbox.pending_completions() {
                 Ok(completions) => completions,
-                Err(_) => {
-                    tracing::warn!(target: "sigil::agent", "could not read pending rotation completions");
+                Err(error) => {
+                    tracing::warn!(target: "sigil::agent", %error, "could not read pending rotation completions");
                     continue;
                 }
             };

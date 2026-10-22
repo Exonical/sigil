@@ -406,7 +406,13 @@ impl AgentService {
                     applied,
                     created_at_unix_ms: crate::backend::current_unix_millis(),
                 })
-                .map_err(|_| {
+                .map_err(|error| {
+                    tracing::warn!(
+                        target: "sigil::agent",
+                        rotation_id,
+                        %error,
+                        "could not persist pending rotation completion"
+                    );
                     Status::unavailable("could not persist pending rotation completion")
                 })?;
             tracing::warn!(
