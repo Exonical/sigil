@@ -890,13 +890,15 @@ impl AgentService {
                 attestation_intermediate_der: attested.intermediate_der,
             })
             .await?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs() as i64)
-            .unwrap_or_default();
-        enrollment::verify_issued_chain(&issued.chain_der, &self.issuing_cas, &spki, now).map_err(
-            |reason| status_from_error(&CredentialError::BackendRejected(reason.to_owned())),
-        )?;
+        enrollment::verify_issued_chain(
+            &issued.chain_der,
+            &self.issuing_cas,
+            &spki,
+            crate::grant::now_unix(),
+        )
+        .map_err(|reason| {
+            status_from_error(&CredentialError::BackendRejected(reason.to_owned()))
+        })?;
         let certificate_der = issued.chain_der[0].clone();
         v1::agent_server::Agent::import_piv_certificate(
             self,

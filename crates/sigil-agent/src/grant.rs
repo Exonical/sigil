@@ -150,7 +150,6 @@ fn unauthorized(message: &str) -> CredentialError {
     CredentialError::OperationUnauthorized(message.into())
 }
 
-#[allow(dead_code)] // used by escrow-backed agent operations
 pub(crate) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
