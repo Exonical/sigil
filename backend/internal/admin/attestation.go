@@ -25,7 +25,7 @@ func (s *Service) attestationRows(ctx context.Context, ids []string) (map[string
 		FROM certificates WHERE id = ANY($1::uuid[])
 	`, ids)
 	if err != nil {
-		return nil, internal("could not read attestations", err)
+		return nil, internal(ctx, "could not read attestations", err)
 	}
 	defer rows.Close()
 	out := make(map[string]attestationRow, len(ids))
@@ -33,12 +33,12 @@ func (s *Service) attestationRows(ctx context.Context, ids []string) (map[string
 		var id string
 		var row attestationRow
 		if err := rows.Scan(&id, &row.der, &row.firmware, &row.root); err != nil {
-			return nil, internal("could not read attestations", err)
+			return nil, internal(ctx, "could not read attestations", err)
 		}
 		out[id] = row
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read attestations", err)
+		return nil, internal(ctx, "could not read attestations", err)
 	}
 	return out, nil
 }
@@ -106,7 +106,7 @@ func (s *Service) GetCertificateAttestation(ctx context.Context, req *connect.Re
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, notFound("the certificate does not exist")
 		}
-		return nil, internal("could not read the certificate", err)
+		return nil, internal(ctx, "could not read the certificate", err)
 	}
 	if err := s.auditRead(ctx, "Admin.GetCertificateAttestation", "certificate", id, map[string]any{"certificate_id": id}); err != nil {
 		return nil, err
