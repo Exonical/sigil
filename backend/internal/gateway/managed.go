@@ -66,7 +66,7 @@ func (s *Server) AuthorizeManagedOperation(
 	operationName := agentv1.Operation_name[int32(request.Operation)]
 	if request.Operation == agentv1.Operation_PIV_SET_RETRIES {
 		reason := "PIV_SET_RETRIES is not supported in managed mode"
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, "denied", reason); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeDenied, reason); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
 		}
 		return nil, status.Error(codes.InvalidArgument, reason)
@@ -74,19 +74,19 @@ func (s *Server) AuthorizeManagedOperation(
 	plan, ok := planManagedOperation(request.Operation)
 	if !ok {
 		reason := "operation is not supported by managed escrow"
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, "denied", reason); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeDenied, reason); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
 		}
 		return nil, status.Error(codes.InvalidArgument, reason)
 	}
 	if s.escrowErr != nil {
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, "error", "escrow key configuration is invalid"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeError, "escrow key configuration is invalid"); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
 		}
 		return nil, status.Error(codes.Internal, "managed escrow is unavailable")
 	}
 	if s.escrow == nil {
-		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, "error", "escrow is not configured"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "user", authorization.principal.UserID, "AuthorizeManagedOperation", "token", request.TokenSerial, audit.OutcomeError, "escrow is not configured"); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record managed-operation decision")
 		}
 		return nil, status.Error(codes.FailedPrecondition, "managed escrow is not configured")
@@ -107,7 +107,7 @@ func (s *Server) AuthorizeManagedOperation(
 
 	token, err := db.LockToken(ctx, tx, request.TokenVendor, request.TokenSerial)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", "token is not in inventory", nil)
+		return nil, decision.deny(ctx, codes.PermissionDenied, "token is not in inventory", nil)
 	}
 	if err != nil {
 		s.logger.Error("lock managed token failed", "error", err)
@@ -122,7 +122,7 @@ func (s *Server) AuthorizeManagedOperation(
 		SelfServiceOperations: s.config.Policy.SelfServiceOperations,
 	})
 	if !policyDecision.Allowed {
-		return nil, decision.deny(ctx, codes.PermissionDenied, "denied", policyDecision.Reason, map[string]any{"station": authorization.station.ID})
+		return nil, decision.deny(ctx, codes.PermissionDenied, policyDecision.Reason, map[string]any{"station": authorization.station.ID})
 	}
 	authorization.token = token
 	authorization.decision = policyDecision
@@ -151,7 +151,7 @@ func (s *Server) AuthorizeManagedOperation(
 	for _, kind := range plan.current {
 		record, err := db.ActiveEscrowSecret(ctx, tx, token.ID, kind)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, decision.deny(ctx, codes.FailedPrecondition, "denied", "token is not managed by Sigil", map[string]any{"kind": kind})
+			return nil, decision.deny(ctx, codes.FailedPrecondition, "token is not managed by Sigil", map[string]any{"kind": kind})
 		}
 		if err != nil {
 			s.logger.Error("read active escrow secret failed", "error", err)
@@ -166,7 +166,7 @@ func (s *Server) AuthorizeManagedOperation(
 		})
 		if err != nil {
 			s.logger.Error("decrypt active escrow secret failed", "kind", kind, "version", record.Version)
-			return nil, decision.deny(ctx, codes.Internal, "error", "managed token secret could not be decrypted", map[string]any{
+			return nil, decision.fail(ctx, codes.Internal, "managed token secret could not be decrypted", map[string]any{
 				"kind": kind, "version": record.Version,
 			})
 		}
@@ -255,7 +255,7 @@ func (s *Server) AuthorizeManagedOperation(
 		}
 	}
 	for _, secret := range released {
-		if err := appendAudit(ctx, tx, "user", authorization.principal.UserID, "ReleaseEscrow", "token", token.Serial, "success", map[string]any{
+		if err := appendAudit(ctx, tx, "user", authorization.principal.UserID, "ReleaseEscrow", "token", token.Serial, audit.OutcomeSuccess, map[string]any{
 			"operation": operationName,
 			"kind":      secret.record.Kind,
 			"version":   secret.record.Version,
@@ -280,7 +280,7 @@ func (s *Server) AuthorizeManagedOperation(
 		if request.Operation == agentv1.Operation_PIV_MANAGED_INITIALIZE {
 			detail["previous_active_versions"] = previousActiveVersions
 		}
-		if err := appendAudit(ctx, tx, "user", authorization.principal.UserID, "BeginRotation", "token", token.Serial, "success", detail); err != nil {
+		if err := appendAudit(ctx, tx, "user", authorization.principal.UserID, "BeginRotation", "token", token.Serial, audit.OutcomeSuccess, detail); err != nil {
 			return nil, status.Error(codes.Internal, "could not record secret rotation")
 		}
 	}
@@ -300,7 +300,7 @@ func (s *Server) CompleteRotation(
 		return nil, err
 	}
 	if request.RotationId == "" {
-		if auditErr := s.auditEvent(ctx, "station", actorID, "CompleteRotation", "rotation", "", "denied", "rotation ID is required"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "station", actorID, "CompleteRotation", "rotation", "", audit.OutcomeDenied, "rotation ID is required"); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record rotation completion")
 		}
 		return nil, status.Error(codes.InvalidArgument, "rotation ID is required")
@@ -318,13 +318,13 @@ func (s *Server) CompleteRotation(
 		failure: "could not record rotation completion",
 	}
 	finish := func(state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
-		if err := decision.record(ctx, "success", map[string]any{"state": string(state)}); err != nil {
+		if err := decision.record(ctx, audit.OutcomeSuccess, map[string]any{"state": string(state)}); err != nil {
 			return nil, err
 		}
 		return &backendv1.CompleteRotationResponse{}, nil
 	}
 	reject := func(code codes.Code, reason string, state rotationStatus) (*backendv1.CompleteRotationResponse, error) {
-		return nil, decision.deny(ctx, code, "denied", reason, map[string]any{"state": string(state)})
+		return nil, decision.deny(ctx, code, reason, map[string]any{"state": string(state)})
 	}
 
 	secrets, err := db.EscrowRotation(ctx, tx, request.RotationId)
@@ -388,7 +388,7 @@ func (s *Server) ReportAudit(
 		return nil, err
 	}
 	if len(request.Events) > 500 {
-		if auditErr := s.auditEvent(ctx, "station", actorID, "ReportAudit", "station", station.ID, "denied", "audit batch exceeds 500 events"); auditErr != nil {
+		if auditErr := s.auditEvent(ctx, "station", actorID, "ReportAudit", "station", station.ID, audit.OutcomeDenied, "audit batch exceeds 500 events"); auditErr != nil {
 			return nil, status.Error(codes.Internal, "could not record audit batch decision")
 		}
 		return nil, status.Error(codes.InvalidArgument, "audit batch exceeds 500 events")
@@ -396,7 +396,7 @@ func (s *Server) ReportAudit(
 	events := append([]*backendv1.AgentAuditEvent(nil), request.Events...)
 	for _, event := range events {
 		if event == nil || event.Sequence > uint64(1<<63-1) {
-			if auditErr := s.auditEvent(ctx, "station", actorID, "ReportAudit", "station", station.ID, "denied", "audit batch contains an invalid event"); auditErr != nil {
+			if auditErr := s.auditEvent(ctx, "station", actorID, "ReportAudit", "station", station.ID, audit.OutcomeDenied, "audit batch contains an invalid event"); auditErr != nil {
 				return nil, status.Error(codes.Internal, "could not record audit batch decision")
 			}
 			return nil, status.Error(codes.InvalidArgument, "audit batch contains an invalid event")
@@ -556,21 +556,21 @@ func isAppliedEscrowState(state db.EscrowState) bool {
 	return state == db.EscrowActive || state == db.EscrowSuperseded
 }
 
-func agentAuditOutcome(outcome string) string {
-	switch outcome {
-	case "success":
-		return "success"
-	case "denied":
-		return "denied"
+func agentAuditOutcome(outcome string) audit.Outcome {
+	switch audit.Outcome(outcome) {
+	case audit.OutcomeSuccess:
+		return audit.OutcomeSuccess
+	case audit.OutcomeDenied:
+		return audit.OutcomeDenied
 	default:
-		return "error"
+		return audit.OutcomeError
 	}
 }
 
-func appendAudit(ctx context.Context, tx pgx.Tx, actorType, actorID, action, targetType, targetID, outcome string, detail map[string]any) error {
+func appendAudit(ctx context.Context, tx pgx.Tx, actorType, actorID, action, targetType, targetID string, outcome audit.Outcome, detail map[string]any) error {
 	_, err := audit.Append(ctx, tx, audit.Event{
 		ActorType: actorType, ActorID: actorID, Action: action,
-		TargetType: targetType, TargetID: targetID, Outcome: outcome, Detail: detail,
+		TargetType: targetType, TargetID: targetID, Outcome: string(outcome), Detail: detail,
 	})
 	return err
 }
