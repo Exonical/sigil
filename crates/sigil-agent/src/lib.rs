@@ -42,6 +42,7 @@ pub const DEFAULT_ENDPOINT: &str = "/run/sigil/agent.sock";
 #[cfg(not(any(unix, windows)))]
 pub const DEFAULT_ENDPOINT: &str = "unsupported";
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run(
     endpoint: String,
     mock: bool,
@@ -50,6 +51,7 @@ pub async fn run(
     ready: Option<oneshot::Sender<()>>,
     shutdown: oneshot::Receiver<()>,
     audit_outbox: Option<Arc<AuditOutbox>>,
+    log_location: String,
 ) -> anyhow::Result<()> {
     let (discovery, piv_management, device_management): (
         Arc<dyn DeviceDiscovery>,
@@ -74,7 +76,8 @@ pub async fn run(
         }
     };
     let mut service = AgentService::new(credentials.clone(), station_id)
-        .with_authorization(grant_provider, grant_verifier);
+        .with_authorization(grant_provider, grant_verifier)
+        .with_log_location(log_location);
     if let Some(backend) = &backend {
         service = service.with_backend(Arc::clone(backend));
     }

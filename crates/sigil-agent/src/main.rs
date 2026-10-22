@@ -144,6 +144,7 @@ fn run_foreground(
             None,
             shutdown_rx,
             outbox,
+            STDERR_LOG_LOCATION.to_owned(),
         ));
         tokio::select! {
             result = &mut server => result.context("agent server task panicked")??,
@@ -188,6 +189,8 @@ fn create_audit_outbox(config: &AgentConfig) -> Result<Option<Arc<AuditOutbox>>>
         .map_err(|error| sigil_agent::secure_path::map_data_dir_error(config.data_dir(), error))?;
     Ok(Some(Arc::new(outbox)))
 }
+
+const STDERR_LOG_LOCATION: &str = "stderr (not persisted)";
 
 fn init_stderr_logging(outbox: Option<Arc<AuditOutbox>>) -> Result<()> {
     let filter = log_filter();
@@ -344,7 +347,8 @@ mod windows_service {
         let paths = sigil_agent::secure_path::prepare_agent_paths(config_path.as_deref())?;
         let config = AgentConfig::load(Some(paths.config_file))?;
         let outbox = super::create_audit_outbox(&config)?;
-        init_file_logging(&config.log_file(), outbox.clone())?;
+        let log_file = config.log_file();
+        init_file_logging(&log_file, outbox.clone())?;
         let endpoint = std::env::var("SIGIL_AGENT_ENDPOINT")
             .unwrap_or_else(|_| sigil_agent::DEFAULT_ENDPOINT.to_owned());
 
@@ -359,6 +363,7 @@ mod windows_service {
             Some(ready_sender),
             shutdown_receiver,
             outbox,
+            log_file.display().to_string(),
         ));
         let server_result = runtime.block_on(async {
             tokio::select! {

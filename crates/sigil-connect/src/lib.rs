@@ -53,6 +53,8 @@ pub struct ConnectedService {
     pub warning: Option<String>,
     /// Managed (escrow-backed) PIV operations. Only the agent provides them.
     pub managed: Option<std::sync::Arc<dyn ManagedPivAgent>>,
+    /// Where the connected agent writes its log, if it reported one.
+    pub agent_log_location: Option<String>,
 }
 
 /// The managed secret a rotation replaces.
@@ -365,6 +367,7 @@ pub fn connect_with_policy(
             mode: selection.mode,
             warning: selection.warning,
             managed: None,
+            agent_log_location: None,
         });
     }
 
@@ -399,9 +402,12 @@ pub fn connect_with_policy(
         None => AgentAttempt::NotAttempted,
     };
     let selection = select_connection(preference, require_agent, elevated, attempt)?;
-    let (credentials, managed) = match &selection.mode {
+    let (credentials, managed, agent_log_location) = match &selection.mode {
         ConnectionMode::Agent { .. } => {
-            let client = std::sync::Arc::new(agent.expect("selected connected agent"));
+            let client = agent.expect("selected connected agent");
+            let log_location = Some(client.agent_info().log_location.clone())
+                .filter(|location| !location.is_empty());
+            let client = std::sync::Arc::new(client);
             let discovery: std::sync::Arc<dyn DeviceDiscovery> = client.clone();
             let piv_management: std::sync::Arc<dyn PivManagement> = client.clone();
             let device_management: std::sync::Arc<dyn DeviceManagement> = client.clone();
@@ -413,15 +419,17 @@ pub fn connect_with_policy(
                     device_management,
                 ),
                 Some(managed),
+                log_location,
             )
         }
-        ConnectionMode::Direct { .. } => (native_service(), None),
+        ConnectionMode::Direct { .. } => (native_service(), None, None),
     };
     Ok(ConnectedService {
         credentials,
         mode: selection.mode,
         warning: selection.warning,
         managed,
+        agent_log_location,
     })
 }
 

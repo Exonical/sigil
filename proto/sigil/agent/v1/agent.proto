@@ -49,6 +49,8 @@ message GetAgentInfoResponse {
   string platform = 3;
   string station_id = 4;
   Caller caller = 5;
+  // Where the agent writes its diagnostic log: a file path, or "stderr (not persisted)".
+  string log_location = 6;
 }
 
 message FirmwareVersion {

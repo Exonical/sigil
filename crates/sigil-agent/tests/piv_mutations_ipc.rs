@@ -144,6 +144,18 @@ fn key_configuration(slot: PivSlot) -> PivKeyConfiguration {
 }
 
 #[test]
+fn agent_info_reports_the_configured_log_location() -> Result<()> {
+    let mock = Arc::new(MockDiscovery::with_example());
+    let server = TestServer::spawn(service(mock).with_log_location("/srv/sigil/logs/agent.log"))?;
+    let client = AgentClient::connect(Some(&server.endpoint))?;
+    assert_eq!(
+        client.agent_info().log_location,
+        "/srv/sigil/logs/agent.log"
+    );
+    Ok(())
+}
+
+#[test]
 fn caller_supplied_piv_secrets_work_without_a_grant_provider() -> Result<()> {
     let mock = Arc::new(MockDiscovery::with_example());
     let server = TestServer::spawn(service(mock.clone()))?;
