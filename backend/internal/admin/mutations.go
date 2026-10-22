@@ -64,7 +64,7 @@ func actorID(ctx context.Context) string {
 func (s *Service) mutate(ctx context.Context, action, targetType, targetID string, detail map[string]any, change func(pgx.Tx) error) error {
 	tx, err := s.store.Pool.Begin(ctx)
 	if err != nil {
-		return internal("could not start the change", err)
+		return internal(ctx, "could not start the change", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if err := change(tx); err != nil {
@@ -73,10 +73,10 @@ func (s *Service) mutate(ctx context.Context, action, targetType, targetID strin
 		return err
 	}
 	if _, err := audit.Append(ctx, tx, userEvent(ctx, action, targetType, targetID, "success", detail)); err != nil {
-		return internal("could not record the change", err)
+		return internal(ctx, "could not record the change", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return internal("could not commit the change", err)
+		return internal(ctx, "could not commit the change", err)
 	}
 	return nil
 }
@@ -160,7 +160,7 @@ func (s *Service) SetNickname(ctx context.Context, req *connect.Request[adminv1.
 			return connect.NewError(connect.CodeAlreadyExists, errors.New("another token of this user already has that nickname"))
 		}
 		if err != nil {
-			return internal("could not set the nickname", err)
+			return internal(ctx, "could not set the nickname", err)
 		}
 		if tag.RowsAffected() == 0 {
 			return notFound("the token is not in inventory")
@@ -185,13 +185,13 @@ func (s *Service) ReportLost(ctx context.Context, req *connect.Request[adminv1.T
 			if errors.Is(err, pgx.ErrNoRows) {
 				return notFound("the token is not in inventory")
 			}
-			return internal("could not read the token", err)
+			return internal(ctx, "could not read the token", err)
 		}
 		if status != "active" && status != "unassigned" {
 			return failed(fmt.Sprintf("a token with status %q cannot be reported lost", status))
 		}
 		if _, err := tx.Exec(ctx, `UPDATE tokens SET status = 'lost', lost_at = now() WHERE id = $1`, id); err != nil {
-			return internal("could not mark the token lost", err)
+			return internal(ctx, "could not mark the token lost", err)
 		}
 		return nil
 	})
@@ -218,20 +218,20 @@ func (s *Service) MarkFound(ctx context.Context, req *connect.Request[adminv1.To
 			if errors.Is(err, pgx.ErrNoRows) {
 				return notFound("the token is not in inventory")
 			}
-			return internal("could not read the token", err)
+			return internal(ctx, "could not read the token", err)
 		}
 		if status != "lost" {
 			return failed(fmt.Sprintf("a token with status %q is not lost", status))
 		}
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM certificates WHERE token_id = $1 AND status = 'revoked')`, id).Scan(&reEnroll); err != nil {
-			return internal("could not read the certificates", err)
+			return internal(ctx, "could not read the certificates", err)
 		}
 		restored = "unassigned"
 		if assignedUser != nil {
 			restored = "active"
 		}
 		if _, err := tx.Exec(ctx, `UPDATE tokens SET status = $2, lost_at = NULL WHERE id = $1`, id, restored); err != nil {
-			return internal("could not restore the token", err)
+			return internal(ctx, "could not restore the token", err)
 		}
 		return nil
 	})
@@ -265,7 +265,7 @@ func (s *Service) DeleteKey(ctx context.Context, req *connect.Request[adminv1.De
 	}
 	// The token is retired before any revocation so a partial failure still leaves it retired.
 	if _, err := s.store.Pool.Exec(ctx, `UPDATE tokens SET status = 'retired' WHERE id = $1 AND status <> 'retired'`, tokenID); err != nil {
-		return nil, internal("could not retire the token", err)
+		return nil, internal(ctx, "could not retire the token", err)
 	}
 	active, err := s.activeCertificates(ctx, tokenID)
 	if err != nil {
@@ -313,7 +313,7 @@ func (s *Service) RevokeCertificate(ctx context.Context, req *connect.Request[ad
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, notFound("the certificate does not exist")
 		}
-		return nil, internal("could not read the certificate", err)
+		return nil, internal(ctx, "could not read the certificate", err)
 	}
 	if status == "revoked" {
 		return nil, failed("the certificate is already revoked")
@@ -351,24 +351,24 @@ func (s *Service) revokeAtCA(ctx context.Context, profile, serial string, code i
 func (s *Service) markRevoked(ctx context.Context, certificateID, reason string, alreadyRevoked bool, via string) error {
 	tx, err := s.store.Pool.Begin(ctx)
 	if err != nil {
-		return internal("could not start the revocation", err)
+		return internal(ctx, "could not start the revocation", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `
 		UPDATE certificates SET status = 'revoked', revoked_at = now(), revocation_reason = $2
 		WHERE id = $1 AND status IN ('active', 'superseded')
 	`, certificateID, reason); err != nil {
-		return internal("could not record the revocation", err)
+		return internal(ctx, "could not record the revocation", err)
 	}
 	if _, err := audit.Append(ctx, tx, userEvent(ctx, "RevokeCertificate", "certificate", certificateID, "success", map[string]any{
 		"reason":          reason,
 		"already_revoked": alreadyRevoked,
 		"via":             via,
 	})); err != nil {
-		return internal("could not audit the revocation", err)
+		return internal(ctx, "could not audit the revocation", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return internal("could not commit the revocation", err)
+		return internal(ctx, "could not commit the revocation", err)
 	}
 	return nil
 }
@@ -379,7 +379,7 @@ func (s *Service) tokenID(ctx context.Context, vendor, serial string) (string, e
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", notFound("the token is not in inventory")
 		}
-		return "", internal("could not read the token", err)
+		return "", internal(ctx, "could not read the token", err)
 	}
 	return id, nil
 }
@@ -389,19 +389,19 @@ func (s *Service) activeCertificates(ctx context.Context, tokenID string) ([]act
 		SELECT id::text, serial_number, profile FROM certificates WHERE token_id = $1 AND status = 'active' ORDER BY id
 	`, tokenID)
 	if err != nil {
-		return nil, internal("could not list active certificates", err)
+		return nil, internal(ctx, "could not list active certificates", err)
 	}
 	defer rows.Close()
 	var out []activeCertificate
 	for rows.Next() {
 		var c activeCertificate
 		if err := rows.Scan(&c.id, &c.serial, &c.profile); err != nil {
-			return nil, internal("could not read active certificates", err)
+			return nil, internal(ctx, "could not read active certificates", err)
 		}
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, internal("could not read active certificates", err)
+		return nil, internal(ctx, "could not read active certificates", err)
 	}
 	return out, nil
 }
@@ -424,7 +424,7 @@ func (s *Service) AddStation(ctx context.Context, req *connect.Request[adminv1.A
 			return connect.NewError(connect.CodeAlreadyExists, errors.New("a station with that name already exists"))
 		}
 		if err != nil {
-			return internal("could not register the station", err)
+			return internal(ctx, "could not register the station", err)
 		}
 		return nil
 	})
@@ -450,12 +450,12 @@ func (s *Service) SetStationStatus(ctx context.Context, req *connect.Request[adm
 				if errors.Is(err, pgx.ErrNoRows) {
 					return failed("the station is not active or does not exist")
 				}
-				return internal("could not disable the station", err)
+				return internal(ctx, "could not disable the station", err)
 			}
 		case "active":
 			tag, err := tx.Exec(ctx, `UPDATE stations SET status = 'active' WHERE id = $1 AND status = 'disabled'`, id)
 			if err != nil {
-				return internal("could not enable the station", err)
+				return internal(ctx, "could not enable the station", err)
 			}
 			if tag.RowsAffected() == 0 {
 				return failed("the station is not disabled or does not exist")
