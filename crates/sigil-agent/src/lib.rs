@@ -1,5 +1,6 @@
 //! Privileged local agent for Sigil hardware operations.
 
+pub mod audit;
 pub mod audit_outbox;
 pub mod backend;
 pub mod caller;
@@ -28,6 +29,7 @@ use tokio::{
 };
 
 use crate::{
+    audit::{AuditOutcome, AuditRecord},
     audit_outbox::AuditOutbox,
     backend::{GrpcBackend, ManagedAuthority, observed_token},
     caller::CallerPolicy,
@@ -275,15 +277,7 @@ fn spawn_completion_reporter(
                 {
                     let _ = outbox.remove_completion(&completion.rotation_id);
                     retry_schedule.remove(&completion.rotation_id);
-                    tracing::error!(
-                        target: "sigil::audit",
-                        rpc = "CompleteRotation",
-                        operation = "rotation_completion",
-                        rotation_id = %completion.rotation_id,
-                        outcome = "error",
-                        code = "completion_expired",
-                        "pending rotation completion expired before backend confirmation"
-                    );
+                    audit_completion_expired(&completion.rotation_id);
                     continue;
                 }
                 match backend
@@ -317,6 +311,26 @@ fn spawn_completion_reporter(
     })
 }
 
+fn audit_completion_expired(rotation_id: &str) {
+    audit::emit(&AuditRecord {
+        rpc: "CompleteRotation",
+        operation: "rotation_completion",
+        device_id: "",
+        token_serial: "",
+        piv_slot: None,
+        caller: None,
+        outcome: AuditOutcome::Error,
+        code: "completion_expired",
+        grant_id: "",
+        rotation_id,
+    });
+    tracing::error!(
+        target: "sigil::agent",
+        rotation_id,
+        "pending rotation completion expired before backend confirmation"
+    );
+}
+
 pub async fn retry_pending_completions_once(
     backend: &dyn ManagedAuthority,
     outbox: &AuditOutbox,
@@ -326,15 +340,7 @@ pub async fn retry_pending_completions_once(
             > 14 * 60 * 1000
         {
             outbox.remove_completion(&completion.rotation_id)?;
-            tracing::error!(
-                target: "sigil::audit",
-                rpc = "CompleteRotation",
-                operation = "rotation_completion",
-                rotation_id = %completion.rotation_id,
-                outcome = "error",
-                code = "completion_expired",
-                "pending rotation completion expired before backend confirmation"
-            );
+            audit_completion_expired(&completion.rotation_id);
             continue;
         }
         if backend

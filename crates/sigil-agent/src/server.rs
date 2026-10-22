@@ -16,6 +16,7 @@ use zeroize::Zeroizing;
 use crate::enrollment;
 use crate::grant::{GrantExpectation, GrantProvider, GrantVerifier, Unconfigured};
 use crate::{
+    audit::{self, AuditOutcome, AuditRecord},
     audit_outbox::{AuditOutbox, PendingCompletion},
     backend::{
         MAX_ACCESS_TOKEN_BYTES, ManagedAuthority, ManagedGrant, ManagedRequest, ManagedSecret,
@@ -702,27 +703,34 @@ fn audit<T>(
     device_id: &str,
     result: &std::result::Result<T, Status>,
 ) {
-    match result {
-        Ok(_) => tracing::info!(
-            target: "sigil::audit",
-            caller_os_user = %caller.os_user,
-            session_id = ?caller.session_id,
-            pid = caller.pid,
-            rpc,
-            device_id,
-            result = "ok"
-        ),
-        Err(status) => tracing::info!(
-            target: "sigil::audit",
-            caller_os_user = %caller.os_user,
-            session_id = ?caller.session_id,
-            pid = caller.pid,
-            rpc,
-            device_id,
-            result = "error",
-            code = ?status.code()
-        ),
-    }
+    let (outcome, code) = match result {
+        Ok(_) => (AuditOutcome::Success, String::new()),
+        Err(status) => (AuditOutcome::Error, format!("{:?}", status.code())),
+    };
+    audit::emit(&AuditRecord {
+        rpc,
+        operation: "",
+        device_id,
+        token_serial: "",
+        piv_slot: None,
+        caller: Some(caller),
+        outcome,
+        code: &code,
+        grant_id: "",
+        rotation_id: "",
+    });
+}
+
+/// Outcome and code for an RPC that distinguishes denied from failed calls.
+fn audit_outcome<T>(result: &std::result::Result<T, Status>) -> (AuditOutcome, String) {
+    let (outcome, status) = match result {
+        Ok(_) => (AuditOutcome::Success, None),
+        Err(status) if status.code() == tonic::Code::PermissionDenied => {
+            (AuditOutcome::Denied, Some(status))
+        }
+        Err(status) => (AuditOutcome::Error, Some(status)),
+    };
+    (outcome, sigil_proto::audit_error_code(status))
 }
 
 /// Holds a managed authorization and zeroizes its access token when dropped, on every return path.
@@ -3070,16 +3078,22 @@ fn audit_static(
     success: bool,
     code: Option<&Status>,
 ) {
-    tracing::info!(
-        target: "sigil::audit",
-        caller_os_user = %caller.os_user,
-        session_id = ?caller.session_id,
-        pid = caller.pid,
+    audit::emit(&AuditRecord {
         rpc,
+        operation: "",
         device_id,
-        result = if success { "ok" } else { "error" },
-        code = %sigil_proto::audit_error_code(code)
-    );
+        token_serial: "",
+        piv_slot: None,
+        caller: Some(caller),
+        outcome: if success {
+            AuditOutcome::Success
+        } else {
+            AuditOutcome::Error
+        },
+        code: &sigil_proto::audit_error_code(code),
+        grant_id: "",
+        rotation_id: "",
+    });
 }
 
 #[derive(Clone, Copy)]
@@ -3094,30 +3108,28 @@ struct PivAudit<'a> {
     rotation_id: Option<&'a str>,
 }
 
-impl PivAudit<'_> {
-    fn record<T>(self, result: &std::result::Result<T, Status>) {
-        let (outcome, code) = match result {
-            Ok(_) => ("success", None),
-            Err(status) if status.code() == tonic::Code::PermissionDenied => {
-                ("denied", Some(status))
-            }
-            Err(status) => ("error", Some(status)),
-        };
-        tracing::info!(
-            target: "sigil::audit",
-            caller_os_user = %self.caller.os_user,
-            session_id = ?self.caller.session_id,
-            pid = self.caller.pid,
-            rpc = self.rpc,
-            device_id = self.device_id,
-            operation = self.operation,
-            piv_slot = self.slot.unwrap_or_default(),
-            serial = self.serial,
-            grant_id = self.grant_id.unwrap_or_default(),
-            rotation_id = self.rotation_id.unwrap_or_default(),
+impl<'a> PivAudit<'a> {
+    fn audit_record<'b>(self, outcome: AuditOutcome, code: &'b str) -> AuditRecord<'b>
+    where
+        'a: 'b,
+    {
+        AuditRecord {
+            rpc: self.rpc,
+            operation: self.operation,
+            device_id: self.device_id,
+            token_serial: self.serial,
+            piv_slot: self.slot,
+            caller: Some(self.caller),
             outcome,
-            code = %sigil_proto::audit_error_code(code)
-        );
+            code,
+            grant_id: self.grant_id.unwrap_or_default(),
+            rotation_id: self.rotation_id.unwrap_or_default(),
+        }
+    }
+
+    fn record<T>(self, result: &std::result::Result<T, Status>) {
+        let (outcome, code) = audit_outcome(result);
+        audit::emit(&self.audit_record(outcome, &code));
     }
 
     fn record_error(self, error: CredentialError) -> Status {
@@ -3127,20 +3139,10 @@ impl PivAudit<'_> {
     }
 
     fn record_rotation_unknown(self) {
-        tracing::error!(
-            target: "sigil::audit",
-            caller_os_user = %self.caller.os_user,
-            session_id = ?self.caller.session_id,
-            pid = self.caller.pid,
-            rpc = self.rpc,
-            device_id = self.device_id,
-            operation = self.operation,
-            serial = self.serial,
-            grant_id = self.grant_id.unwrap_or_default(),
-            rotation_id = self.rotation_id.unwrap_or_default(),
-            outcome = "rotation_outcome_unknown",
-            code = "rotation_outcome_unknown"
-        );
+        audit::emit(&self.audit_record(
+            AuditOutcome::RotationOutcomeUnknown,
+            "rotation_outcome_unknown",
+        ));
     }
 }
 
@@ -3152,23 +3154,19 @@ fn audit_device<T>(
     serial: &str,
     result: &std::result::Result<T, Status>,
 ) {
-    let (outcome, code) = match result {
-        Ok(_) => ("success", None),
-        Err(status) if status.code() == tonic::Code::PermissionDenied => ("denied", Some(status)),
-        Err(status) => ("error", Some(status)),
-    };
-    tracing::info!(
-        target: "sigil::audit",
-        caller_os_user = %caller.os_user,
-        session_id = ?caller.session_id,
-        pid = caller.pid,
+    let (outcome, code) = audit_outcome(result);
+    audit::emit(&AuditRecord {
         rpc,
-        device_id,
         operation,
-        serial,
+        device_id,
+        token_serial: serial,
+        piv_slot: None,
+        caller: Some(caller),
         outcome,
-        code = %sigil_proto::audit_error_code(code)
-    );
+        code: &code,
+        grant_id: "",
+        rotation_id: "",
+    });
 }
 
 fn audit_device_error(
